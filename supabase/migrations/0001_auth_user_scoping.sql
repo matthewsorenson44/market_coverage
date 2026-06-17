@@ -45,15 +45,19 @@ alter table public.leads           enable row level security;
 alter table public.driving_points  enable row level security;
 alter table public.street_coverage enable row level security;
 
+drop policy if exists "own leads" on public.leads;
 create policy "own leads" on public.leads
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "own driving_points" on public.driving_points;
 create policy "own driving_points" on public.driving_points
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "own street_coverage" on public.street_coverage;
 create policy "own street_coverage" on public.street_coverage
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- 6. Keep the shared street network readable by any signed-in user.
 alter table public.city_streets enable row level security;
+drop policy if exists "city_streets readable" on public.city_streets;
 create policy "city_streets readable" on public.city_streets
   for select using (true);
 
