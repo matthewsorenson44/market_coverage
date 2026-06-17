@@ -938,6 +938,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     double? longitude,
   ) async {
     await supabase.from('leads').insert({
+      'user_id': supabase.auth.currentUser?.id,
       'address': address,
       'condition': condition,
       'notes': notes,
@@ -958,6 +959,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     final leadLocation = parcel.centroid;
 
     await supabase.from('leads').insert({
+      'user_id': supabase.auth.currentUser?.id,
       'address': parcel.displayAddress,
       'condition': 'Parcel Selected',
       'notes': parcel.leadNotes,
@@ -1686,19 +1688,21 @@ class _DrivingScreenState extends State<DrivingScreen> {
   ) async {
     if (streets.isEmpty) return;
 
+    final userId = supabase.auth.currentUser?.id;
     final rows = streets
         .map(
           (street) => {
             'street_id': street.id,
             'city': street.city.isEmpty ? coverageCity : street.city,
             'drive_session_id': driveSessionId,
+            'user_id': userId,
           },
         )
         .toList();
 
     await supabase
         .from('street_coverage')
-        .upsert(rows, onConflict: 'street_id');
+        .upsert(rows, onConflict: 'user_id,street_id');
   }
 
   Future<void> markNearbyStreetsCovered(
@@ -2572,12 +2576,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Future<void> saveDrivingPoint(LatLng point, String? driveSessionId) async {
     try {
       await supabase.from('driving_points').insert({
+        'user_id': supabase.auth.currentUser?.id,
         'latitude': point.latitude,
         'longitude': point.longitude,
         'drive_session_id': driveSessionId,
       });
     } catch (_) {
       await supabase.from('driving_points').insert({
+        'user_id': supabase.auth.currentUser?.id,
         'latitude': point.latitude,
         'longitude': point.longitude,
       });
