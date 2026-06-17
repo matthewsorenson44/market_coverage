@@ -10,6 +10,16 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'src/formatting.dart';
+import 'src/geo.dart';
+import 'src/scoring.dart';
+
+// Re-export the extracted modules so existing imports of
+// `package:market_coverage/main.dart` (app code and tests) keep working.
+export 'src/formatting.dart';
+export 'src/geo.dart';
+export 'src/scoring.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -37,83 +47,6 @@ const int visibleParcelZoom = 17;
 const int houseNumberLabelZoom = 18;
 const int visibleParcelLimit = 250;
 const double streetCoverageMatchMiles = 0.035;
-
-DateTime? parseDateOnly(dynamic value) {
-  if (value == null) return null;
-
-  final parsedDate = DateTime.tryParse(value.toString());
-
-  if (parsedDate == null) return null;
-
-  return DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
-}
-
-String? formatDateOnly(DateTime? date) {
-  if (date == null) return null;
-
-  final year = date.year.toString().padLeft(4, '0');
-  final month = date.month.toString().padLeft(2, '0');
-  final day = date.day.toString().padLeft(2, '0');
-
-  return '$year-$month-$day';
-}
-
-String displayDate(DateTime? date) {
-  if (date == null) return 'Not set';
-
-  return formatDateOnly(date) ?? 'Not set';
-}
-
-String formatMoney(double? value) {
-  if (value == null) return 'Not set';
-
-  final roundedValue = value.round();
-  final sign = roundedValue < 0 ? '-' : '';
-  final digits = roundedValue.abs().toString();
-  final buffer = StringBuffer();
-
-  for (var index = 0; index < digits.length; index++) {
-    final remainingDigits = digits.length - index;
-
-    buffer.write(digits[index]);
-
-    if (remainingDigits > 1 && remainingDigits % 3 == 1) {
-      buffer.write(',');
-    }
-  }
-
-  return '$sign\$${buffer.toString()}';
-}
-
-DateTime todayDateOnly() {
-  final now = DateTime.now();
-
-  return DateTime(now.year, now.month, now.day);
-}
-
-DateTime startOfCurrentWeek() {
-  final today = todayDateOnly();
-
-  return today.subtract(Duration(days: today.weekday - DateTime.monday));
-}
-
-bool isSameDate(DateTime? firstDate, DateTime secondDate) {
-  if (firstDate == null) return false;
-
-  return firstDate.year == secondDate.year &&
-      firstDate.month == secondDate.month &&
-      firstDate.day == secondDate.day;
-}
-
-bool isBeforeDate(DateTime? firstDate, DateTime secondDate) {
-  if (firstDate == null) return false;
-
-  return DateTime(
-    firstDate.year,
-    firstDate.month,
-    firstDate.day,
-  ).isBefore(secondDate);
-}
 
 class LeadScoreData {
   final bool brokenWindows;
@@ -464,32 +397,6 @@ const List<String> followUpStatusOptions = [
   'Completed',
 ];
 
-const List<String> leadStatusOptions = [
-  'New Lead',
-  'Contact Needed',
-  'Contacted',
-  'Interested',
-  'Offer Sent',
-  'Under Contract',
-  'Closed',
-  'Dead Lead',
-];
-
-String normalizeLeadStage(String status) {
-  switch (status) {
-    case 'New':
-      return 'New Lead';
-    case 'Follow Up':
-      return 'Contact Needed';
-    case 'Offer Made':
-      return 'Offer Sent';
-    case 'Dead':
-      return 'Dead Lead';
-    default:
-      return leadStatusOptions.contains(status) ? status : 'New Lead';
-  }
-}
-
 const List<String> leadSourceOptions = [
   'Driving For Dollars',
   'Facebook',
@@ -498,50 +405,6 @@ const List<String> leadSourceOptions = [
   'Cold Call',
   'Other',
 ];
-
-int calculateLeadScore({
-  required bool brokenWindows,
-  required bool roofDamage,
-  required bool tallGrass,
-  required bool trashInYard,
-  required bool exteriorWear,
-  required bool vacantAppearance,
-}) {
-  var score = 0;
-
-  if (brokenWindows) score += 20;
-  if (roofDamage) score += 25;
-  if (tallGrass) score += 10;
-  if (trashInYard) score += 15;
-  if (exteriorWear) score += 15;
-  if (vacantAppearance) score += 15;
-
-  return score.clamp(0, 100);
-}
-
-Color leadScoreColor(int score) {
-  if (score >= 70) return Colors.red;
-  if (score >= 40) return Colors.amber;
-  return Colors.green;
-}
-
-Widget leadScoreBadge(int score, {double fontSize = 16}) {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-    decoration: BoxDecoration(
-      color: leadScoreColor(score),
-      borderRadius: BorderRadius.circular(6),
-    ),
-    child: Text(
-      '$score',
-      style: TextStyle(
-        color: Colors.white,
-        fontSize: fontSize,
-        fontWeight: FontWeight.bold,
-      ),
-    ),
-  );
-}
 
 class LeadPhoto {
   final String path;
@@ -689,68 +552,6 @@ class ParcelProperty {
   }
 }
 
-String? cleanParcelText(dynamic value) {
-  final text = value?.toString().trim();
-
-  if (text == null || text.isEmpty) return null;
-
-  return text;
-}
-
-double? parseParcelDouble(dynamic value) {
-  if (value is num) return value.toDouble();
-
-  return double.tryParse(value?.toString() ?? '');
-}
-
-int? parseParcelInt(dynamic value) {
-  if (value is num) return value.toInt();
-
-  return int.tryParse(value?.toString() ?? '');
-}
-
-double? firstParcelDouble(List<dynamic> values) {
-  for (final value in values) {
-    final parsedValue = parseParcelDouble(value);
-
-    if (parsedValue != null && parsedValue > 0) return parsedValue;
-  }
-
-  return null;
-}
-
-String formatDecimal(double? value) {
-  if (value == null) return 'Not set';
-
-  if (value == value.roundToDouble()) {
-    return value.toStringAsFixed(0);
-  }
-
-  return value.toStringAsFixed(2);
-}
-
-String? combineMailingAddress(Map<String, dynamic> attributes) {
-  final line1 = cleanParcelText(attributes['Address1']);
-  final line2 = cleanParcelText(attributes['Address2']);
-  final city = cleanParcelText(attributes['City']);
-  final state = cleanParcelText(attributes['State']);
-  final zip = cleanParcelText(attributes['ZIPCode']);
-  final cityStateZip = [
-    if (city != null) city,
-    if (state != null) state,
-    if (zip != null) zip,
-  ].join(', ');
-  final rows = [
-    if (line1 != null) line1,
-    if (line2 != null) line2,
-    if (cityStateZip.isNotEmpty) cityStateZip,
-  ];
-
-  if (rows.isEmpty) return null;
-
-  return rows.join('\n');
-}
-
 LatLng? parseLatLngFromAttributes(Map<String, dynamic> attributes) {
   final latitude = parseParcelDouble(attributes['Lat']);
   final longitude = parseParcelDouble(attributes['Long']);
@@ -805,28 +606,6 @@ LatLng? polygonCentroid(List<List<LatLng>> rings) {
   if (pointCount == 0) return null;
 
   return LatLng(latitude / pointCount, longitude / pointCount);
-}
-
-String normalizedAddressKey(String? address) {
-  if (address == null) return '';
-
-  return address
-      .toUpperCase()
-      .replaceAll(RegExp(r'[^A-Z0-9]'), '')
-      .replaceAll('AVENUE', 'AVE')
-      .replaceAll('STREET', 'ST')
-      .replaceAll('NORTH', 'N')
-      .replaceAll('SOUTH', 'S')
-      .replaceAll('EAST', 'E')
-      .replaceAll('WEST', 'W');
-}
-
-String? houseNumberFromAddress(String? address) {
-  if (address == null) return null;
-
-  final match = RegExp(r'^\s*([0-9]+[A-Z]?)\b').firstMatch(address);
-
-  return match?.group(1);
 }
 
 ParcelProperty? nearestParcel(LatLng point, List<ParcelProperty> parcels) {
@@ -901,12 +680,6 @@ class DrivingPoint {
 }
 
 const double maxRoutePointGapMiles = 0.5;
-
-double? parseCoordinate(dynamic value) {
-  if (value is num) return value.toDouble();
-
-  return double.tryParse(value?.toString() ?? '');
-}
 
 LatLng? parseStreetPoint(dynamic value) {
   if (value is Map) {
@@ -1096,48 +869,6 @@ List<List<LatLng>> drivingPointRouteSegments(List<DrivingPoint> drivingPoints) {
       .toList(growable: false);
 }
 
-Color leadStatusColor(String status) {
-  switch (normalizeLeadStage(status)) {
-    case 'Contact Needed':
-      return Colors.amber;
-    case 'Contacted':
-      return Colors.orange;
-    case 'Interested':
-      return Colors.teal;
-    case 'Offer Sent':
-      return Colors.blue;
-    case 'Under Contract':
-      return Colors.purple;
-    case 'Closed':
-      return Colors.green;
-    case 'Dead Lead':
-      return Colors.grey;
-    case 'New Lead':
-    default:
-      return Colors.red;
-  }
-}
-
-Widget leadStageBadge(String status) {
-  final stage = normalizeLeadStage(status);
-
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-    decoration: BoxDecoration(
-      color: leadStatusColor(stage),
-      borderRadius: BorderRadius.circular(6),
-    ),
-    child: Text(
-      stage,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 12,
-        fontWeight: FontWeight.bold,
-      ),
-    ),
-  );
-}
-
 class MarketCoverageApp extends StatefulWidget {
   const MarketCoverageApp({super.key});
 
@@ -1148,11 +879,40 @@ class MarketCoverageApp extends StatefulWidget {
 class _MarketCoverageAppState extends State<MarketCoverageApp> {
   List<Lead> leads = [];
   bool isLoading = true;
+  StreamSubscription<AuthState>? authSubscription;
 
   @override
   void initState() {
     super.initState();
-    loadLeads();
+
+    // Load data only when there's a signed-in user; (re)load on sign-in and
+    // clear on sign-out.
+    isLoading = supabase.auth.currentSession != null;
+    if (supabase.auth.currentSession != null) {
+      loadLeads();
+    }
+
+    authSubscription = supabase.auth.onAuthStateChange.listen((data) {
+      switch (data.event) {
+        case AuthChangeEvent.signedIn:
+          loadLeads();
+        case AuthChangeEvent.signedOut:
+          if (mounted) {
+            setState(() {
+              leads = [];
+              isLoading = false;
+            });
+          }
+        default:
+          break;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    authSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> loadLeads() async {
@@ -1191,8 +951,10 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     await loadLeads();
   }
 
-  Future<void> addParcelLead(ParcelProperty parcel) async {
-    final scoreData = LeadScoreData.empty();
+  Future<void> addParcelLead(
+    ParcelProperty parcel,
+    LeadScoreData scoreData,
+  ) async {
     final leadLocation = parcel.centroid;
 
     await supabase.from('leads').insert({
@@ -1316,17 +1078,196 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     return MaterialApp(
       title: 'Market Coverage',
       debugShowCheckedModeBanner: false,
-      home: DashboardScreen(
-        leads: leads,
-        isLoading: isLoading,
-        onAddLead: addLead,
-        onAddParcelLead: addParcelLead,
-        onUpdateLeadStatus: updateLeadStatus,
-        onUpdateLeadSource: updateLeadSource,
-        onUpdateLeadScoreData: updateLeadScoreData,
-        onUpdateLeadParcelData: updateLeadParcelData,
-        onUpdateLeadReminderData: updateLeadReminderData,
-        onUpdateLeadOfferData: updateLeadOfferData,
+      home: AuthGate(
+        signedInBuilder: (context) => DashboardScreen(
+          leads: leads,
+          isLoading: isLoading,
+          onAddLead: addLead,
+          onAddParcelLead: addParcelLead,
+          onUpdateLeadStatus: updateLeadStatus,
+          onUpdateLeadSource: updateLeadSource,
+          onUpdateLeadScoreData: updateLeadScoreData,
+          onUpdateLeadParcelData: updateLeadParcelData,
+          onUpdateLeadReminderData: updateLeadReminderData,
+          onUpdateLeadOfferData: updateLeadOfferData,
+        ),
+      ),
+    );
+  }
+}
+
+/// Walls the app behind authentication: shows [LoginScreen] when signed out,
+/// otherwise the signed-in app. Rebuilds on every auth state change.
+class AuthGate extends StatelessWidget {
+  final WidgetBuilder signedInBuilder;
+
+  const AuthGate({super.key, required this.signedInBuilder});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AuthState>(
+      stream: supabase.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        if (supabase.auth.currentSession == null) {
+          return const LoginScreen();
+        }
+
+        return signedInBuilder(context);
+      },
+    );
+  }
+}
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+  bool isSignUp = false;
+  bool isSubmitting = false;
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your email and password.')),
+      );
+      return;
+    }
+
+    setState(() {
+      isSubmitting = true;
+    });
+
+    try {
+      if (isSignUp) {
+        final response = await supabase.auth.signUp(
+          email: email,
+          password: password,
+        );
+
+        if (!mounted) return;
+
+        if (response.session == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Check your email to confirm your account.'),
+            ),
+          );
+        }
+      } else {
+        await supabase.auth.signInWithPassword(
+          email: email,
+          password: password,
+        );
+      }
+    } on AuthException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not sign in. Try again.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Market Coverage',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isSignUp ? 'Create your account' : 'Sign in to continue',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  autocorrect: false,
+                  enabled: !isSubmitting,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  enabled: !isSubmitting,
+                  onSubmitted: (_) => isSubmitting ? null : submit(),
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: isSubmitting ? null : submit,
+                    child: Text(
+                      isSubmitting
+                          ? 'Please wait...'
+                          : (isSignUp ? 'Sign Up' : 'Sign In'),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () => setState(() => isSignUp = !isSignUp),
+                  child: Text(
+                    isSignUp
+                        ? 'Have an account? Sign in'
+                        : 'Need an account? Sign up',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1345,7 +1286,8 @@ class DashboardScreen extends StatelessWidget {
     double? longitude,
   )
   onAddLead;
-  final Future<void> Function(ParcelProperty parcel) onAddParcelLead;
+  final Future<void> Function(ParcelProperty parcel, LeadScoreData scoreData)
+  onAddParcelLead;
   final Future<void> Function(String leadId, String status) onUpdateLeadStatus;
   final Future<void> Function(String leadId, String source) onUpdateLeadSource;
   final Future<void> Function(String leadId, LeadScoreData scoreData)
@@ -1392,7 +1334,16 @@ class DashboardScreen extends StatelessWidget {
     }).length;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Market Coverage')),
+      appBar: AppBar(
+        title: const Text('Market Coverage'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sign out',
+            onPressed: () => supabase.auth.signOut(),
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -1548,7 +1499,8 @@ class DrivingScreen extends StatefulWidget {
     double? longitude,
   )
   onAddLead;
-  final Future<void> Function(ParcelProperty parcel) onAddParcelLead;
+  final Future<void> Function(ParcelProperty parcel, LeadScoreData scoreData)
+  onAddParcelLead;
   final Future<void> Function(String leadId, String status) onUpdateLeadStatus;
   final Future<void> Function(String leadId, String source) onUpdateLeadSource;
   final Future<void> Function(String leadId, LeadScoreData scoreData)
@@ -1601,6 +1553,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Set<String> coveredStreetIds = {};
   StreamSubscription<Position>? positionStream;
   Timer? visibleParcelLoadTimer;
+
+  // Lead map filters (display-only; does not affect data or other layers).
+  bool showLeadsOnMap = true;
+  Set<String> selectedLeadStages = {...leadStatusOptions};
+  bool useMinLeadScore = false;
+  double minLeadScore = 0;
 
   @override
   void initState() {
@@ -1964,6 +1922,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Future<void> selectParcelAt(LatLng point) async {
     if (isLoadingParcel) return;
 
+    // Fast path: if the tap lands inside an already-loaded parcel polygon,
+    // select it instantly and exactly — no network round-trip or centroid guess.
+    final localParcel = parcelAtPointLocal(point);
+    if (localParcel != null) {
+      openParcelPreview(localParcel);
+      return;
+    }
+
     setState(() {
       isLoadingParcel = true;
       locationMessage = 'Loading property details...';
@@ -2100,6 +2066,54 @@ class _DrivingScreenState extends State<DrivingScreen> {
     showParcelPreview(parcel);
   }
 
+  /// Opens the full lead details screen, refreshing this screen after any edit.
+  void openLeadDetails(Lead lead) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LeadDetailsScreen(
+          lead: lead,
+          onUpdateLeadStatus: (leadId, status) async {
+            await widget.onUpdateLeadStatus(leadId, status);
+            if (mounted) setState(() {});
+          },
+          onUpdateLeadSource: (leadId, source) async {
+            await widget.onUpdateLeadSource(leadId, source);
+            if (mounted) setState(() {});
+          },
+          onUpdateLeadScoreData: (leadId, scoreData) async {
+            await widget.onUpdateLeadScoreData(leadId, scoreData);
+            if (mounted) setState(() {});
+          },
+          onUpdateLeadParcelData: (leadId, parcelData) async {
+            await widget.onUpdateLeadParcelData(leadId, parcelData);
+            if (mounted) setState(() {});
+          },
+          onUpdateLeadReminderData: (leadId, reminderData) async {
+            await widget.onUpdateLeadReminderData(leadId, reminderData);
+            if (mounted) setState(() {});
+          },
+          onUpdateLeadOfferData: (leadId, offerData) async {
+            await widget.onUpdateLeadOfferData(leadId, offerData);
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Returns the parcel under [point] from the already-loaded visible parcels
+  /// using exact polygon containment — no network round-trip.
+  ParcelProperty? parcelAtPointLocal(LatLng point) {
+    for (final parcel in visibleParcels) {
+      if (parcel.rings.isNotEmpty && ringsContainPoint(parcel.rings, point)) {
+        return parcel;
+      }
+    }
+
+    return null;
+  }
+
   Widget parcelStatusDot(ParcelProperty parcel) {
     return Tooltip(
       message: parcel.displayAddress,
@@ -2181,9 +2195,29 @@ class _DrivingScreenState extends State<DrivingScreen> {
       isScrollControlled: true,
       builder: (sheetContext) {
         var isSaving = false;
+        // Distress flags captured live while looking at the property.
+        var vacant = false;
+        var roof = false;
+        var trash = false;
+        var broken = false;
+        var grass = false;
+        final existingLead = leadForParcel(parcel);
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            final smartScore = calculateSmartLeadScore(
+              vacantAppearance: vacant,
+              roofDamage: roof,
+              trashInYard: trash,
+              brokenWindows: broken,
+              tallGrass: grass,
+              outOfStateOwner: parcel.outOfStateOwner,
+              mailingAddress: parcel.mailingAddress,
+              propertyAddress: parcel.propertyAddress,
+              lastSaleDate: parcel.saleDate,
+              assessedValue: parcel.assessedValue,
+            );
+
             return SafeArea(
               child: SingleChildScrollView(
                 child: Padding(
@@ -2268,52 +2302,150 @@ class _DrivingScreenState extends State<DrivingScreen> {
                         'Reception no',
                         parcel.receptionNo ?? 'Not set',
                       ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton(
-                          onPressed: isSaving
-                              ? null
-                              : () async {
-                                  setSheetState(() {
-                                    isSaving = true;
-                                  });
-
-                                  try {
-                                    await widget.onAddParcelLead(parcel);
-
-                                    if (!mounted || !sheetContext.mounted) {
-                                      return;
-                                    }
-
-                                    Navigator.pop(sheetContext);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Parcel lead added.'),
-                                      ),
-                                    );
-                                  } catch (_) {
-                                    if (!mounted) return;
-
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Could not add parcel lead.',
-                                        ),
-                                      ),
-                                    );
-                                  } finally {
-                                    if (sheetContext.mounted) {
-                                      setSheetState(() {
-                                        isSaving = false;
-                                      });
-                                    }
-                                  }
-                                },
-                          child: Text(isSaving ? 'Adding...' : 'Add Lead'),
+                      const Divider(height: 32),
+                      if (existingLead != null) ...[
+                        Row(
+                          children: [
+                            const Icon(Icons.info_outline, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Already a lead (${normalizeLeadStage(existingLead.status)}).',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            leadScoreBadge(existingLead.score, fontSize: 14),
+                          ],
                         ),
-                      ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              openLeadDetails(existingLead);
+                            },
+                            child: const Text('Open existing lead'),
+                          ),
+                        ),
+                      ] else ...[
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'What did you see?',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const Text('Smart score  '),
+                            leadScoreBadge(smartScore, fontSize: 14),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            FilterChip(
+                              label: const Text('Vacant'),
+                              selected: vacant,
+                              onSelected: (v) =>
+                                  setSheetState(() => vacant = v),
+                            ),
+                            FilterChip(
+                              label: const Text('Roof damage'),
+                              selected: roof,
+                              onSelected: (v) => setSheetState(() => roof = v),
+                            ),
+                            FilterChip(
+                              label: const Text('Trash in yard'),
+                              selected: trash,
+                              onSelected: (v) => setSheetState(() => trash = v),
+                            ),
+                            FilterChip(
+                              label: const Text('Broken windows'),
+                              selected: broken,
+                              onSelected: (v) =>
+                                  setSheetState(() => broken = v),
+                            ),
+                            FilterChip(
+                              label: const Text('Tall grass'),
+                              selected: grass,
+                              onSelected: (v) => setSheetState(() => grass = v),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: ElevatedButton(
+                            onPressed: isSaving
+                                ? null
+                                : () async {
+                                    setSheetState(() {
+                                      isSaving = true;
+                                    });
+
+                                    final scoreData = LeadScoreData(
+                                      brokenWindows: broken,
+                                      roofDamage: roof,
+                                      tallGrass: grass,
+                                      trashInYard: trash,
+                                      exteriorWear: false,
+                                      vacantAppearance: vacant,
+                                      score: smartScore,
+                                      scoreOverride: false,
+                                    );
+
+                                    try {
+                                      await widget.onAddParcelLead(
+                                        parcel,
+                                        scoreData,
+                                      );
+
+                                      if (!mounted || !sheetContext.mounted) {
+                                        return;
+                                      }
+
+                                      Navigator.pop(sheetContext);
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Parcel lead added.'),
+                                        ),
+                                      );
+                                    } catch (_) {
+                                      if (!mounted) return;
+
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Could not add parcel lead.',
+                                          ),
+                                        ),
+                                      );
+                                    } finally {
+                                      if (sheetContext.mounted) {
+                                        setSheetState(() {
+                                          isSaving = false;
+                                        });
+                                      }
+                                    }
+                                  },
+                            child: Text(isSaving ? 'Adding...' : 'Add Lead'),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
@@ -2384,7 +2516,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
 
     final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.bestForNavigation,
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+      ),
     );
 
     final newLocation = LatLng(position.latitude, position.longitude);
@@ -2515,6 +2649,142 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
+  bool leadPassesMapFilter(Lead lead) {
+    if (!showLeadsOnMap) return false;
+    if (lead.latitude == null || lead.longitude == null) return false;
+    if (!selectedLeadStages.contains(normalizeLeadStage(lead.status))) {
+      return false;
+    }
+    if (useMinLeadScore && lead.score < minLeadScore) return false;
+    return true;
+  }
+
+  void openLeadFilterSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            void apply(VoidCallback change) {
+              setSheetState(change);
+              setState(() {});
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 20,
+                  right: 20,
+                  top: 20,
+                  bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Lead Map Filters',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Show leads on map'),
+                        value: showLeadsOnMap,
+                        onChanged: (value) =>
+                            apply(() => showLeadsOnMap = value),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Pipeline stage',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: leadStatusOptions.map((stage) {
+                          final selected = selectedLeadStages.contains(stage);
+                          return FilterChip(
+                            label: Text(stage),
+                            selected: selected,
+                            onSelected: (value) => apply(() {
+                              if (value) {
+                                selectedLeadStages.add(stage);
+                              } else {
+                                selectedLeadStages.remove(stage);
+                              }
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => apply(
+                              () => selectedLeadStages = {...leadStatusOptions},
+                            ),
+                            child: const Text('Select all'),
+                          ),
+                          TextButton(
+                            onPressed: () =>
+                                apply(() => selectedLeadStages = {}),
+                            child: const Text('Clear'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Filter by minimum lead score'),
+                        value: useMinLeadScore,
+                        onChanged: (value) =>
+                            apply(() => useMinLeadScore = value),
+                      ),
+                      Text(
+                        'Minimum lead score: ${minLeadScore.round()}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: useMinLeadScore
+                              ? null
+                              : Theme.of(sheetContext).disabledColor,
+                        ),
+                      ),
+                      Slider(
+                        min: 0,
+                        max: 100,
+                        divisions: 100,
+                        label: minLeadScore.round().toString(),
+                        value: minLeadScore,
+                        onChanged: useMinLeadScore
+                            ? (value) => apply(() => minLeadScore = value)
+                            : null,
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: const Text('Done'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final completedRouteSegments = drivingPointRouteSegments(
@@ -2547,7 +2817,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final showHouseNumberLabels = currentZoom >= houseNumberLabelZoom;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Driving Mode')),
+      appBar: AppBar(
+        title: const Text('Driving Mode'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.filter_list),
+            tooltip: 'Filter leads',
+            onPressed: openLeadFilterSheet,
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -2784,10 +3063,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       ),
                     MarkerLayer(
                       markers: widget.leads
-                          .where(
-                            (lead) =>
-                                lead.latitude != null && lead.longitude != null,
-                          )
+                          .where(leadPassesMapFilter)
                           .map(
                             (lead) => Marker(
                               point: LatLng(lead.latitude!, lead.longitude!),
@@ -2795,86 +3071,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               height: 28,
                               child: GestureDetector(
                                 behavior: HitTestBehavior.opaque,
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => LeadDetailsScreen(
-                                        lead: lead,
-                                        onUpdateLeadStatus:
-                                            (leadId, status) async {
-                                              await widget.onUpdateLeadStatus(
-                                                leadId,
-                                                status,
-                                              );
-
-                                              if (mounted) {
-                                                setState(() {});
-                                              }
-                                            },
-                                        onUpdateLeadSource:
-                                            (leadId, source) async {
-                                              await widget.onUpdateLeadSource(
-                                                leadId,
-                                                source,
-                                              );
-
-                                              if (mounted) {
-                                                setState(() {});
-                                              }
-                                            },
-                                        onUpdateLeadScoreData:
-                                            (leadId, scoreData) async {
-                                              await widget
-                                                  .onUpdateLeadScoreData(
-                                                    leadId,
-                                                    scoreData,
-                                                  );
-
-                                              if (mounted) {
-                                                setState(() {});
-                                              }
-                                            },
-                                        onUpdateLeadParcelData:
-                                            (leadId, parcelData) async {
-                                              await widget
-                                                  .onUpdateLeadParcelData(
-                                                    leadId,
-                                                    parcelData,
-                                                  );
-
-                                              if (mounted) {
-                                                setState(() {});
-                                              }
-                                            },
-                                        onUpdateLeadReminderData:
-                                            (leadId, reminderData) async {
-                                              await widget
-                                                  .onUpdateLeadReminderData(
-                                                    leadId,
-                                                    reminderData,
-                                                  );
-
-                                              if (mounted) {
-                                                setState(() {});
-                                              }
-                                            },
-                                        onUpdateLeadOfferData:
-                                            (leadId, offerData) async {
-                                              await widget
-                                                  .onUpdateLeadOfferData(
-                                                    leadId,
-                                                    offerData,
-                                                  );
-
-                                              if (mounted) {
-                                                setState(() {});
-                                              }
-                                            },
-                                      ),
-                                    ),
-                                  );
-                                },
+                                onTap: () => openLeadDetails(lead),
                                 child: Center(
                                   child: Container(
                                     width: 18,
@@ -3041,13 +3238,15 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
   }
 
   int get autoScore {
-    return calculateLeadScore(
-      brokenWindows: brokenWindows,
-      roofDamage: roofDamage,
-      tallGrass: tallGrass,
-      trashInYard: trashInYard,
-      exteriorWear: exteriorWear,
+    // No parcel/sale data at capture time, so the records signals contribute 0
+    // and the score reflects field-observed condition alone. It climbs once the
+    // lead is enriched on the details screen.
+    return calculateSmartLeadScore(
       vacantAppearance: vacantAppearance,
+      roofDamage: roofDamage,
+      trashInYard: trashInYard,
+      brokenWindows: brokenWindows,
+      tallGrass: tallGrass,
     );
   }
 
@@ -3253,18 +3452,6 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
                             : (value) {
                                 setState(() {
                                   trashInYard = value ?? false;
-                                });
-                              },
-                      ),
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Exterior wear'),
-                        value: exteriorWear,
-                        onChanged: isSaving
-                            ? null
-                            : (value) {
-                                setState(() {
-                                  exteriorWear = value ?? false;
                                 });
                               },
                       ),
@@ -3790,14 +3977,27 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     if (updatedScoreData.scoreOverride) return updatedScoreData;
 
     return updatedScoreData.copyWith(
-      score: calculateLeadScore(
-        brokenWindows: updatedScoreData.brokenWindows,
-        roofDamage: updatedScoreData.roofDamage,
-        tallGrass: updatedScoreData.tallGrass,
-        trashInYard: updatedScoreData.trashInYard,
-        exteriorWear: updatedScoreData.exteriorWear,
-        vacantAppearance: updatedScoreData.vacantAppearance,
-      ),
+      score: recomputeAutoScore(updatedScoreData),
+    );
+  }
+
+  /// Recomputes the smart distressed-seller score from field-observed condition
+  /// plus whatever public-records data this lead currently has. Missing records
+  /// simply contribute 0.
+  int recomputeAutoScore(LeadScoreData s) {
+    return calculateSmartLeadScore(
+      vacantAppearance: s.vacantAppearance,
+      roofDamage: s.roofDamage,
+      trashInYard: s.trashInYard,
+      brokenWindows: s.brokenWindows,
+      tallGrass: s.tallGrass,
+      outOfStateOwner: outOfStateOwner,
+      mailingAddress: mailingAddressController.text,
+      propertyAddress: widget.lead.address,
+      lastSaleDate: widget.lead.saleData.lastSaleDate,
+      assessedValue:
+          parseMoney(assessedValueController.text) ??
+          widget.lead.parcelData.assessedValue,
     );
   }
 
@@ -3907,6 +4107,24 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
 
     try {
       await widget.onUpdateLeadParcelData(widget.lead.id, parcelData);
+
+      // Property records feed the smart score, so refresh it after saving
+      // (unless the score is manually overridden).
+      if (!scoreData.scoreOverride) {
+        final rescored = scoreData.copyWith(
+          score: recomputeAutoScore(scoreData),
+        );
+
+        if (rescored.score != scoreData.score) {
+          await widget.onUpdateLeadScoreData(widget.lead.id, rescored);
+
+          if (mounted) {
+            setState(() {
+              scoreData = rescored;
+            });
+          }
+        }
+      }
 
       if (!mounted) return;
 
@@ -4466,20 +4684,6 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
                       ),
                       CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Exterior wear'),
-                        value: scoreData.exteriorWear,
-                        onChanged: isSavingScore
-                            ? null
-                            : (value) {
-                                updateScoreData(
-                                  scoreDataWithAutoScore(
-                                    exteriorWear: value ?? false,
-                                  ),
-                                );
-                              },
-                      ),
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
                         title: const Text('Vacant appearance'),
                         value: scoreData.vacantAppearance,
                         onChanged: isSavingScore
@@ -4504,17 +4708,7 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
                                     scoreOverride: value,
                                     score: value
                                         ? scoreData.score
-                                        : calculateLeadScore(
-                                            brokenWindows:
-                                                scoreData.brokenWindows,
-                                            roofDamage: scoreData.roofDamage,
-                                            tallGrass: scoreData.tallGrass,
-                                            trashInYard: scoreData.trashInYard,
-                                            exteriorWear:
-                                                scoreData.exteriorWear,
-                                            vacantAppearance:
-                                                scoreData.vacantAppearance,
-                                          ),
+                                        : recomputeAutoScore(scoreData),
                                   ),
                                 );
                               },
