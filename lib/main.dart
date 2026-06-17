@@ -10,12 +10,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'src/coverage.dart';
 import 'src/formatting.dart';
 import 'src/geo.dart';
 import 'src/scoring.dart';
 
 // Re-export the extracted modules so existing imports of
 // `package:market_coverage/main.dart` (app code and tests) keep working.
+export 'src/coverage.dart';
 export 'src/formatting.dart';
 export 'src/geo.dart';
 export 'src/scoring.dart';
@@ -2811,9 +2813,18 @@ class _DrivingScreenState extends State<DrivingScreen> {
       0,
       totalStreetCount - coveredStreetCount,
     );
-    final streetCoveragePercent = totalStreetCount == 0
-        ? 0.0
-        : (coveredStreetCount / totalStreetCount) * 100;
+    // Mileage-weighted coverage: a long arterial counts more than a cul-de-sac.
+    final coverageSegments = cityStreets
+        .map((street) => CoverageSegment(id: street.id, path: street.path))
+        .toList();
+    final streetCoveragePercent = coveragePercentByMiles(
+      coverageSegments,
+      coveredStreetIds,
+    );
+    final remainingStreetMiles = remainingMiles(
+      coverageSegments,
+      coveredStreetIds,
+    );
     final coveredStreets = cityStreets
         .where((street) => coveredStreetIds.contains(street.id))
         .toList();
@@ -3133,6 +3144,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
                         const SizedBox(height: 8),
                         Text(
                           'Street coverage: ${streetCoveragePercent.toStringAsFixed(0)}%',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Miles remaining: ${remainingStreetMiles.toStringAsFixed(1)}',
                           style: const TextStyle(fontSize: 18),
                         ),
                         const SizedBox(height: 8),
