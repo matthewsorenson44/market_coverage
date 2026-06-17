@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -13,6 +14,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'src/coverage.dart';
 import 'src/formatting.dart';
 import 'src/geo.dart';
+import 'src/lead_export.dart';
 import 'src/scoring.dart';
 
 // Re-export the extracted modules so existing imports of
@@ -20,6 +22,7 @@ import 'src/scoring.dart';
 export 'src/coverage.dart';
 export 'src/formatting.dart';
 export 'src/geo.dart';
+export 'src/lead_export.dart';
 export 'src/scoring.dart';
 
 Future<void> main() async {
@@ -3579,13 +3582,36 @@ class LeadListScreen extends StatefulWidget {
 }
 
 class _LeadListScreenState extends State<LeadListScreen> {
+  Future<void> exportLeadsCsv(List<Lead> leads) async {
+    await Clipboard.setData(ClipboardData(text: leadsToCsv(leads)));
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Copied ${leads.length} leads as CSV to the clipboard.'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sortedLeads = [...widget.leads]
       ..sort((a, b) => b.score.compareTo(a.score));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Lead List')),
+      appBar: AppBar(
+        title: const Text('Lead List'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download),
+            tooltip: 'Copy leads as CSV',
+            onPressed: sortedLeads.isEmpty
+                ? null
+                : () => exportLeadsCsv(sortedLeads),
+          ),
+        ],
+      ),
       body: sortedLeads.isEmpty
           ? const Center(
               child: Text(
