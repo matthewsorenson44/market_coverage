@@ -17,10 +17,17 @@ alter table public.street_coverage
   add column if not exists user_id uuid references auth.users (id);
 
 -- 2. Backfill existing rows to your account.
---    Replace 'YOUR-USER-UUID' with your id from Authentication -> Users.
-update public.leads           set user_id = 'YOUR-USER-UUID' where user_id is null;
-update public.driving_points  set user_id = 'YOUR-USER-UUID' where user_id is null;
-update public.street_coverage set user_id = 'YOUR-USER-UUID' where user_id is null;
+--    While you are the only user, this resolves to your id automatically.
+--    (If you ever have multiple users, set the id explicitly instead.)
+update public.leads
+  set user_id = (select id from auth.users order by created_at limit 1)
+  where user_id is null;
+update public.driving_points
+  set user_id = (select id from auth.users order by created_at limit 1)
+  where user_id is null;
+update public.street_coverage
+  set user_id = (select id from auth.users order by created_at limit 1)
+  where user_id is null;
 
 -- 3. Default new rows to the inserting user, so the app does not have to send
 --    user_id explicitly.
