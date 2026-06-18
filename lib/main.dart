@@ -48,9 +48,20 @@ const List<String> tulsaParcelLayerUrls = [
   primaryTulsaParcelLayerUrl,
   fallbackTulsaParcelLayerUrl,
 ];
+const List<String> supportedCoverageCities = [
+  'Owasso',
+  'Tulsa',
+  'Broken Arrow',
+  'Bixby',
+  'Jenks',
+  'Sand Springs',
+  'Collinsville',
+  'Skiatook',
+];
 const int visibleParcelZoom = 17;
 const int houseNumberLabelZoom = 18;
 const int visibleParcelLimit = 250;
+const int visibleStreetLimit = 800;
 const double streetCoverageMatchMiles = 0.035;
 
 class LeadScoreData {
@@ -682,6 +693,81 @@ class DrivingPoint {
       driveSessionId: map['drive_session_id']?.toString(),
     );
   }
+}
+
+class DriveArea {
+  final String id;
+  final String name;
+  final String city;
+  final List<LatLng> polygon;
+  final String status;
+  final bool isActive;
+  final DateTime? createdAt;
+  final DateTime? completedAt;
+
+  const DriveArea({
+    required this.id,
+    required this.name,
+    required this.city,
+    required this.polygon,
+    required this.status,
+    required this.isActive,
+    required this.createdAt,
+    required this.completedAt,
+  });
+
+  factory DriveArea.fromMap(Map<String, dynamic> map) {
+    return DriveArea(
+      id: map['id'].toString(),
+      name: map['name']?.toString() ?? 'Untitled area',
+      city: map['city']?.toString() ?? '',
+      polygon: parseDriveAreaPolygon(map['polygon']),
+      status: map['status']?.toString() ?? 'in_progress',
+      isActive: map['is_active'] == true,
+      createdAt: map['created_at'] == null
+          ? null
+          : DateTime.tryParse(map['created_at'].toString()),
+      completedAt: map['completed_at'] == null
+          ? null
+          : DateTime.tryParse(map['completed_at'].toString()),
+    );
+  }
+
+  bool get isComplete => status == 'complete';
+}
+
+List<LatLng> parseDriveAreaPolygon(dynamic value) {
+  if (value is! List) return [];
+
+  return value
+      .map(parseStreetPoint)
+      .whereType<LatLng>()
+      .toList(growable: false);
+}
+
+List<Map<String, double>> driveAreaPolygonToJson(List<LatLng> polygon) {
+  return polygon
+      .map((point) => {'lat': point.latitude, 'lng': point.longitude})
+      .toList(growable: false);
+}
+
+bool streetFallsInsidePolygon(CityStreet street, List<LatLng> polygon) {
+  if (polygon.length < 3 || street.path.isEmpty) return false;
+
+  for (final point in street.path) {
+    if (pointInRing(point, polygon)) return true;
+  }
+
+  for (var index = 1; index < street.path.length; index++) {
+    final midpoint = LatLng(
+      (street.path[index - 1].latitude + street.path[index].latitude) / 2,
+      (street.path[index - 1].longitude + street.path[index].longitude) / 2,
+    );
+
+    if (pointInRing(midpoint, polygon)) return true;
+  }
+
+  return false;
 }
 
 const double maxRoutePointGapMiles = 0.5;
@@ -1541,14 +1627,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   LatLng currentMapCenter = const LatLng(36.2695, -95.8547);
   double currentZoom = 13;
+  String selectedCoverageCity = coverageCity;
   LatLng? myLocation;
   bool isFindingLocation = false;
   bool isTracking = false;
   bool isLoadingCoverage = true;
   bool isLoadingStreetCoverage = true;
+  bool isLoadingVisibleStreets = false;
   bool isSyncingStreetCoverage = false;
   bool isLoadingParcel = false;
   bool isLoadingVisibleParcels = false;
+  bool mapIsReady = false;
   String locationMessage = 'Location not found yet.';
   String? currentDriveSessionId;
 
@@ -1557,9 +1646,18 @@ class _DrivingScreenState extends State<DrivingScreen> {
   List<CityStreet> cityStreets = [];
   List<ParcelProperty> visibleParcels = [];
   ParcelProperty? selectedParcel;
+  int totalCityStreetCount = 0;
   Set<String> coveredStreetIds = {};
   StreamSubscription<Position>? positionStream;
   Timer? visibleParcelLoadTimer;
+  Timer? visibleStreetLoadTimer;
+  List<DriveArea> driveAreas = [];
+  DriveArea? activeDriveArea;
+  List<LatLng> drawingAreaPoints = [];
+  bool isDrawAreaMode = false;
+  bool isLoadingDriveAreas = true;
+  bool isSavingDriveArea = false;
+  bool showOnlyActiveArea = false;
 
   // Lead map filters (display-only; does not affect data or other layers).
   bool showLeadsOnMap = true;
@@ -1572,11 +1670,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
     super.initState();
     loadSavedDrivingPoints();
     loadStreetCoverage();
+    loadDriveAreas();
   }
 
   @override
   void dispose() {
     visibleParcelLoadTimer?.cancel();
+    visibleStreetLoadTimer?.cancel();
     positionStream?.cancel();
     super.dispose();
   }
@@ -1628,32 +1728,31 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
 
     try {
-      final streetData = await supabase
-          .from('city_streets')
-          .select()
-          .eq('city', coverageCity);
       final coverageData = await supabase
           .from('street_coverage')
           .select('street_id')
-          .eq('city', coverageCity);
-      final streets = streetData
-          .map<CityStreet>((item) => CityStreet.fromMap(item))
-          .where((street) => street.path.length > 1)
-          .toList();
-      final streetIds = streets.map((street) => street.id).toSet();
+          .eq('city', selectedCoverageCity);
+      final statsData = await supabase
+          .from('city_street_stats')
+          .select('total_streets')
+          .eq('city', selectedCoverageCity)
+          .limit(1);
       final coveredIds = coverageData
           .map<String>((item) => item['street_id'].toString())
-          .where(streetIds.contains)
           .toSet();
+      final totalStreets = statsData.isEmpty
+          ? 0
+          : ((statsData.first['total_streets'] ?? 0) as num).toInt();
 
       if (!mounted) return;
 
       setState(() {
-        cityStreets = streets;
         coveredStreetIds = coveredIds;
+        totalCityStreetCount = totalStreets;
         isLoadingStreetCoverage = false;
       });
 
+      await loadVisibleCityStreets();
       await syncSavedDrivingPointsToStreetCoverage();
     } catch (_) {
       if (!mounted) return;
@@ -1664,6 +1763,361 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not load street coverage.')),
+      );
+    }
+  }
+
+  Future<void> loadDriveAreas() async {
+    setState(() {
+      isLoadingDriveAreas = true;
+    });
+
+    try {
+      final data = await supabase
+          .from('drive_areas')
+          .select()
+          .order('created_at', ascending: false);
+      final areas = data
+          .map<DriveArea>((item) => DriveArea.fromMap(item))
+          .toList(growable: false);
+      final activeArea = areas
+          .where((area) => area.isActive && !area.isComplete)
+          .firstOrNull;
+
+      if (!mounted) return;
+
+      final activeCity = activeArea?.city ?? '';
+      final shouldChangeCity =
+          activeCity.isNotEmpty && activeCity != selectedCoverageCity;
+
+      setState(() {
+        driveAreas = areas;
+        activeDriveArea = activeArea;
+        if (shouldChangeCity) {
+          selectedCoverageCity = activeCity;
+          cityStreets = [];
+          coveredStreetIds = {};
+          totalCityStreetCount = 0;
+        }
+        isLoadingDriveAreas = false;
+      });
+
+      if (shouldChangeCity) {
+        await loadStreetCoverage();
+      }
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingDriveAreas = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load drive areas.')),
+      );
+    }
+  }
+
+  Future<void> setActiveDriveArea(DriveArea? area) async {
+    try {
+      await supabase
+          .from('drive_areas')
+          .update({'is_active': false})
+          .eq('is_active', true);
+
+      if (area != null) {
+        await supabase
+            .from('drive_areas')
+            .update({
+              'is_active': true,
+              'status': 'in_progress',
+              'completed_at': null,
+            })
+            .eq('id', area.id);
+      }
+
+      await loadDriveAreas();
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not update active drive area.')),
+      );
+    }
+  }
+
+  Future<void> markActiveDriveAreaComplete() async {
+    final area = activeDriveArea;
+    if (area == null) return;
+
+    try {
+      await supabase
+          .from('drive_areas')
+          .update({
+            'status': 'complete',
+            'is_active': false,
+            'completed_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', area.id);
+
+      await loadDriveAreas();
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not mark drive area complete.')),
+      );
+    }
+  }
+
+  LatLng? polygonCenter(List<LatLng> polygon) {
+    if (polygon.isEmpty) return null;
+
+    var latitude = 0.0;
+    var longitude = 0.0;
+
+    for (final point in polygon) {
+      latitude += point.latitude;
+      longitude += point.longitude;
+    }
+
+    return LatLng(latitude / polygon.length, longitude / polygon.length);
+  }
+
+  LatLng? streetFocusPoint(CityStreet street) {
+    if (street.path.isEmpty) return null;
+
+    return street.path[street.path.length ~/ 2];
+  }
+
+  Future<void> startAreaDrive() async {
+    final area = activeDriveArea;
+    if (area == null) return;
+
+    final center = polygonCenter(area.polygon);
+    if (center != null) {
+      mapController.move(center, math.max(currentZoom, 15));
+    }
+
+    if (isTracking) {
+      setState(() {
+        locationMessage = 'Area drive already running: ${area.name}.';
+      });
+      return;
+    }
+
+    await startTracking();
+
+    if (!mounted) return;
+
+    setState(() {
+      locationMessage = 'Area drive started: ${area.name}.';
+    });
+  }
+
+  void focusNextUncoveredStreet(List<CityStreet> activeAreaUncoveredStreets) {
+    if (activeDriveArea == null) return;
+
+    if (activeAreaUncoveredStreets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No uncovered streets in this area.')),
+      );
+      return;
+    }
+
+    final origin = myLocation ?? currentMapCenter;
+    CityStreet? nearestStreet;
+    var nearestDistance = double.infinity;
+
+    for (final street in activeAreaUncoveredStreets) {
+      final distance = distanceToStreetMiles(origin, street);
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestStreet = street;
+      }
+    }
+
+    final focusPoint = nearestStreet == null
+        ? null
+        : streetFocusPoint(nearestStreet);
+
+    if (focusPoint == null) return;
+
+    mapController.move(focusPoint, math.max(currentZoom, 17));
+
+    setState(() {
+      locationMessage = nearestStreet!.streetName.isEmpty
+          ? 'Centered on the next uncovered street.'
+          : 'Next uncovered street: ${nearestStreet.streetName}.';
+    });
+  }
+
+  void handleMapTap(LatLng point) {
+    if (isDrawAreaMode) {
+      setState(() {
+        selectedParcel = null;
+        drawingAreaPoints = [...drawingAreaPoints, point];
+      });
+      return;
+    }
+
+    selectParcelAt(point);
+  }
+
+  void clearDrawingArea() {
+    setState(() {
+      drawingAreaPoints = [];
+    });
+  }
+
+  void undoLastDrawingPoint() {
+    if (drawingAreaPoints.isEmpty) return;
+
+    setState(() {
+      drawingAreaPoints = drawingAreaPoints.sublist(
+        0,
+        drawingAreaPoints.length - 1,
+      );
+    });
+  }
+
+  Future<String?> promptForDriveAreaName() {
+    final controller = TextEditingController();
+
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Save drive area'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(labelText: 'Area name'),
+            onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, controller.text.trim());
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    ).whenComplete(controller.dispose);
+  }
+
+  Future<void> saveDrawingArea() async {
+    if (drawingAreaPoints.length < 3 || isSavingDriveArea) return;
+
+    final name = await promptForDriveAreaName();
+    if (name == null || name.isEmpty) return;
+
+    setState(() {
+      isSavingDriveArea = true;
+    });
+
+    try {
+      await supabase
+          .from('drive_areas')
+          .update({'is_active': false})
+          .eq('is_active', true);
+      await supabase.from('drive_areas').insert({
+        'name': name,
+        'city': selectedCoverageCity,
+        'polygon': driveAreaPolygonToJson(drawingAreaPoints),
+        'status': 'in_progress',
+        'is_active': true,
+      });
+
+      if (!mounted) return;
+
+      setState(() {
+        isDrawAreaMode = false;
+        drawingAreaPoints = [];
+        isSavingDriveArea = false;
+      });
+
+      await loadDriveAreas();
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isSavingDriveArea = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save drive area.')),
+      );
+    }
+  }
+
+  Future<void> changeCoverageCity(String city) async {
+    setState(() {
+      selectedCoverageCity = city;
+      cityStreets = [];
+      coveredStreetIds = {};
+      totalCityStreetCount = 0;
+    });
+
+    await loadStreetCoverage();
+  }
+
+  void scheduleVisibleStreetLoad() {
+    visibleStreetLoadTimer?.cancel();
+    visibleStreetLoadTimer = Timer(
+      const Duration(milliseconds: 500),
+      loadVisibleCityStreets,
+    );
+  }
+
+  Future<void> loadVisibleCityStreets() async {
+    if (!mounted || !mapIsReady || isLoadingVisibleStreets) return;
+
+    setState(() {
+      isLoadingVisibleStreets = true;
+    });
+
+    try {
+      final bounds = mapController.camera.visibleBounds;
+      final streetData = await supabase
+          .from('city_streets')
+          .select('id,city,street_name,path')
+          .eq('city', selectedCoverageCity)
+          .lte('min_lat', bounds.north)
+          .gte('max_lat', bounds.south)
+          .lte('min_lng', bounds.east)
+          .gte('max_lng', bounds.west)
+          .limit(visibleStreetLimit);
+      final streets = streetData
+          .map<CityStreet>((item) => CityStreet.fromMap(item))
+          .where((street) => street.path.length > 1)
+          .toList();
+
+      if (!mounted) return;
+
+      setState(() {
+        cityStreets = streets;
+        isLoadingVisibleStreets = false;
+      });
+
+      await syncSavedDrivingPointsToStreetCoverage();
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingVisibleStreets = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load visible streets.')),
       );
     }
   }
@@ -1698,7 +2152,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
         .map(
           (street) => {
             'street_id': street.id,
-            'city': street.city.isEmpty ? coverageCity : street.city,
+            'city': street.city.isEmpty ? selectedCoverageCity : street.city,
             'drive_session_id': driveSessionId,
             'user_id': userId,
           },
@@ -2808,10 +3262,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final leadsFound = widget.leads.length;
     final leadsPerMile = totalMiles == 0 ? 0 : leadsFound / totalMiles;
     final streetIds = cityStreets.map((street) => street.id).toSet();
-    final coveredStreetCount = coveredStreetIds
+    final visibleCoveredStreetCount = coveredStreetIds
         .where(streetIds.contains)
         .length;
-    final totalStreetCount = cityStreets.length;
+    final coveredStreetCount = coveredStreetIds.length;
+    final totalStreetCount = totalCityStreetCount == 0
+        ? cityStreets.length
+        : totalCityStreetCount;
     final remainingStreetCount = math.max(
       0,
       totalStreetCount - coveredStreetCount,
@@ -2820,10 +3277,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final coverageSegments = cityStreets
         .map((street) => CoverageSegment(id: street.id, path: street.path))
         .toList();
-    final streetCoveragePercent = coveragePercentByMiles(
-      coverageSegments,
-      coveredStreetIds,
-    );
+    final streetCoveragePercent = totalStreetCount == 0
+        ? 0.0
+        : (coveredStreetCount / totalStreetCount) * 100;
+    final isStreetCoverageLoading =
+        isLoadingCoverage || isLoadingStreetCoverage;
+    final hasStreetReferenceData = totalStreetCount > 0;
+    final coverageHeadline = isStreetCoverageLoading
+        ? 'Coverage: Loading...'
+        : hasStreetReferenceData
+        ? 'Coverage: ${streetCoveragePercent.toStringAsFixed(0)}%'
+        : 'Coverage: Not available';
     final remainingStreetMiles = remainingMiles(
       coverageSegments,
       coveredStreetIds,
@@ -2834,6 +3298,59 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final uncoveredStreets = cityStreets
         .where((street) => !coveredStreetIds.contains(street.id))
         .toList();
+    final activeAreaPolygon = activeDriveArea?.polygon ?? const <LatLng>[];
+    final activeAreaStreets = activeAreaPolygon.length < 3
+        ? <CityStreet>[]
+        : cityStreets
+              .where(
+                (street) => streetFallsInsidePolygon(street, activeAreaPolygon),
+              )
+              .toList();
+    final activeAreaCoveredStreetCount = activeAreaStreets
+        .where((street) => coveredStreetIds.contains(street.id))
+        .length;
+    final activeAreaRemainingStreetCount = math.max(
+      0,
+      activeAreaStreets.length - activeAreaCoveredStreetCount,
+    );
+    final activeAreaCoveragePercent = activeAreaStreets.isEmpty
+        ? 0.0
+        : (activeAreaCoveredStreetCount / activeAreaStreets.length) * 100;
+    final activeAreaUncoveredStreets = activeAreaStreets
+        .where((street) => !coveredStreetIds.contains(street.id))
+        .toList();
+    final activeAreaCoveredStreets = activeAreaStreets
+        .where((street) => coveredStreetIds.contains(street.id))
+        .toList();
+    final activeAreaLeadsFound = activeAreaPolygon.length < 3
+        ? 0
+        : widget.leads.where((lead) {
+            if (lead.latitude == null || lead.longitude == null) return false;
+
+            return pointInRing(
+              LatLng(lead.latitude!, lead.longitude!),
+              activeAreaPolygon,
+            );
+          }).length;
+    final hasActiveArea = activeDriveArea != null;
+    final limitMapToActiveArea = showOnlyActiveArea && hasActiveArea;
+    final mapCoveredStreets = limitMapToActiveArea
+        ? activeAreaCoveredStreets
+        : coveredStreets;
+    final mapUncoveredStreets = limitMapToActiveArea
+        ? activeAreaUncoveredStreets
+        : uncoveredStreets;
+    final mapLeads = widget.leads.where(leadPassesMapFilter).where((lead) {
+      if (!limitMapToActiveArea || activeAreaPolygon.length < 3) return true;
+
+      return pointInRing(
+        LatLng(lead.latitude!, lead.longitude!),
+        activeAreaPolygon,
+      );
+    }).toList();
+    final drawingBoundaryPoints = drawingAreaPoints.length > 2
+        ? [...drawingAreaPoints, drawingAreaPoints.first]
+        : drawingAreaPoints;
     final showHouseNumberLabels = currentZoom >= houseNumberLabelZoom;
 
     return Scaffold(
@@ -2854,7 +3371,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Coverage: ${streetCoveragePercent.toStringAsFixed(0)}%',
+                coverageHeadline,
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -2891,6 +3408,78 @@ class _DrivingScreenState extends State<DrivingScreen> {
                   child: const Text('Simulate Drive'),
                 ),
               ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  icon: Icon(isDrawAreaMode ? Icons.edit_off : Icons.edit),
+                  label: Text(isDrawAreaMode ? 'Exit Draw Area' : 'Draw Area'),
+                  onPressed: () {
+                    setState(() {
+                      isDrawAreaMode = !isDrawAreaMode;
+                      selectedParcel = null;
+                    });
+                  },
+                ),
+              ),
+              if (isDrawAreaMode) ...[
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Boundary points: ${drawingAreaPoints.length}',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: drawingAreaPoints.isEmpty
+                                    ? null
+                                    : undoLastDrawingPoint,
+                                child: const Text('Undo last point'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: drawingAreaPoints.isEmpty
+                                    ? null
+                                    : clearDrawingArea,
+                                child: const Text('Clear'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: ElevatedButton(
+                            onPressed:
+                                drawingAreaPoints.length < 3 ||
+                                    isSavingDriveArea
+                                ? null
+                                : saveDrawingArea,
+                            child: Text(
+                              isSavingDriveArea ? 'Saving...' : 'Save area',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -2901,8 +3490,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     initialCenter: currentMapCenter,
                     initialZoom: 13,
                     onMapReady: () {
+                      mapIsReady = true;
                       currentZoom = mapController.camera.zoom;
                       loadVisibleParcels();
+                      loadVisibleCityStreets();
                     },
                     onPositionChanged: (camera, _) {
                       final wasShowingHouseNumbers =
@@ -2921,8 +3512,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       }
 
                       scheduleVisibleParcelLoad();
+                      scheduleVisibleStreetLoad();
                     },
-                    onTap: (_, point) => selectParcelAt(point),
+                    onTap: (_, point) => handleMapTap(point),
                   ),
                   children: [
                     TileLayer(
@@ -2942,9 +3534,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             )
                             .toList(),
                       ),
-                    if (uncoveredStreets.isNotEmpty)
+                    if (mapUncoveredStreets.isNotEmpty)
                       PolylineLayer(
-                        polylines: uncoveredStreets
+                        polylines: mapUncoveredStreets
                             .map(
                               (street) => Polyline(
                                 points: street.path,
@@ -2954,9 +3546,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             )
                             .toList(),
                       ),
-                    if (coveredStreets.isNotEmpty)
+                    if (mapCoveredStreets.isNotEmpty)
                       PolylineLayer(
-                        polylines: coveredStreets
+                        polylines: mapCoveredStreets
                             .map(
                               (street) => Polyline(
                                 points: street.path,
@@ -2965,6 +3557,51 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               ),
                             )
                             .toList(),
+                      ),
+                    if (!limitMapToActiveArea &&
+                        activeAreaUncoveredStreets.isNotEmpty)
+                      PolylineLayer(
+                        polylines: activeAreaUncoveredStreets
+                            .map(
+                              (street) => Polyline(
+                                points: street.path,
+                                strokeWidth: 5,
+                                color: const Color(0xFFFF9800),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    if (activeAreaPolygon.length >= 3)
+                      PolygonLayer(
+                        polygons: [
+                          Polygon(
+                            points: activeAreaPolygon,
+                            color: const Color(0x1A1976D2),
+                            borderColor: const Color(0xFF0D47A1),
+                            borderStrokeWidth: 4,
+                          ),
+                        ],
+                      ),
+                    if (drawingBoundaryPoints.length > 1)
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: drawingBoundaryPoints,
+                            strokeWidth: 4,
+                            color: const Color(0xFF7B1FA2),
+                          ),
+                        ],
+                      ),
+                    if (drawingAreaPoints.length >= 3)
+                      PolygonLayer(
+                        polygons: [
+                          Polygon(
+                            points: drawingAreaPoints,
+                            color: const Color(0x247B1FA2),
+                            borderColor: const Color(0xFF7B1FA2),
+                            borderStrokeWidth: 2,
+                          ),
+                        ],
                       ),
                     if (visibleParcels.any((parcel) => parcel.rings.isNotEmpty))
                       PolygonLayer(
@@ -3081,9 +3718,41 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           ),
                         ],
                       ),
+                    if (drawingAreaPoints.isNotEmpty)
+                      MarkerLayer(
+                        markers: drawingAreaPoints
+                            .asMap()
+                            .entries
+                            .map(
+                              (entry) => Marker(
+                                point: entry.value,
+                                width: 30,
+                                height: 30,
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF7B1FA2),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '${entry.key + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
                     MarkerLayer(
-                      markers: widget.leads
-                          .where(leadPassesMapFilter)
+                      markers: mapLeads
                           .map(
                             (lead) => Marker(
                               point: LatLng(lead.latitude!, lead.longitude!),
@@ -3127,6 +3796,174 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
+                        'Drive Areas',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (isLoadingDriveAreas)
+                        const Text('Loading saved drive areas...')
+                      else if (driveAreas.isEmpty)
+                        const Text('No saved drive areas yet.')
+                      else ...[
+                        DropdownButtonFormField<String>(
+                          initialValue: activeDriveArea?.id,
+                          decoration: const InputDecoration(
+                            labelText: 'Active area',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: [
+                            const DropdownMenuItem<String>(
+                              value: '',
+                              child: Text('No active area'),
+                            ),
+                            ...driveAreas.map(
+                              (area) => DropdownMenuItem<String>(
+                                value: area.id,
+                                child: Text(
+                                  area.isComplete
+                                      ? '${area.name} (complete)'
+                                      : area.name,
+                                ),
+                              ),
+                            ),
+                          ],
+                          onChanged: (areaId) {
+                            if (areaId == null) return;
+
+                            final area = areaId.isEmpty
+                                ? null
+                                : driveAreas
+                                      .where((item) => item.id == areaId)
+                                      .firstOrNull;
+                            setActiveDriveArea(area);
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        if (activeDriveArea == null)
+                          const Text('Pick an area to resume it.')
+                        else ...[
+                          Text(
+                            activeDriveArea!.name,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text('City: ${activeDriveArea!.city}'),
+                          const SizedBox(height: 8),
+                          if (activeAreaStreets.isEmpty)
+                            const Text('No street data for this area yet')
+                          else ...[
+                            Text(
+                              'Area coverage: ${activeAreaCoveragePercent.toStringAsFixed(0)}% '
+                              '($activeAreaCoveredStreetCount/${activeAreaStreets.length} streets)',
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Covered streets: $activeAreaCoveredStreetCount',
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Remaining streets: $activeAreaRemainingStreetCount',
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          Text(
+                            'Leads found inside area: $activeAreaLeadsFound',
+                          ),
+                          const SizedBox(height: 12),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Show only active area'),
+                            value: showOnlyActiveArea,
+                            onChanged: (value) {
+                              setState(() {
+                                showOnlyActiveArea = value;
+                              });
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: ElevatedButton.icon(
+                              icon: Icon(
+                                isTracking
+                                    ? Icons.navigation
+                                    : Icons.play_arrow,
+                              ),
+                              label: Text(
+                                isTracking
+                                    ? 'Area Drive Running'
+                                    : 'Start Area Drive',
+                              ),
+                              onPressed: startAreaDrive,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.near_me),
+                              label: const Text('Next uncovered street'),
+                              onPressed: activeAreaUncoveredStreets.isEmpty
+                                  ? null
+                                  : () => focusNextUncoveredStreet(
+                                      activeAreaUncoveredStreets,
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: OutlinedButton(
+                              onPressed: markActiveDriveAreaComplete,
+                              child: const Text('Mark area complete'),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedCoverageCity,
+                decoration: const InputDecoration(
+                  labelText: 'Coverage city',
+                  border: OutlineInputBorder(),
+                ),
+                items: supportedCoverageCities
+                    .map(
+                      (city) =>
+                          DropdownMenuItem(value: city, child: Text(city)),
+                    )
+                    .toList(),
+                onChanged: isTracking
+                    ? null
+                    : (city) {
+                        if (city == null || city == selectedCoverageCity) {
+                          return;
+                        }
+
+                        changeCoverageCity(city);
+                      },
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
                         'Coverage Statistics',
                         style: TextStyle(
                           fontSize: 22,
@@ -3134,14 +3971,32 @@ class _DrivingScreenState extends State<DrivingScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      if (isLoadingCoverage || isLoadingStreetCoverage)
+                      if (isStreetCoverageLoading)
                         const Text(
                           'Loading saved coverage...',
                           style: TextStyle(fontSize: 18),
                         )
-                      else ...[
+                      else if (!hasStreetReferenceData) ...[
                         Text(
-                          'City: $coverageCity',
+                          'City: $selectedCoverageCity',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'No street data loaded for $selectedCoverageCity yet.',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Import city street data to enable coverage tracking here.',
+                          style: TextStyle(fontSize: 18),
+                        ),
+                      ] else ...[
+                        Text(
+                          'City: $selectedCoverageCity',
                           style: const TextStyle(fontSize: 18),
                         ),
                         const SizedBox(height: 8),
@@ -3152,6 +4007,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
                         const SizedBox(height: 8),
                         Text(
                           'Miles remaining: ${remainingStreetMiles.toStringAsFixed(1)}',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Visible streets covered: $visibleCoveredStreetCount',
                           style: const TextStyle(fontSize: 18),
                         ),
                         const SizedBox(height: 8),
