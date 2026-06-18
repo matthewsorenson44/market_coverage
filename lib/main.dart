@@ -8270,8 +8270,74 @@ class LeadListScreen extends StatefulWidget {
 }
 
 class _LeadListScreenState extends State<LeadListScreen> {
+  final searchController = TextEditingController();
   String searchQuery = '';
   String stageFilter = 'All';
+  String sourceFilter = 'All';
+  String revisitFilter = 'All';
+  String propertySignalFilter = 'All';
+  String sortMode = 'Score high to low';
+  double minScoreFilter = 0;
+  double maxScoreFilter = 100;
+  bool showAdvancedFilters = false;
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  void resetFilters() {
+    setState(() {
+      searchQuery = '';
+      searchController.clear();
+      stageFilter = 'All';
+      sourceFilter = 'All';
+      revisitFilter = 'All';
+      propertySignalFilter = 'All';
+      sortMode = 'Score high to low';
+      minScoreFilter = 0;
+      maxScoreFilter = 100;
+    });
+  }
+
+  bool leadMatchesRevisitFilter(Lead lead) {
+    final today = DateTime.now();
+    final reminderDate = lead.reminderData.reminderDate;
+
+    return switch (revisitFilter) {
+      'Needs revisit' => lead.reminderData.followUpStatus == 'Needs Revisit',
+      'Scheduled' => lead.reminderData.followUpStatus == 'Scheduled',
+      'Due today' => isSameDate(reminderDate, today),
+      'Overdue' => isBeforeDate(reminderDate, today),
+      'No reminder' => reminderDate == null,
+      _ => true,
+    };
+  }
+
+  bool leadMatchesPropertySignalFilter(Lead lead) {
+    return switch (propertySignalFilter) {
+      'Out-of-state owner' => lead.parcelData.outOfStateOwner,
+      'Has owner name' => lead.parcelData.ownerName.trim().isNotEmpty,
+      'Has mailing address' => lead.parcelData.mailingAddress.trim().isNotEmpty,
+      'Has ARV/MAO' => lead.offerData.arv != null || lead.offerData.mao != null,
+      'Has location' => lead.latitude != null && lead.longitude != null,
+      'Hot score 70+' => lead.score >= 70,
+      _ => true,
+    };
+  }
+
+  int get activeFilterCount {
+    var count = 0;
+    if (searchQuery.trim().isNotEmpty) count++;
+    if (stageFilter != 'All') count++;
+    if (sourceFilter != 'All') count++;
+    if (revisitFilter != 'All') count++;
+    if (propertySignalFilter != 'All') count++;
+    if (minScoreFilter > 0 || maxScoreFilter < 100) count++;
+    if (sortMode != 'Score high to low') count++;
+    return count;
+  }
 
   Future<void> exportLeadsCsv(List<Lead> leads) async {
     await Clipboard.setData(ClipboardData(text: leadsToCsv(leads)));
@@ -8287,17 +8353,28 @@ class _LeadListScreenState extends State<LeadListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final sortedLeads = [...widget.leads]
-      ..sort((a, b) => b.score.compareTo(a.score));
+    final sortedLeads = [...widget.leads];
     final stages = <String>{
       'All',
       ...sortedLeads.map((lead) => normalizeLeadStage(lead.status)),
+    }.toList();
+    final sources = <String>{
+      'All',
+      ...leadSourceOptions,
+      ...sortedLeads
+          .map((lead) => lead.source)
+          .where((source) => source.isNotEmpty),
     }.toList();
     final normalizedQuery = searchQuery.trim().toLowerCase();
     final filteredLeads = sortedLeads
         .where((lead) {
           final stage = normalizeLeadStage(lead.status);
           final matchesStage = stageFilter == 'All' || stage == stageFilter;
+          final matchesSource =
+              sourceFilter == 'All' || lead.source == sourceFilter;
+          final matchesScore =
+              lead.score >= minScoreFilter.round() &&
+              lead.score <= maxScoreFilter.round();
           final matchesSearch =
               normalizedQuery.isEmpty ||
               leadPrimaryLabel(lead).toLowerCase().contains(normalizedQuery) ||
@@ -8308,11 +8385,36 @@ class _LeadListScreenState extends State<LeadListScreen> {
               lead.parcelData.ownerName.toLowerCase().contains(
                 normalizedQuery,
               ) ||
+              lead.source.toLowerCase().contains(normalizedQuery) ||
+              lead.condition.toLowerCase().contains(normalizedQuery) ||
               lead.notes.toLowerCase().contains(normalizedQuery);
 
-          return matchesStage && matchesSearch;
+          return matchesStage &&
+              matchesSource &&
+              matchesScore &&
+              matchesSearch &&
+              leadMatchesRevisitFilter(lead) &&
+              leadMatchesPropertySignalFilter(lead);
         })
         .toList(growable: false);
+    filteredLeads.sort((a, b) {
+      return switch (sortMode) {
+        'Score low to high' => a.score.compareTo(b.score),
+        'Newest first' =>
+          (b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+            a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        'Oldest first' =>
+          (a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+            b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        'Owner A-Z' => leadPrimaryLabel(a).compareTo(leadPrimaryLabel(b)),
+        'Stage A-Z' => normalizeLeadStage(
+          a.status,
+        ).compareTo(normalizeLeadStage(b.status)),
+        _ => b.score.compareTo(a.score),
+      };
+    });
     final hotLeads = sortedLeads.where((lead) => lead.score >= 70).length;
     final avgScore = sortedLeads.isEmpty
         ? 0
@@ -8424,47 +8526,304 @@ class _LeadListScreenState extends State<LeadListScreen> {
               },
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      labelText: 'Search address, owner, or notes',
-                    ),
-                    onChanged: (value) {
-                      setState(() {
-                        searchQuery = value;
-                      });
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 220,
-                  child: DropdownButtonFormField<String>(
-                    initialValue: stages.contains(stageFilter)
-                        ? stageFilter
-                        : 'All',
-                    decoration: const InputDecoration(
-                      labelText: 'Pipeline stage',
-                    ),
-                    items: stages
-                        .map(
-                          (stage) => DropdownMenuItem(
-                            value: stage,
-                            child: Text(stage),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isWide = constraints.maxWidth >= 900;
+                        final searchField = TextField(
+                          controller: searchController,
+                          decoration: const InputDecoration(
+                            prefixIcon: Icon(Icons.search),
+                            labelText: 'Search owner, address, source, notes',
                           ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        stageFilter = value ?? 'All';
-                      });
-                    },
-                  ),
+                          onChanged: (value) {
+                            setState(() {
+                              searchQuery = value;
+                            });
+                          },
+                        );
+                        final stageField = DropdownButtonFormField<String>(
+                          initialValue: stages.contains(stageFilter)
+                              ? stageFilter
+                              : 'All',
+                          decoration: const InputDecoration(
+                            labelText: 'Pipeline stage',
+                          ),
+                          items: stages
+                              .map(
+                                (stage) => DropdownMenuItem(
+                                  value: stage,
+                                  child: Text(stage),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              stageFilter = value ?? 'All';
+                            });
+                          },
+                        );
+                        final sortField = DropdownButtonFormField<String>(
+                          initialValue: sortMode,
+                          decoration: const InputDecoration(labelText: 'Sort'),
+                          items:
+                              const [
+                                    'Score high to low',
+                                    'Score low to high',
+                                    'Newest first',
+                                    'Oldest first',
+                                    'Owner A-Z',
+                                    'Stage A-Z',
+                                  ]
+                                  .map(
+                                    (sort) => DropdownMenuItem(
+                                      value: sort,
+                                      child: Text(sort),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              sortMode = value ?? 'Score high to low';
+                            });
+                          },
+                        );
+
+                        if (!isWide) {
+                          return Column(
+                            children: [
+                              searchField,
+                              const SizedBox(height: 10),
+                              stageField,
+                              const SizedBox(height: 10),
+                              sortField,
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            Expanded(flex: 2, child: searchField),
+                            const SizedBox(width: 10),
+                            Expanded(child: stageField),
+                            const SizedBox(width: 10),
+                            Expanded(child: sortField),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Chip(
+                                avatar: const Icon(Icons.filter_list, size: 18),
+                                label: Text(
+                                  '$activeFilterCount active filters',
+                                ),
+                              ),
+                              Text(
+                                '${filteredLeads.length} of ${sortedLeads.length} leads shown',
+                                style: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: activeFilterCount == 0
+                              ? null
+                              : resetFilters,
+                          icon: const Icon(Icons.restart_alt),
+                          label: const Text('Reset'),
+                        ),
+                        IconButton(
+                          tooltip: showAdvancedFilters
+                              ? 'Hide advanced filters'
+                              : 'Show advanced filters',
+                          onPressed: () {
+                            setState(() {
+                              showAdvancedFilters = !showAdvancedFilters;
+                            });
+                          },
+                          icon: Icon(
+                            showAdvancedFilters
+                                ? Icons.expand_less
+                                : Icons.tune,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (showAdvancedFilters) ...[
+                      const Divider(height: 22),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isWide = constraints.maxWidth >= 900;
+                          final sourceField = DropdownButtonFormField<String>(
+                            initialValue: sources.contains(sourceFilter)
+                                ? sourceFilter
+                                : 'All',
+                            decoration: const InputDecoration(
+                              labelText: 'Lead source',
+                            ),
+                            items: sources
+                                .map(
+                                  (source) => DropdownMenuItem(
+                                    value: source,
+                                    child: Text(source),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                sourceFilter = value ?? 'All';
+                              });
+                            },
+                          );
+                          final revisitField = DropdownButtonFormField<String>(
+                            initialValue: revisitFilter,
+                            decoration: const InputDecoration(
+                              labelText: 'Revisit status',
+                            ),
+                            items:
+                                const [
+                                      'All',
+                                      'Needs revisit',
+                                      'Scheduled',
+                                      'Due today',
+                                      'Overdue',
+                                      'No reminder',
+                                    ]
+                                    .map(
+                                      (filter) => DropdownMenuItem(
+                                        value: filter,
+                                        child: Text(filter),
+                                      ),
+                                    )
+                                    .toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                revisitFilter = value ?? 'All';
+                              });
+                            },
+                          );
+                          final signalField = DropdownButtonFormField<String>(
+                            initialValue: propertySignalFilter,
+                            decoration: const InputDecoration(
+                              labelText: 'Property signal',
+                            ),
+                            items:
+                                const [
+                                      'All',
+                                      'Out-of-state owner',
+                                      'Has owner name',
+                                      'Has mailing address',
+                                      'Has ARV/MAO',
+                                      'Has location',
+                                      'Hot score 70+',
+                                    ]
+                                    .map(
+                                      (filter) => DropdownMenuItem(
+                                        value: filter,
+                                        child: Text(filter),
+                                      ),
+                                    )
+                                    .toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                propertySignalFilter = value ?? 'All';
+                              });
+                            },
+                          );
+                          final scoreFilter = Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: const Color(0xFFD1D5DB),
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Score ${minScoreFilter.round()}-${maxScoreFilter.round()}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                RangeSlider(
+                                  min: 0,
+                                  max: 100,
+                                  divisions: 20,
+                                  labels: RangeLabels(
+                                    minScoreFilter.round().toString(),
+                                    maxScoreFilter.round().toString(),
+                                  ),
+                                  values: RangeValues(
+                                    minScoreFilter,
+                                    maxScoreFilter,
+                                  ),
+                                  onChanged: (values) {
+                                    setState(() {
+                                      minScoreFilter = values.start;
+                                      maxScoreFilter = values.end;
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+
+                          if (!isWide) {
+                            return Column(
+                              children: [
+                                sourceField,
+                                const SizedBox(height: 10),
+                                revisitField,
+                                const SizedBox(height: 10),
+                                signalField,
+                                const SizedBox(height: 10),
+                                scoreFilter,
+                              ],
+                            );
+                          }
+
+                          return Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(child: sourceField),
+                                  const SizedBox(width: 10),
+                                  Expanded(child: revisitField),
+                                  const SizedBox(width: 10),
+                                  Expanded(child: signalField),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              scoreFilter,
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ],
                 ),
-              ],
+              ),
             ),
             const SizedBox(height: 16),
             Expanded(
