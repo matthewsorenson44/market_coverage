@@ -62,7 +62,19 @@ const int visibleParcelZoom = 17;
 const int houseNumberLabelZoom = 18;
 const int visibleParcelLimit = 250;
 const int visibleStreetLimit = 800;
+const int missionStreetCount = 12;
 const double streetCoverageMatchMiles = 0.035;
+const int targetScoreVersion = 1;
+const double opportunityStreetMatchMiles = 0.04;
+const Map<String, double> targetScoreWeights = {
+  'out_of_state': 18,
+  'absentee': 18,
+  'portfolio_owner_3_plus': 18,
+  'portfolio_owner_5_plus': 8,
+  'low_improvement_ratio': 18,
+  'long_held': 12,
+  'older_build': 8,
+};
 
 class LeadScoreData {
   final bool brokenWindows;
@@ -453,6 +465,8 @@ class ParcelProperty {
   final double? stories;
   final LatLng? centroid;
   final List<List<LatLng>> rings;
+  final double? targetScore;
+  final Map<String, dynamic>? scoreBreakdown;
 
   const ParcelProperty({
     required this.accountNo,
@@ -478,6 +492,8 @@ class ParcelProperty {
     required this.stories,
     required this.centroid,
     required this.rings,
+    this.targetScore,
+    this.scoreBreakdown,
   });
 
   factory ParcelProperty.fromArcGisFeature(Map<String, dynamic> feature) {
@@ -524,6 +540,8 @@ class ParcelProperty {
       stories: parseParcelDouble(attributes['Stories']),
       centroid: attributeCentroid ?? polygonCentroid(rings),
       rings: rings,
+      targetScore: null,
+      scoreBreakdown: null,
     );
   }
 
@@ -743,6 +761,9 @@ class MarketProperty {
   final bool outOfState;
   final bool absentee;
   final Map<String, dynamic> signals;
+  final double targetScore;
+  final Map<String, dynamic> scoreBreakdown;
+  final bool hasStoredScore;
 
   const MarketProperty({
     required this.id,
@@ -751,11 +772,17 @@ class MarketProperty {
     required this.outOfState,
     required this.absentee,
     required this.signals,
+    required this.targetScore,
+    required this.scoreBreakdown,
+    required this.hasStoredScore,
   });
 
   factory MarketProperty.fromMap(Map<String, dynamic> map) {
     final latitude = (map['latitude'] as num?)?.toDouble();
     final longitude = (map['longitude'] as num?)?.toDouble();
+    final targetScore = (map['target_score'] as num?)?.toDouble() ?? 0;
+    final scoreBreakdown =
+        (map['score_breakdown'] as Map?)?.cast<String, dynamic>() ?? {};
 
     return MarketProperty(
       id: map['id'].toString(),
@@ -786,16 +813,91 @@ class MarketProperty {
             ? null
             : LatLng(latitude, longitude),
         rings: parseStoredParcelRings(map['rings']),
+        targetScore: targetScore,
+        scoreBreakdown: scoreBreakdown,
       ),
       outOfState: map['out_of_state'] == true,
       absentee: map['absentee'] == true,
       signals: (map['signals'] as Map?)?.cast<String, dynamic>() ?? {},
+      targetScore: targetScore,
+      scoreBreakdown: scoreBreakdown,
+      hasStoredScore: map['target_score'] != null,
     );
   }
 
   int get portfolioCount => ((signals['portfolio_count'] ?? 0) as num).toInt();
 
   bool get lowImprovementRatio => signals['low_improvement_ratio'] == true;
+}
+
+class StreetOpportunity {
+  final CityStreet street;
+  final double score;
+  final bool isCovered;
+
+  const StreetOpportunity({
+    required this.street,
+    required this.score,
+    required this.isCovered,
+  });
+}
+
+class Mission {
+  final String id;
+  final String driveAreaId;
+  final String status;
+  final List<String> targetStreetIds;
+  final int streetCount;
+  final double opportunityAtStart;
+  final String? driveSessionId;
+  final DateTime? createdAt;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+
+  const Mission({
+    required this.id,
+    required this.driveAreaId,
+    required this.status,
+    required this.targetStreetIds,
+    required this.streetCount,
+    required this.opportunityAtStart,
+    required this.driveSessionId,
+    required this.createdAt,
+    required this.startedAt,
+    required this.completedAt,
+  });
+
+  factory Mission.fromMap(Map<String, dynamic> map) {
+    return Mission(
+      id: map['id'].toString(),
+      driveAreaId: map['drive_area_id']?.toString() ?? '',
+      status: map['status']?.toString() ?? 'active',
+      targetStreetIds: parseMissionStreetIds(map['target_street_ids']),
+      streetCount: ((map['street_count'] ?? 0) as num).toInt(),
+      opportunityAtStart: ((map['opportunity_at_start'] ?? 0) as num)
+          .toDouble(),
+      driveSessionId: map['drive_session_id']?.toString(),
+      createdAt: map['created_at'] == null
+          ? null
+          : DateTime.tryParse(map['created_at'].toString()),
+      startedAt: map['started_at'] == null
+          ? null
+          : DateTime.tryParse(map['started_at'].toString()),
+      completedAt: map['completed_at'] == null
+          ? null
+          : DateTime.tryParse(map['completed_at'].toString()),
+    );
+  }
+
+  bool get isActive => status == 'active';
+  bool get isPaused => status == 'paused';
+  bool get isOpen => isActive || isPaused;
+}
+
+List<String> parseMissionStreetIds(dynamic value) {
+  if (value is! List) return [];
+
+  return value.map((item) => item.toString()).toList(growable: false);
 }
 
 List<LatLng> parseDriveAreaPolygon(dynamic value) {
@@ -853,6 +955,98 @@ bool streetFallsInsidePolygon(CityStreet street, List<LatLng> polygon) {
   }
 
   return false;
+}
+
+({double score, Map<String, dynamic> breakdown}) targetScoreForSignals(
+  Map<String, dynamic> signals,
+) {
+  final contributions = <Map<String, dynamic>>[];
+  var score = 0.0;
+
+  void addContribution(String label, String key, bool applies) {
+    final points = applies ? (targetScoreWeights[key] ?? 0) : 0.0;
+    score += points;
+    contributions.add({
+      'label': label,
+      'key': key,
+      'applies': applies,
+      'points': points,
+    });
+  }
+
+  final portfolioCount = ((signals['portfolio_count'] ?? 0) as num).toInt();
+
+  addContribution(
+    'Out-of-state owner',
+    'out_of_state',
+    signals['out_of_state'] == true,
+  );
+  addContribution('Absentee owner', 'absentee', signals['absentee'] == true);
+  addContribution(
+    'Portfolio owner 3+',
+    'portfolio_owner_3_plus',
+    portfolioCount >= 3,
+  );
+  addContribution(
+    'Portfolio owner 5+ bonus',
+    'portfolio_owner_5_plus',
+    portfolioCount >= 5,
+  );
+  addContribution(
+    'Low improvement ratio',
+    'low_improvement_ratio',
+    signals['low_improvement_ratio'] == true,
+  );
+  addContribution('Long held', 'long_held', signals['long_held'] == true);
+  addContribution('Older build', 'older_build', signals['older_build'] == true);
+
+  final clampedScore = score.clamp(0, 100).toDouble();
+
+  return (
+    score: clampedScore,
+    breakdown: {
+      'version': targetScoreVersion,
+      'score': clampedScore,
+      'weights': targetScoreWeights,
+      'contributions': contributions,
+    },
+  );
+}
+
+Color targetScoreColor(double score) {
+  if (score >= 70) return const Color(0xFFC62828);
+  if (score >= 40) return const Color(0xFFF9A825);
+  return const Color(0xFF2E7D32);
+}
+
+double remainingOpportunityForArea(
+  List<MarketProperty> properties,
+  List<CityStreet> activeAreaStreets,
+  Set<String> coveredStreetIds,
+) {
+  if (properties.isEmpty) return 0;
+
+  final coveredStreets = activeAreaStreets
+      .where((street) => coveredStreetIds.contains(street.id))
+      .toList();
+
+  var remaining = 0.0;
+
+  for (final property in properties) {
+    final centroid = property.parcel.centroid;
+
+    if (centroid == null) continue;
+
+    final covered = coveredStreets.any(
+      (street) =>
+          distanceToStreetMiles(centroid, street) <=
+          opportunityStreetMatchMiles,
+    );
+
+    if (!covered) remaining += property.targetScore;
+  }
+
+  return remaining;
 }
 
 const double maxRoutePointGapMiles = 0.5;
@@ -1133,8 +1327,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     LeadScoreData scoreData,
   ) async {
     final leadLocation = parcel.centroid;
-
-    await supabase.from('leads').insert({
+    final row = {
       'user_id': supabase.auth.currentUser?.id,
       'address': parcel.displayAddress,
       'condition': 'Parcel Selected',
@@ -1156,7 +1349,15 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
       'deed_type': parcel.deedType,
       'document_date': parcel.documentDate,
       'reception_no': parcel.receptionNo,
-    });
+      if (parcel.targetScore != null) 'target_score': parcel.targetScore,
+    };
+
+    try {
+      await supabase.from('leads').insert(row);
+    } catch (_) {
+      row.remove('target_score');
+      await supabase.from('leads').insert(row);
+    }
 
     await loadLeads();
   }
@@ -1754,6 +1955,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool targetFilterPortfolio = false;
   bool targetFilterLowImprovement = false;
   bool showOnlyTargetsOnMap = false;
+  Map<String, double> driveAreaRemainingOpportunity = {};
+  Mission? activeMission;
+  List<Mission> completedMissions = [];
+  bool isLoadingMissions = false;
+  bool isSavingMission = false;
 
   // Lead map filters (display-only; does not affect data or other layers).
   bool showLeadsOnMap = true;
@@ -1902,7 +2108,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
         await loadStreetCoverage();
       }
 
+      await loadDriveAreaPriorities(areas);
       await loadMarketProperties();
+      await loadMissions();
     } catch (_) {
       if (!mounted) return;
 
@@ -1936,6 +2144,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       await loadDriveAreas();
       await loadMarketProperties();
+      await loadMissions();
     } catch (_) {
       if (!mounted) return;
 
@@ -1961,6 +2170,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       await loadDriveAreas();
       await loadMarketProperties();
+      await loadMissions();
     } catch (_) {
       if (!mounted) return;
 
@@ -2003,6 +2213,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
         marketProperties = properties;
         isLoadingMarketProperties = false;
       });
+
+      if (properties.any((property) => !property.hasStoredScore)) {
+        await scoreStoredMarketProperties(properties);
+      }
     } catch (_) {
       if (!mounted) return;
 
@@ -2012,6 +2226,279 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not load market properties.')),
+      );
+    }
+  }
+
+  Future<void> loadDriveAreaPriorities(List<DriveArea> areas) async {
+    if (areas.isEmpty) return;
+
+    try {
+      final areaIds = areas.map((area) => area.id).toList(growable: false);
+      final data = await supabase
+          .from('properties')
+          .select('drive_area_id,target_score')
+          .inFilter('drive_area_id', areaIds);
+      final priorities = <String, double>{};
+
+      for (final row in data) {
+        final areaId = row['drive_area_id']?.toString();
+        final score = (row['target_score'] as num?)?.toDouble() ?? 0;
+
+        if (areaId == null || areaId.isEmpty) continue;
+
+        priorities[areaId] = (priorities[areaId] ?? 0) + score;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        driveAreaRemainingOpportunity = priorities;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        driveAreaRemainingOpportunity = {};
+      });
+    }
+  }
+
+  Future<void> loadMissions() async {
+    final area = activeDriveArea;
+
+    if (area == null) {
+      if (!mounted) return;
+
+      setState(() {
+        activeMission = null;
+        completedMissions = [];
+        isLoadingMissions = false;
+      });
+      return;
+    }
+
+    setState(() {
+      isLoadingMissions = true;
+    });
+
+    try {
+      final data = await supabase
+          .from('missions')
+          .select()
+          .eq('drive_area_id', area.id)
+          .order('created_at', ascending: false);
+      final missions = data
+          .map<Mission>((item) => Mission.fromMap(item))
+          .toList(growable: false);
+      final openMission = missions
+          .where((mission) => mission.isOpen)
+          .firstOrNull;
+
+      if (!mounted) return;
+
+      setState(() {
+        activeMission = openMission;
+        completedMissions = missions
+            .where((mission) => mission.status == 'completed')
+            .toList(growable: false);
+        isLoadingMissions = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingMissions = false;
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not load missions.')));
+    }
+  }
+
+  Future<void> generateMission(
+    List<StreetOpportunity> streetOpportunities,
+  ) async {
+    final area = activeDriveArea;
+    if (area == null || isSavingMission) return;
+
+    final existingOpen = activeMission;
+    if (existingOpen != null && existingOpen.isOpen) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This area already has an open mission.')),
+      );
+      return;
+    }
+
+    final missionStreets = streetOpportunities
+        .where((opportunity) => !opportunity.isCovered && opportunity.score > 0)
+        .take(missionStreetCount)
+        .toList(growable: false);
+
+    if (missionStreets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No uncovered opportunity streets found.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      isSavingMission = true;
+    });
+
+    try {
+      await supabase.from('missions').insert({
+        'drive_area_id': area.id,
+        'status': 'active',
+        'target_street_ids': missionStreets
+            .map((opportunity) => opportunity.street.id)
+            .toList(growable: false),
+        'street_count': missionStreets.length,
+        'opportunity_at_start': missionStreets.fold<double>(
+          0,
+          (total, opportunity) => total + opportunity.score,
+        ),
+      });
+
+      await loadMissions();
+
+      if (!mounted) return;
+
+      setState(() {
+        isSavingMission = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isSavingMission = false;
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not start mission.')));
+    }
+  }
+
+  Future<void> startMissionDriving() async {
+    final mission = activeMission;
+    if (mission == null || isSavingMission) return;
+
+    final sessionId = 'mission-${DateTime.now().millisecondsSinceEpoch}';
+
+    setState(() {
+      currentDriveSessionId = sessionId;
+    });
+
+    try {
+      await supabase
+          .from('missions')
+          .update({
+            'status': 'active',
+            'started_at':
+                mission.startedAt?.toUtc().toIso8601String() ??
+                DateTime.now().toUtc().toIso8601String(),
+            'drive_session_id': sessionId,
+          })
+          .eq('id', mission.id);
+
+      await loadMissions();
+      await startTracking(sessionIdOverride: sessionId);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not start mission driving.')),
+      );
+    }
+  }
+
+  Future<void> pauseMission() async {
+    final mission = activeMission;
+    if (mission == null) return;
+
+    try {
+      if (isTracking) {
+        await stopTracking();
+      }
+
+      await supabase
+          .from('missions')
+          .update({'status': 'paused'})
+          .eq('id', mission.id);
+      await loadMissions();
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not pause mission.')));
+    }
+  }
+
+  Future<void> completeMission({
+    required int streetsCovered,
+    required double opportunityCaptured,
+    required int leadsFound,
+    required double milesDriven,
+  }) async {
+    final mission = activeMission;
+    if (mission == null) return;
+
+    try {
+      if (isTracking) {
+        await stopTracking();
+      }
+
+      await supabase
+          .from('missions')
+          .update({
+            'status': 'completed',
+            'completed_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', mission.id);
+
+      await loadMissions();
+
+      if (!mounted) return;
+
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Mission complete'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Streets covered: $streetsCovered'),
+                const SizedBox(height: 8),
+                Text(
+                  'Opportunity captured: ${opportunityCaptured.toStringAsFixed(0)}',
+                ),
+                const SizedBox(height: 8),
+                Text('Leads found: $leadsFound'),
+                const SizedBox(height: 8),
+                Text('Miles driven: ${milesDriven.toStringAsFixed(2)}'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not complete mission.')),
       );
     }
   }
@@ -2102,6 +2589,38 @@ class _DrivingScreenState extends State<DrivingScreen> {
     };
   }
 
+  Future<void> scoreStoredMarketProperties(
+    List<MarketProperty> properties,
+  ) async {
+    final unscoredRows = properties
+        .where((property) => !property.hasStoredScore)
+        .map((property) {
+          final result = targetScoreForSignals(property.signals);
+
+          return {
+            'id': property.id,
+            'target_score': result.score,
+            'score_breakdown': result.breakdown,
+            'score_version': targetScoreVersion,
+            'scored_at': DateTime.now().toUtc().toIso8601String(),
+          };
+        })
+        .toList(growable: false);
+
+    if (unscoredRows.isEmpty) return;
+
+    try {
+      await supabase.from('properties').upsert(unscoredRows);
+      await loadMarketProperties();
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not score market properties.')),
+      );
+    }
+  }
+
   Map<String, dynamic> marketPropertyRow(
     DriveArea area,
     ParcelProperty parcel,
@@ -2109,6 +2628,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   ) {
     final centroid = parcel.centroid;
     final signals = marketSignalsForParcel(parcel, portfolioCount);
+    final scoreResult = targetScoreForSignals(signals);
 
     return {
       'account_no': marketPropertyKey(parcel),
@@ -2132,6 +2652,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
       'longitude': centroid?.longitude,
       'rings': parcelRingsToJson(parcel.rings),
       'signals': signals,
+      'target_score': scoreResult.score,
+      'score_breakdown': scoreResult.breakdown,
+      'score_version': targetScoreVersion,
+      'scored_at': DateTime.now().toUtc().toIso8601String(),
       'refreshed_at': DateTime.now().toUtc().toIso8601String(),
     };
   }
@@ -2334,6 +2858,199 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
 
     return true;
+  }
+
+  MarketProperty? marketPropertyForParcel(ParcelProperty parcel) {
+    final parcelKey = marketPropertyKey(parcel);
+
+    for (final property in marketProperties) {
+      if (marketPropertyKey(property.parcel) == parcelKey) return property;
+    }
+
+    return null;
+  }
+
+  Widget targetScoreBadge(
+    double score, {
+    double fontSize = 13,
+    VoidCallback? onTap,
+  }) {
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: targetScoreColor(score),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        score.toStringAsFixed(0),
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: fontSize,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+
+    if (onTap == null) return badge;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: badge,
+    );
+  }
+
+  List<StreetOpportunity> streetOpportunitiesFor(
+    List<CityStreet> streets,
+    List<MarketProperty> properties,
+  ) {
+    final opportunities = streets.map((street) {
+      final isCovered = coveredStreetIds.contains(street.id);
+      var score = 0.0;
+
+      if (!isCovered) {
+        for (final property in properties) {
+          final centroid = property.parcel.centroid;
+
+          if (centroid == null) continue;
+
+          if (distanceToStreetMiles(centroid, street) <=
+              opportunityStreetMatchMiles) {
+            score += property.targetScore;
+          }
+        }
+      }
+
+      return StreetOpportunity(
+        street: street,
+        score: score,
+        isCovered: isCovered,
+      );
+    }).toList();
+
+    opportunities.sort((a, b) => b.score.compareTo(a.score));
+
+    return opportunities;
+  }
+
+  Color streetOpportunityColor(StreetOpportunity opportunity) {
+    if (opportunity.isCovered) return const Color(0x555F6368);
+    if (opportunity.score >= 220) return const Color(0xFFE53935);
+    if (opportunity.score >= 120) return const Color(0xFFFF9800);
+    if (opportunity.score > 0) return const Color(0xFFFDD835);
+    return const Color(0x66757575);
+  }
+
+  void showTargetScoreBreakdown(MarketProperty property) {
+    final contributions =
+        (property.scoreBreakdown['contributions'] as List?) ?? const [];
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            'Target Score ${property.targetScore.toStringAsFixed(0)}',
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(property.parcel.displayAddress),
+                  const SizedBox(height: 12),
+                  ...contributions.whereType<Map>().map((item) {
+                    final label = item['label']?.toString() ?? 'Signal';
+                    final applies = item['applies'] == true;
+                    final points = ((item['points'] ?? 0) as num).toDouble();
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            applies
+                                ? Icons.check_circle
+                                : Icons.circle_outlined,
+                            size: 18,
+                            color: applies
+                                ? targetScoreColor(points)
+                                : const Color(0xFF757575),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(label)),
+                          Text('+${points.toStringAsFixed(0)}'),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Done'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  StreetOpportunity? chooseNextMissionStreet(
+    List<StreetOpportunity> uncoveredMissionOpportunities,
+  ) {
+    if (uncoveredMissionOpportunities.isEmpty) return null;
+
+    final origin = myLocation ?? currentMapCenter;
+    final ranked = [...uncoveredMissionOpportunities];
+
+    ranked.sort((a, b) {
+      final scoreCompare = b.score.compareTo(a.score);
+      if (scoreCompare != 0) return scoreCompare;
+
+      return distanceToStreetMiles(
+        origin,
+        a.street,
+      ).compareTo(distanceToStreetMiles(origin, b.street));
+    });
+
+    return ranked.first;
+  }
+
+  int leadsFoundDuringMission(Mission? mission, List<LatLng> areaPolygon) {
+    if (mission?.startedAt == null || areaPolygon.length < 3) return 0;
+
+    final startedAt = mission!.startedAt!;
+
+    return widget.leads.where((lead) {
+      final createdAt = lead.createdAt;
+      if (createdAt == null || createdAt.isBefore(startedAt)) return false;
+      if (lead.latitude == null || lead.longitude == null) return false;
+
+      return pointInRing(LatLng(lead.latitude!, lead.longitude!), areaPolygon);
+    }).length;
+  }
+
+  double milesForMission(Mission mission) {
+    final driveSessionId = mission.driveSessionId;
+    if (driveSessionId == null || driveSessionId.isEmpty) return 0;
+
+    return drivingPointMiles(
+      savedDrivingPoints
+          .where((point) => point.driveSessionId == driveSessionId)
+          .toList(growable: false),
+    );
+  }
+
+  int coveredStreetCountForMission(Mission mission) {
+    return mission.targetStreetIds
+        .where((streetId) => coveredStreetIds.contains(streetId))
+        .length;
   }
 
   void handleMapTap(LatLng point) {
@@ -3059,6 +3776,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
         var broken = false;
         var grass = false;
         final existingLead = leadForParcel(parcel);
+        final marketProperty = marketPropertyForParcel(parcel);
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
@@ -3096,6 +3814,24 @@ class _DrivingScreenState extends State<DrivingScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
+                      if (marketProperty != null) ...[
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Target score',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            targetScoreBadge(
+                              marketProperty.targetScore,
+                              onTap: () =>
+                                  showTargetScoreBreakdown(marketProperty),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       parcelPreviewRow('Address', parcel.displayAddress),
                       parcelPreviewRow('Owner', parcel.ownerName ?? 'Not set'),
                       parcelPreviewRow(
@@ -3390,14 +4126,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
     mapController.move(newLocation, 16);
   }
 
-  Future<void> startTracking() async {
+  Future<void> startTracking({String? sessionIdOverride}) async {
     final allowed = await checkLocationPermission();
 
     if (!allowed) return;
 
+    final sessionId =
+        sessionIdOverride ?? 'drive-${DateTime.now().millisecondsSinceEpoch}';
+
     setState(() {
       isTracking = true;
-      currentDriveSessionId = 'drive-${DateTime.now().millisecondsSinceEpoch}';
+      currentDriveSessionId = sessionId;
       locationMessage = 'Tracking started.';
       routePoints.clear();
     });
@@ -3745,11 +4484,83 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final filteredMarketProperties = marketProperties
         .where(marketPropertyPassesTargetFilters)
         .toList(growable: false);
+    filteredMarketProperties.sort(
+      (a, b) => b.targetScore.compareTo(a.targetScore),
+    );
     final targetParcels = filteredMarketProperties
         .map((property) => property.parcel)
         .where((parcel) => parcel.centroid != null)
         .toList(growable: false);
     final mapParcels = showOnlyTargetsOnMap ? targetParcels : visibleParcels;
+    final streetOpportunities = streetOpportunitiesFor(
+      activeAreaStreets,
+      marketProperties,
+    );
+    final topUncoveredOpportunities = streetOpportunities
+        .where((opportunity) => !opportunity.isCovered && opportunity.score > 0)
+        .take(8)
+        .toList(growable: false);
+    final missionStreetIds = activeMission?.targetStreetIds ?? const <String>[];
+    final missionOpportunities = missionStreetIds
+        .map(
+          (streetId) => streetOpportunities
+              .where((opportunity) => opportunity.street.id == streetId)
+              .firstOrNull,
+        )
+        .whereType<StreetOpportunity>()
+        .toList(growable: false);
+    final coveredMissionOpportunities = missionOpportunities
+        .where(
+          (opportunity) => coveredStreetIds.contains(opportunity.street.id),
+        )
+        .toList(growable: false);
+    final uncoveredMissionOpportunities = missionOpportunities
+        .where(
+          (opportunity) => !coveredStreetIds.contains(opportunity.street.id),
+        )
+        .toList(growable: false);
+    final missionCoveredCount = coveredMissionOpportunities.length;
+    final missionStreetTotal = activeMission?.streetCount ?? 0;
+    final missionOpportunityRemaining = uncoveredMissionOpportunities
+        .fold<double>(0, (total, opportunity) => total + opportunity.score);
+    final missionOpportunityCaptured =
+        (activeMission?.opportunityAtStart ?? 0) - missionOpportunityRemaining;
+    final nextMissionStreet = chooseNextMissionStreet(
+      uncoveredMissionOpportunities,
+    );
+    final missionLeadsFound = leadsFoundDuringMission(
+      activeMission,
+      activeAreaPolygon,
+    );
+    final missionMiles = activeMission?.driveSessionId == null
+        ? 0.0
+        : drivingPointMiles([
+            ...savedDrivingPoints.where(
+              (point) => point.driveSessionId == activeMission!.driveSessionId,
+            ),
+            ...routePoints.map(
+              (point) => DrivingPoint(
+                point: point,
+                createdAt: DateTime.now(),
+                driveSessionId: activeMission!.driveSessionId,
+              ),
+            ),
+          ]);
+    final activeAreaRemainingOpportunity = remainingOpportunityForArea(
+      marketProperties,
+      activeAreaStreets,
+      coveredStreetIds,
+    );
+    final rankedDriveAreas = [...driveAreas];
+    if (activeDriveArea != null) {
+      driveAreaRemainingOpportunity[activeDriveArea!.id] =
+          activeAreaRemainingOpportunity;
+    }
+    rankedDriveAreas.sort(
+      (a, b) => (driveAreaRemainingOpportunity[b.id] ?? 0).compareTo(
+        driveAreaRemainingOpportunity[a.id] ?? 0,
+      ),
+    );
     final drawingBoundaryPoints = drawingAreaPoints.length > 2
         ? [...drawingAreaPoints, drawingAreaPoints.first]
         : drawingAreaPoints;
@@ -3959,6 +4770,50 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               ),
                             )
                             .toList(),
+                      ),
+                    if (streetOpportunities.isNotEmpty)
+                      PolylineLayer(
+                        polylines: streetOpportunities
+                            .map(
+                              (opportunity) => Polyline(
+                                points: opportunity.street.path,
+                                strokeWidth: opportunity.score > 0 ? 6 : 3,
+                                color: streetOpportunityColor(opportunity),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    if (missionOpportunities.isNotEmpty)
+                      PolylineLayer(
+                        polylines: missionOpportunities
+                            .map(
+                              (opportunity) => Polyline(
+                                points: opportunity.street.path,
+                                strokeWidth:
+                                    coveredStreetIds.contains(
+                                      opportunity.street.id,
+                                    )
+                                    ? 5
+                                    : 7,
+                                color:
+                                    coveredStreetIds.contains(
+                                      opportunity.street.id,
+                                    )
+                                    ? const Color(0x665F6368)
+                                    : const Color(0xCC1976D2),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    if (nextMissionStreet != null)
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: nextMissionStreet.street.path,
+                            strokeWidth: 9,
+                            color: const Color(0xFFE91E63),
+                          ),
+                        ],
                       ),
                     if (!limitMapToActiveArea &&
                         activeAreaUncoveredStreets.isNotEmpty)
@@ -4221,13 +5076,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               value: '',
                               child: Text('No active area'),
                             ),
-                            ...driveAreas.map(
+                            ...rankedDriveAreas.map(
                               (area) => DropdownMenuItem<String>(
                                 value: area.id,
                                 child: Text(
-                                  area.isComplete
-                                      ? '${area.name} (complete)'
-                                      : area.name,
+                                  '${area.isComplete ? '${area.name} (complete)' : area.name} '
+                                  '(${(driveAreaRemainingOpportunity[area.id] ?? 0).toStringAsFixed(0)} opp)',
                                 ),
                               ),
                             ),
@@ -4276,6 +5130,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           const SizedBox(height: 8),
                           Text(
                             'Leads found inside area: $activeAreaLeadsFound',
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Remaining opportunity: ${activeAreaRemainingOpportunity.toStringAsFixed(0)}',
                           ),
                           const SizedBox(height: 12),
                           SwitchListTile(
@@ -4340,6 +5198,287 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             const SizedBox(height: 8),
                             Text(marketMapMessage),
                           ],
+                          if (topUncoveredOpportunities.isNotEmpty) ...[
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Best uncovered streets first',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...topUncoveredOpportunities.map(
+                              (opportunity) => ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  opportunity.street.streetName.isEmpty
+                                      ? 'Unnamed street'
+                                      : opportunity.street.streetName,
+                                ),
+                                subtitle: Text(
+                                  'Opportunity ${opportunity.score.toStringAsFixed(0)}',
+                                ),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.center_focus_strong),
+                                  tooltip: 'Pan map here',
+                                  onPressed: () {
+                                    final focusPoint = streetFocusPoint(
+                                      opportunity.street,
+                                    );
+
+                                    if (focusPoint != null) {
+                                      mapController.move(
+                                        focusPoint,
+                                        math.max(currentZoom, 17),
+                                      );
+                                    }
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          Card(
+                            color: const Color(0xFFF7F9FC),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Opportunity Mission',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  if (isLoadingMissions)
+                                    const Text('Loading mission...')
+                                  else if (activeMission == null) ...[
+                                    Text(
+                                      'Ready to create a ${math.min(missionStreetCount, topUncoveredOpportunities.length)} street mission.',
+                                    ),
+                                    const SizedBox(height: 10),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      height: 46,
+                                      child: ElevatedButton.icon(
+                                        icon: const Icon(Icons.flag),
+                                        label: Text(
+                                          isSavingMission
+                                              ? 'Starting...'
+                                              : 'Start Mission',
+                                        ),
+                                        onPressed:
+                                            isSavingMission ||
+                                                topUncoveredOpportunities
+                                                    .isEmpty
+                                            ? null
+                                            : () => generateMission(
+                                                streetOpportunities,
+                                              ),
+                                      ),
+                                    ),
+                                  ] else ...[
+                                    Text(
+                                      'Status: ${activeMission!.status}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Progress: $missionCoveredCount / $missionStreetTotal streets',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    LinearProgressIndicator(
+                                      value: missionStreetTotal == 0
+                                          ? 0
+                                          : missionCoveredCount /
+                                                missionStreetTotal,
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      nextMissionStreet == null
+                                          ? 'Next best street: Complete'
+                                          : 'Next best street: ${nextMissionStreet.street.streetName.isEmpty ? 'Unnamed street' : nextMissionStreet.street.streetName}',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Opportunity remaining: ${missionOpportunityRemaining.toStringAsFixed(0)}',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Leads found this mission: $missionLeadsFound',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Miles this session: ${missionMiles.toStringAsFixed(2)}',
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: OutlinedButton.icon(
+                                            icon: const Icon(Icons.my_location),
+                                            label: const Text('Pan to next'),
+                                            onPressed: nextMissionStreet == null
+                                                ? null
+                                                : () {
+                                                    final focusPoint =
+                                                        streetFocusPoint(
+                                                          nextMissionStreet
+                                                              .street,
+                                                        );
+
+                                                    if (focusPoint != null) {
+                                                      mapController.move(
+                                                        focusPoint,
+                                                        math.max(
+                                                          currentZoom,
+                                                          17,
+                                                        ),
+                                                      );
+                                                    }
+                                                  },
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: ElevatedButton.icon(
+                                            icon: const Icon(
+                                              Icons.directions_car,
+                                            ),
+                                            label: const Text('Start Driving'),
+                                            onPressed: isTracking
+                                                ? null
+                                                : startMissionDriving,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: OutlinedButton(
+                                            onPressed: pauseMission,
+                                            child: const Text('Pause'),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: OutlinedButton(
+                                            onPressed: () => completeMission(
+                                              streetsCovered:
+                                                  missionCoveredCount,
+                                              opportunityCaptured:
+                                                  missionOpportunityCaptured,
+                                              leadsFound: missionLeadsFound,
+                                              milesDriven: missionMiles,
+                                            ),
+                                            child: const Text(
+                                              'Complete Mission',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    if (missionOpportunities.isNotEmpty) ...[
+                                      const SizedBox(height: 12),
+                                      const Text(
+                                        'Mission streets',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      ...missionOpportunities.map((
+                                        opportunity,
+                                      ) {
+                                        final isCovered = coveredStreetIds
+                                            .contains(opportunity.street.id);
+
+                                        return ListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          dense: true,
+                                          title: Text(
+                                            opportunity
+                                                    .street
+                                                    .streetName
+                                                    .isEmpty
+                                                ? 'Unnamed street'
+                                                : opportunity.street.streetName,
+                                          ),
+                                          subtitle: Text(
+                                            '${isCovered ? 'Covered' : 'Pending'} | Opportunity ${opportunity.score.toStringAsFixed(0)}',
+                                          ),
+                                          trailing: IconButton(
+                                            icon: const Icon(
+                                              Icons.center_focus_strong,
+                                            ),
+                                            tooltip: 'Pan map here',
+                                            onPressed: () {
+                                              final focusPoint =
+                                                  streetFocusPoint(
+                                                    opportunity.street,
+                                                  );
+
+                                              if (focusPoint != null) {
+                                                mapController.move(
+                                                  focusPoint,
+                                                  math.max(currentZoom, 17),
+                                                );
+                                              }
+                                            },
+                                          ),
+                                        );
+                                      }),
+                                    ],
+                                  ],
+                                  if (completedMissions.isNotEmpty) ...[
+                                    const Divider(height: 24),
+                                    const Text(
+                                      'Completed missions',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    ...completedMissions.take(5).map((mission) {
+                                      final completedDate = mission.completedAt
+                                          ?.toLocal();
+                                      final historyLeads =
+                                          leadsFoundDuringMission(
+                                            mission,
+                                            activeAreaPolygon,
+                                          );
+                                      final historyMiles = milesForMission(
+                                        mission,
+                                      );
+                                      final historyCovered =
+                                          coveredStreetCountForMission(mission);
+
+                                      return ListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        dense: true,
+                                        title: Text(
+                                          completedDate == null
+                                              ? 'Completed mission'
+                                              : 'Completed ${completedDate.month}/${completedDate.day}/${completedDate.year}',
+                                        ),
+                                        subtitle: Text(
+                                          '$historyCovered/${mission.streetCount} streets | '
+                                          '$historyLeads leads | '
+                                          '${historyMiles.toStringAsFixed(2)} mi',
+                                        ),
+                                      );
+                                    }),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
                           const SizedBox(height: 12),
                           SizedBox(
                             width: double.infinity,
@@ -4474,6 +5613,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                             ].join(' | '),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
+                                    ),
+                                    trailing: targetScoreBadge(
+                                      property.targetScore,
+                                      onTap: () =>
+                                          showTargetScoreBreakdown(property),
                                     ),
                                     onTap: () =>
                                         openParcelPreview(property.parcel),
