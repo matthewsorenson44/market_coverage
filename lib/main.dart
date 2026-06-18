@@ -736,6 +736,68 @@ class DriveArea {
   bool get isComplete => status == 'complete';
 }
 
+class MarketProperty {
+  final String id;
+  final String driveAreaId;
+  final ParcelProperty parcel;
+  final bool outOfState;
+  final bool absentee;
+  final Map<String, dynamic> signals;
+
+  const MarketProperty({
+    required this.id,
+    required this.driveAreaId,
+    required this.parcel,
+    required this.outOfState,
+    required this.absentee,
+    required this.signals,
+  });
+
+  factory MarketProperty.fromMap(Map<String, dynamic> map) {
+    final latitude = (map['latitude'] as num?)?.toDouble();
+    final longitude = (map['longitude'] as num?)?.toDouble();
+
+    return MarketProperty(
+      id: map['id'].toString(),
+      driveAreaId: map['drive_area_id']?.toString() ?? '',
+      parcel: ParcelProperty(
+        accountNo: map['account_no']?.toString(),
+        parcelNo: null,
+        propertyAddress: map['address']?.toString(),
+        ownerName: map['owner_name']?.toString(),
+        mailingAddress: map['mailing_address']?.toString(),
+        mailingState: map['mailing_state']?.toString(),
+        propertyType: map['property_type']?.toString(),
+        yearBuilt: (map['year_built'] as num?)?.toInt(),
+        squareFeet: (map['square_feet'] as num?)?.toDouble(),
+        lotAcres: (map['lot_acres'] as num?)?.toDouble(),
+        assessedValue: (map['assessed_value'] as num?)?.toDouble(),
+        landValue: (map['land_value'] as num?)?.toDouble(),
+        improvementValue: (map['improvement_value'] as num?)?.toDouble(),
+        taxableValue: null,
+        saleDate: map['last_sale_date']?.toString(),
+        salePrice: (map['last_sale_price'] as num?)?.toDouble(),
+        deedType: null,
+        documentDate: null,
+        receptionNo: null,
+        bathrooms: null,
+        stories: null,
+        centroid: latitude == null || longitude == null
+            ? null
+            : LatLng(latitude, longitude),
+        rings: parseStoredParcelRings(map['rings']),
+      ),
+      outOfState: map['out_of_state'] == true,
+      absentee: map['absentee'] == true,
+      signals: (map['signals'] as Map?)?.cast<String, dynamic>() ?? {},
+    );
+  }
+
+  int get portfolioCount => ((signals['portfolio_count'] ?? 0) as num).toInt();
+
+  bool get lowImprovementRatio => signals['low_improvement_ratio'] == true;
+}
+
 List<LatLng> parseDriveAreaPolygon(dynamic value) {
   if (value is! List) return [];
 
@@ -748,6 +810,29 @@ List<LatLng> parseDriveAreaPolygon(dynamic value) {
 List<Map<String, double>> driveAreaPolygonToJson(List<LatLng> polygon) {
   return polygon
       .map((point) => {'lat': point.latitude, 'lng': point.longitude})
+      .toList(growable: false);
+}
+
+List<List<Map<String, double>>> parcelRingsToJson(List<List<LatLng>> rings) {
+  return rings
+      .map(
+        (ring) => ring
+            .map((point) => {'lat': point.latitude, 'lng': point.longitude})
+            .toList(growable: false),
+      )
+      .toList(growable: false);
+}
+
+List<List<LatLng>> parseStoredParcelRings(dynamic value) {
+  if (value is! List) return [];
+
+  return value
+      .map((ring) {
+        if (ring is! List) return <LatLng>[];
+
+        return ring.map(parseStreetPoint).whereType<LatLng>().toList();
+      })
+      .where((ring) => ring.length >= 3)
       .toList(growable: false);
 }
 
@@ -1658,6 +1743,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool isLoadingDriveAreas = true;
   bool isSavingDriveArea = false;
   bool showOnlyActiveArea = false;
+  List<MarketProperty> marketProperties = [];
+  bool isLoadingMarketProperties = false;
+  bool isBuildingMarketMap = false;
+  int marketMapFetchedCount = 0;
+  int marketMapSavedCount = 0;
+  String marketMapMessage = '';
+  bool targetFilterOutOfState = false;
+  bool targetFilterAbsentee = false;
+  bool targetFilterPortfolio = false;
+  bool targetFilterLowImprovement = false;
+  bool showOnlyTargetsOnMap = false;
 
   // Lead map filters (display-only; does not affect data or other layers).
   bool showLeadsOnMap = true;
@@ -1805,6 +1901,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
       if (shouldChangeCity) {
         await loadStreetCoverage();
       }
+
+      await loadMarketProperties();
     } catch (_) {
       if (!mounted) return;
 
@@ -1837,6 +1935,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       }
 
       await loadDriveAreas();
+      await loadMarketProperties();
     } catch (_) {
       if (!mounted) return;
 
@@ -1861,11 +1960,284 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .eq('id', area.id);
 
       await loadDriveAreas();
+      await loadMarketProperties();
     } catch (_) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not mark drive area complete.')),
+      );
+    }
+  }
+
+  Future<void> loadMarketProperties() async {
+    final area = activeDriveArea;
+
+    if (area == null) {
+      if (!mounted) return;
+
+      setState(() {
+        marketProperties = [];
+        isLoadingMarketProperties = false;
+      });
+      return;
+    }
+
+    setState(() {
+      isLoadingMarketProperties = true;
+    });
+
+    try {
+      final data = await supabase
+          .from('properties')
+          .select()
+          .eq('drive_area_id', area.id)
+          .order('address');
+      final properties = data
+          .map<MarketProperty>((item) => MarketProperty.fromMap(item))
+          .toList(growable: false);
+
+      if (!mounted) return;
+
+      setState(() {
+        marketProperties = properties;
+        isLoadingMarketProperties = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingMarketProperties = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load market properties.')),
+      );
+    }
+  }
+
+  ({double west, double south, double east, double north})? polygonBounds(
+    List<LatLng> polygon,
+  ) {
+    if (polygon.isEmpty) return null;
+
+    var west = polygon.first.longitude;
+    var east = polygon.first.longitude;
+    var south = polygon.first.latitude;
+    var north = polygon.first.latitude;
+
+    for (final point in polygon.skip(1)) {
+      west = math.min(west, point.longitude);
+      east = math.max(east, point.longitude);
+      south = math.min(south, point.latitude);
+      north = math.max(north, point.latitude);
+    }
+
+    return (west: west, south: south, east: east, north: north);
+  }
+
+  String marketPropertyKey(ParcelProperty parcel) {
+    return parcel.accountNo ??
+        parcel.parcelNo ??
+        '${parcel.centroid?.latitude.toStringAsFixed(7)},${parcel.centroid?.longitude.toStringAsFixed(7)},${parcel.displayAddress}';
+  }
+
+  String portfolioOwnerKey(ParcelProperty parcel) {
+    final ownerKey = normalizedAddressKey(parcel.ownerName);
+    final mailingKey = normalizedAddressKey(parcel.mailingAddress);
+
+    return '$ownerKey|$mailingKey';
+  }
+
+  bool isAbsenteeOwner(ParcelProperty parcel) {
+    final propertyKey = normalizedAddressKey(parcel.propertyAddress);
+    final mailingKey = normalizedAddressKey(parcel.mailingAddress);
+
+    return propertyKey.isNotEmpty &&
+        mailingKey.isNotEmpty &&
+        propertyKey != mailingKey;
+  }
+
+  bool isLowImprovementRatio(ParcelProperty parcel) {
+    final improvement = parcel.improvementValue;
+
+    if (improvement == null) return false;
+
+    final land = parcel.landValue;
+    if (land != null && land > 0 && improvement / land < 0.35) return true;
+
+    final assessed = parcel.assessedValue;
+    if (assessed != null && assessed > 0 && improvement / assessed < 0.25) {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool isLongHeld(ParcelProperty parcel) {
+    final yearsOwned = yearsOwnedFromSaleDate(parcel.saleDate, DateTime.now());
+
+    return yearsOwned != null && yearsOwned >= 15;
+  }
+
+  bool isOlderBuild(ParcelProperty parcel) {
+    final yearBuilt = parcel.yearBuilt;
+
+    return yearBuilt != null && yearBuilt > 0 && yearBuilt < 1985;
+  }
+
+  Map<String, dynamic> marketSignalsForParcel(
+    ParcelProperty parcel,
+    int portfolioCount,
+  ) {
+    return {
+      'out_of_state': parcel.outOfStateOwner,
+      'absentee': isAbsenteeOwner(parcel),
+      'portfolio_count': portfolioCount,
+      'low_improvement_ratio': isLowImprovementRatio(parcel),
+      'long_held': isLongHeld(parcel),
+      'older_build': isOlderBuild(parcel),
+      'year_built_threshold': 1985,
+      'long_held_years_threshold': 15,
+    };
+  }
+
+  Map<String, dynamic> marketPropertyRow(
+    DriveArea area,
+    ParcelProperty parcel,
+    int portfolioCount,
+  ) {
+    final centroid = parcel.centroid;
+    final signals = marketSignalsForParcel(parcel, portfolioCount);
+
+    return {
+      'account_no': marketPropertyKey(parcel),
+      'drive_area_id': area.id,
+      'address': parcel.propertyAddress,
+      'owner_name': parcel.ownerName,
+      'mailing_address': parcel.mailingAddress,
+      'mailing_state': parcel.mailingState,
+      'out_of_state': signals['out_of_state'],
+      'absentee': signals['absentee'],
+      'property_type': parcel.propertyType,
+      'year_built': parcel.yearBuilt,
+      'square_feet': parcel.squareFeet,
+      'lot_acres': parcel.lotAcres,
+      'assessed_value': parcel.assessedValue,
+      'land_value': parcel.landValue,
+      'improvement_value': parcel.improvementValue,
+      'last_sale_date': parcel.saleDate,
+      'last_sale_price': parcel.salePrice,
+      'latitude': centroid?.latitude,
+      'longitude': centroid?.longitude,
+      'rings': parcelRingsToJson(parcel.rings),
+      'signals': signals,
+      'refreshed_at': DateTime.now().toUtc().toIso8601String(),
+    };
+  }
+
+  Future<void> buildMarketMap() async {
+    final area = activeDriveArea;
+    final bounds = area == null ? null : polygonBounds(area.polygon);
+
+    if (area == null || bounds == null || isBuildingMarketMap) return;
+
+    setState(() {
+      isBuildingMarketMap = true;
+      marketMapFetchedCount = 0;
+      marketMapSavedCount = 0;
+      marketMapMessage = 'Fetching parcels inside ${area.name}...';
+    });
+
+    try {
+      final parcelsByAccount = <String, ParcelProperty>{};
+
+      for (var offset = 0; ; offset += visibleParcelLimit) {
+        final page = await fetchParcelsByLatLongBox(
+          west: bounds.west,
+          south: bounds.south,
+          east: bounds.east,
+          north: bounds.north,
+          resultRecordCount: visibleParcelLimit,
+          returnGeometry: true,
+          resultOffset: offset,
+        );
+
+        for (final parcel in page) {
+          final centroid = parcel.centroid;
+
+          if (centroid == null || !pointInRing(centroid, area.polygon)) {
+            continue;
+          }
+
+          parcelsByAccount[marketPropertyKey(parcel)] = parcel;
+        }
+
+        if (!mounted) return;
+
+        setState(() {
+          marketMapFetchedCount = parcelsByAccount.length;
+          marketMapMessage =
+              'Fetched $marketMapFetchedCount parcels inside the area...';
+        });
+
+        if (page.length < visibleParcelLimit) break;
+      }
+
+      final portfolioCounts = <String, int>{};
+      for (final parcel in parcelsByAccount.values) {
+        final key = portfolioOwnerKey(parcel);
+        if (key == '|') continue;
+
+        portfolioCounts[key] = (portfolioCounts[key] ?? 0) + 1;
+      }
+
+      final rows = parcelsByAccount.values
+          .map(
+            (parcel) => marketPropertyRow(
+              area,
+              parcel,
+              portfolioCounts[portfolioOwnerKey(parcel)] ?? 1,
+            ),
+          )
+          .toList(growable: false);
+
+      const batchSize = 100;
+      for (var index = 0; index < rows.length; index += batchSize) {
+        final end = math.min(index + batchSize, rows.length);
+        await supabase
+            .from('properties')
+            .upsert(
+              rows.sublist(index, end),
+              onConflict: 'account_no,drive_area_id',
+            );
+
+        if (!mounted) return;
+
+        setState(() {
+          marketMapSavedCount = end;
+          marketMapMessage = 'Saved $marketMapSavedCount of ${rows.length}...';
+        });
+      }
+
+      await loadMarketProperties();
+
+      if (!mounted) return;
+
+      setState(() {
+        isBuildingMarketMap = false;
+        marketMapMessage = 'Market Map built: ${rows.length} parcels saved.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isBuildingMarketMap = false;
+        marketMapMessage = 'Could not build Market Map.';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not build Market Map.')),
       );
     }
   }
@@ -1951,6 +2323,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
           ? 'Centered on the next uncovered street.'
           : 'Next uncovered street: ${nearestStreet.streetName}.';
     });
+  }
+
+  bool marketPropertyPassesTargetFilters(MarketProperty property) {
+    if (targetFilterOutOfState && !property.outOfState) return false;
+    if (targetFilterAbsentee && !property.absentee) return false;
+    if (targetFilterPortfolio && property.portfolioCount < 3) return false;
+    if (targetFilterLowImprovement && !property.lowImprovementRatio) {
+      return false;
+    }
+
+    return true;
   }
 
   void handleMapTap(LatLng point) {
@@ -2312,11 +2695,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
     required double north,
     required int resultRecordCount,
     required bool returnGeometry,
+    int resultOffset = 0,
   }) {
     return fetchParcelsFromArcGis(
       const {},
       resultRecordCount: resultRecordCount,
       returnGeometry: returnGeometry,
+      resultOffset: resultOffset,
       where:
           "PAR_TYPE IN ('PARCEL','CONDO') AND Lat >= ${south.toStringAsFixed(8)} AND Lat <= ${north.toStringAsFixed(8)} AND Long >= ${west.toStringAsFixed(8)} AND Long <= ${east.toStringAsFixed(8)}",
     );
@@ -2326,6 +2711,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     Map<String, String> geometryParameters, {
     required int resultRecordCount,
     required bool returnGeometry,
+    int resultOffset = 0,
     String where = "PAR_TYPE IN ('PARCEL','CONDO')",
   }) async {
     Object? lastError;
@@ -2340,6 +2726,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
           'outFields':
               'AccountNo,ACCT_NUM,ParcelNo,PropertyAddress,Owner,Name1,BusinessName,Address1,Address2,City,State,ZIPCode,PropertyType,YearBuilt,GrossSF,ImpSFTotal,SF,NetSF,BuiltAsSF,GrossAcre,TotalAcctValue,TotalLandValue,TotalImpValue,TaxableValue,SaleDate,SalePrice,DeedType,DocumentDate,ReceptionNo,Baths,Stories,Lat,Long',
           'resultRecordCount': resultRecordCount.toString(),
+          'resultOffset': resultOffset.toString(),
+          'orderByFields': 'AccountNo',
           ...geometryParameters,
         };
 
@@ -2568,7 +2956,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
   /// Returns the parcel under [point] from the already-loaded visible parcels
   /// using exact polygon containment — no network round-trip.
   ParcelProperty? parcelAtPointLocal(LatLng point) {
-    for (final parcel in visibleParcels) {
+    final parcels = showOnlyTargetsOnMap
+        ? marketProperties
+              .where(marketPropertyPassesTargetFilters)
+              .map((property) => property.parcel)
+        : visibleParcels;
+
+    for (final parcel in parcels) {
       if (parcel.rings.isNotEmpty && ringsContainPoint(parcel.rings, point)) {
         return parcel;
       }
@@ -3348,6 +3742,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
         activeAreaPolygon,
       );
     }).toList();
+    final filteredMarketProperties = marketProperties
+        .where(marketPropertyPassesTargetFilters)
+        .toList(growable: false);
+    final targetParcels = filteredMarketProperties
+        .map((property) => property.parcel)
+        .where((parcel) => parcel.centroid != null)
+        .toList(growable: false);
+    final mapParcels = showOnlyTargetsOnMap ? targetParcels : visibleParcels;
     final drawingBoundaryPoints = drawingAreaPoints.length > 2
         ? [...drawingAreaPoints, drawingAreaPoints.first]
         : drawingAreaPoints;
@@ -3603,9 +4005,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           ),
                         ],
                       ),
-                    if (visibleParcels.any((parcel) => parcel.rings.isNotEmpty))
+                    if (mapParcels.any((parcel) => parcel.rings.isNotEmpty))
                       PolygonLayer(
-                        polygons: visibleParcels
+                        polygons: mapParcels
                             .where((parcel) => parcel.rings.isNotEmpty)
                             .expand(
                               (parcel) => parcel.rings.map(
@@ -3645,9 +4047,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             )
                             .toList(),
                       ),
-                    if (visibleParcels.isNotEmpty)
+                    if (mapParcels.isNotEmpty)
                       MarkerLayer(
-                        markers: visibleParcels
+                        markers: mapParcels
                             .where((parcel) => parcel.centroid != null)
                             .map((parcel) {
                               final houseNumber = houseNumberFromAddress(
@@ -3918,6 +4320,26 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                     ),
                             ),
                           ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.map),
+                              label: Text(
+                                isBuildingMarketMap
+                                    ? 'Building Market Map...'
+                                    : 'Build Market Map',
+                              ),
+                              onPressed: isBuildingMarketMap
+                                  ? null
+                                  : buildMarketMap,
+                            ),
+                          ),
+                          if (marketMapMessage.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(marketMapMessage),
+                          ],
                           const SizedBox(height: 12),
                           SizedBox(
                             width: double.infinity,
@@ -3934,6 +4356,135 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              if (activeDriveArea != null)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Targets',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        if (isLoadingMarketProperties)
+                          const Text('Loading targets...')
+                        else ...[
+                          Text(
+                            '${filteredMarketProperties.length} of ${marketProperties.length} properties shown',
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              FilterChip(
+                                label: const Text('Out of state'),
+                                selected: targetFilterOutOfState,
+                                onSelected: (value) => setState(
+                                  () => targetFilterOutOfState = value,
+                                ),
+                              ),
+                              FilterChip(
+                                label: const Text('Absentee'),
+                                selected: targetFilterAbsentee,
+                                onSelected: (value) => setState(
+                                  () => targetFilterAbsentee = value,
+                                ),
+                              ),
+                              FilterChip(
+                                label: const Text('Portfolio 3+'),
+                                selected: targetFilterPortfolio,
+                                onSelected: (value) => setState(
+                                  () => targetFilterPortfolio = value,
+                                ),
+                              ),
+                              FilterChip(
+                                label: const Text('Low improvement'),
+                                selected: targetFilterLowImprovement,
+                                onSelected: (value) => setState(
+                                  () => targetFilterLowImprovement = value,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Show only targets on map'),
+                            value: showOnlyTargetsOnMap,
+                            onChanged: marketProperties.isEmpty
+                                ? null
+                                : (value) {
+                                    setState(() {
+                                      showOnlyTargetsOnMap = value;
+                                    });
+                                  },
+                          ),
+                          const SizedBox(height: 8),
+                          if (marketProperties.isEmpty)
+                            const Text(
+                              'Build the Market Map to ingest parcels for this area.',
+                            )
+                          else if (filteredMarketProperties.isEmpty)
+                            const Text('No targets match these filters.')
+                          else
+                            ...filteredMarketProperties
+                                .take(25)
+                                .map(
+                                  (property) => ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text(
+                                      property.parcel.displayAddress,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle: Text(
+                                      [
+                                            if (property.outOfState)
+                                              'out of state',
+                                            if (property.absentee) 'absentee',
+                                            if (property.portfolioCount >= 3)
+                                              'portfolio ${property.portfolioCount}',
+                                            if (property.lowImprovementRatio)
+                                              'low improvement',
+                                          ].isEmpty
+                                          ? property.parcel.ownerName ??
+                                                'No signals'
+                                          : [
+                                              if (property.parcel.ownerName !=
+                                                  null)
+                                                property.parcel.ownerName!,
+                                              [
+                                                if (property.outOfState)
+                                                  'out of state',
+                                                if (property.absentee)
+                                                  'absentee',
+                                                if (property.portfolioCount >=
+                                                    3)
+                                                  'portfolio ${property.portfolioCount}',
+                                                if (property
+                                                    .lowImprovementRatio)
+                                                  'low improvement',
+                                              ].join(', '),
+                                            ].join(' | '),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    onTap: () =>
+                                        openParcelPreview(property.parcel),
+                                  ),
+                                ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              if (activeDriveArea != null) const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: selectedCoverageCity,
                 decoration: const InputDecoration(
