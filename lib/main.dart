@@ -10,6 +10,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'src/coverage.dart';
@@ -40,6 +41,8 @@ Future<void> main() async {
 
 final supabase = Supabase.instance.client;
 
+const String defaultSessionMinutesPrefsKey = 'default_session_minutes';
+const String timeMissionsEnabledPrefsKey = 'time_missions_enabled';
 const String leadPhotosBucket = 'lead-photos';
 const String coverageCity = 'Owasso';
 const String primaryTulsaParcelLayerUrl =
@@ -66,6 +69,8 @@ const int visibleParcelLimit = 250;
 const int visibleStreetLimit = 800;
 const int missionStreetCount = 12;
 const double streetCoverageMatchMiles = 0.035;
+const double kScoutSpeedMph = 10.0;
+const double kRepositioningMinutes = 1.0;
 const int targetScoreVersion = 1;
 const double opportunityStreetMatchMiles = 0.04;
 const Map<String, double> targetScoreWeights = {
@@ -904,6 +909,11 @@ class Mission {
   final double? milesDriven;
   final int? streetsCovered;
   final double? opportunityCaptured;
+  final int? timeBudgetMinutes;
+  final int? estimatedMinutes;
+  final int? actualMinutes;
+  final DateTime? scheduledDate;
+  final String? weeklyPlanId;
   final String? driveSessionId;
   final DateTime? createdAt;
   final DateTime? startedAt;
@@ -920,6 +930,11 @@ class Mission {
     required this.milesDriven,
     required this.streetsCovered,
     required this.opportunityCaptured,
+    required this.timeBudgetMinutes,
+    required this.estimatedMinutes,
+    required this.actualMinutes,
+    required this.scheduledDate,
+    required this.weeklyPlanId,
     required this.driveSessionId,
     required this.createdAt,
     required this.startedAt,
@@ -947,6 +962,19 @@ class Mission {
       opportunityCaptured: map['opportunity_captured'] == null
           ? null
           : (map['opportunity_captured'] as num).toDouble(),
+      timeBudgetMinutes: map['time_budget_minutes'] == null
+          ? null
+          : (map['time_budget_minutes'] as num).toInt(),
+      estimatedMinutes: map['estimated_minutes'] == null
+          ? null
+          : (map['estimated_minutes'] as num).toInt(),
+      actualMinutes: map['actual_minutes'] == null
+          ? null
+          : (map['actual_minutes'] as num).toInt(),
+      scheduledDate: map['scheduled_date'] == null
+          ? null
+          : DateTime.tryParse(map['scheduled_date'].toString()),
+      weeklyPlanId: map['weekly_plan_id']?.toString(),
       driveSessionId: map['drive_session_id']?.toString(),
       createdAt: map['created_at'] == null
           ? null
@@ -1279,6 +1307,21 @@ double routeMiles(List<LatLng> points) {
   }
 
   return miles;
+}
+
+double estimateStreetMinutes(CityStreet street) {
+  final distance = Distance();
+  double miles = 0;
+
+  for (var index = 1; index < street.path.length; index++) {
+    miles += distance.as(
+      LengthUnit.Mile,
+      street.path[index - 1],
+      street.path[index],
+    );
+  }
+
+  return (miles / kScoutSpeedMph * 60) + kRepositioningMinutes;
 }
 
 double drivingPointMiles(List<DrivingPoint> drivingPoints) {
@@ -2049,6 +2092,7 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         driveScreenKey: driveScreenKey,
         onOpenDrive: openDriveTab,
         onCreateNewArea: openDrawAreaFlow,
+        onRefresh: () => setState(() {}),
       ),
       const _BusinessTab(),
     ];
@@ -2080,11 +2124,13 @@ class _AreasTab extends StatelessWidget {
   final GlobalKey<_DrivingScreenState> driveScreenKey;
   final VoidCallback onOpenDrive;
   final VoidCallback onCreateNewArea;
+  final VoidCallback onRefresh;
 
   const _AreasTab({
     required this.driveScreenKey,
     required this.onOpenDrive,
     required this.onCreateNewArea,
+    required this.onRefresh,
   });
 
   @override
@@ -2092,6 +2138,35 @@ class _AreasTab extends StatelessWidget {
     final driveState = driveScreenKey.currentState;
     final areas = driveState?.driveAreas ?? const <DriveArea>[];
     final activeArea = driveState?.activeDriveArea;
+    final activeAreaStreets = activeArea == null || driveState == null
+        ? const <CityStreet>[]
+        : driveState.streetsInsideArea(activeArea);
+    final activeAreaCovered = activeAreaStreets
+        .where((street) => driveState!.coveredStreetIds.contains(street.id))
+        .length;
+    final activeAreaCoverage = activeAreaStreets.isEmpty
+        ? 0.0
+        : (activeAreaCovered / activeAreaStreets.length) * 100;
+    final activeAreaUncovered = activeAreaStreets
+        .where((street) => !driveState!.coveredStreetIds.contains(street.id))
+        .toList(growable: false);
+    final activeAreaLeads = activeArea == null || driveState == null
+        ? 0
+        : driveState.drivingLeads.where((lead) {
+            if (lead.latitude == null || lead.longitude == null) return false;
+            return pointInRing(
+              LatLng(lead.latitude!, lead.longitude!),
+              activeArea.polygon,
+            );
+          }).length;
+    final filteredTargets = driveState == null
+        ? const <MarketProperty>[]
+        : driveState.marketProperties
+              .where(driveState.marketPropertyPassesTargetFilters)
+              .toList(growable: false);
+    if (driveState != null) {
+      filteredTargets.sort((a, b) => b.targetScore.compareTo(a.targetScore));
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Areas')),
@@ -2109,12 +2184,7 @@ class _AreasTab extends StatelessWidget {
               icon: const Icon(Icons.history),
               label: const Text('View Mission History'),
               onPressed: () {
-                onOpenDrive();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Mission history is in the Drive controls.'),
-                  ),
-                );
+                Scrollable.ensureVisible(context);
               },
             ),
             const SizedBox(height: 20),
@@ -2150,6 +2220,15 @@ class _AreasTab extends StatelessWidget {
                 final coverage = streets.isEmpty
                     ? 0.0
                     : (covered / streets.length) * 100;
+                final leads = driveState.drivingLeads.where((lead) {
+                  if (lead.latitude == null || lead.longitude == null) {
+                    return false;
+                  }
+                  return pointInRing(
+                    LatLng(lead.latitude!, lead.longitude!),
+                    area.polygon,
+                  );
+                }).length;
 
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),
@@ -2162,18 +2241,264 @@ class _AreasTab extends StatelessWidget {
                     ),
                     title: Text(area.name),
                     subtitle: Text(
-                      '${area.city} | ${coverage.toStringAsFixed(0)}% covered | ${area.status}',
+                      '${area.city} | ${coverage.toStringAsFixed(0)}% covered | $leads leads | ${area.status}',
                     ),
                     trailing: isActive
                         ? const Chip(label: Text('Active'))
                         : const Icon(Icons.chevron_right),
                     onTap: () async {
                       await driveState.setActiveDriveArea(area);
-                      onOpenDrive();
+                      onRefresh();
                     },
                   ),
                 );
               }),
+            if (driveState != null && activeArea != null) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Area Stats',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _DriveStatTile(
+                        label: 'Coverage',
+                        value: '${activeAreaCoverage.toStringAsFixed(0)}%',
+                        icon: Icons.timeline,
+                        color: const Color(0xFF2563EB),
+                      ),
+                      _DriveStatTile(
+                        label: 'Covered',
+                        value: activeAreaCovered.toString(),
+                        icon: Icons.check_circle,
+                        color: const Color(0xFF059669),
+                      ),
+                      _DriveStatTile(
+                        label: 'Remaining',
+                        value: activeAreaUncovered.length.toString(),
+                        icon: Icons.route,
+                        color: const Color(0xFFF59E0B),
+                      ),
+                      _DriveStatTile(
+                        label: 'Leads',
+                        value: activeAreaLeads.toString(),
+                        icon: Icons.person_pin_circle,
+                        color: const Color(0xFFDC2626),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        activeArea.name,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text('City: ${activeArea.city}'),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Show only active area'),
+                        value: driveState.showOnlyActiveArea,
+                        onChanged: (value) {
+                          driveState.setShowOnlyActiveArea(value);
+                          onRefresh();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.map),
+                        label: Text(
+                          driveState.isBuildingMarketMap
+                              ? 'Building Market Map...'
+                              : 'Build Market Map',
+                        ),
+                        onPressed: driveState.isBuildingMarketMap
+                            ? null
+                            : driveState.buildMarketMap,
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: driveState.markActiveDriveAreaComplete,
+                        child: const Text('Mark area complete'),
+                      ),
+                      if (driveState.marketMapMessage.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(driveState.marketMapMessage),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Targets',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (driveState.isLoadingMarketProperties)
+                        const Text('Loading targets...')
+                      else ...[
+                        Text(
+                          '${filteredTargets.length} of ${driveState.marketProperties.length} properties shown',
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            FilterChip(
+                              label: const Text('Out of state'),
+                              selected: driveState.targetFilterOutOfState,
+                              onSelected: (value) {
+                                driveState.setTargetFilter(
+                                  'out_of_state',
+                                  value,
+                                );
+                                onRefresh();
+                              },
+                            ),
+                            FilterChip(
+                              label: const Text('Absentee'),
+                              selected: driveState.targetFilterAbsentee,
+                              onSelected: (value) {
+                                driveState.setTargetFilter('absentee', value);
+                                onRefresh();
+                              },
+                            ),
+                            FilterChip(
+                              label: const Text('Portfolio 3+'),
+                              selected: driveState.targetFilterPortfolio,
+                              onSelected: (value) {
+                                driveState.setTargetFilter('portfolio', value);
+                                onRefresh();
+                              },
+                            ),
+                            FilterChip(
+                              label: const Text('Low improvement'),
+                              selected: driveState.targetFilterLowImprovement,
+                              onSelected: (value) {
+                                driveState.setTargetFilter(
+                                  'low_improvement',
+                                  value,
+                                );
+                                onRefresh();
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (driveState.marketProperties.isEmpty)
+                          const Text(
+                            'Build the Market Map to ingest parcels for this area.',
+                          )
+                        else if (filteredTargets.isEmpty)
+                          const Text('No targets match these filters.')
+                        else
+                          ...filteredTargets
+                              .take(25)
+                              .map(
+                                (property) => ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text(
+                                    property.parcel.displayAddress,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    [
+                                      if (property.parcel.ownerName != null)
+                                        property.parcel.ownerName!,
+                                      [
+                                        if (property.outOfState) 'out of state',
+                                        if (property.absentee) 'absentee',
+                                        if (property.portfolioCount >= 3)
+                                          'portfolio ${property.portfolioCount}',
+                                        if (property.lowImprovementRatio)
+                                          'low improvement',
+                                      ].join(', '),
+                                    ].where((text) => text.isNotEmpty).join(' | '),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: driveState.targetScoreBadge(
+                                    property.targetScore,
+                                    onTap: () => driveState
+                                        .showTargetScoreBreakdown(property),
+                                  ),
+                                  onTap: () => driveState.openParcelPreview(
+                                    property.parcel,
+                                  ),
+                                ),
+                              ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              if (driveState.completedMissions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Completed Missions',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                ...driveState.completedMissions.map((mission) {
+                  final completedDate = mission.completedAt?.toLocal();
+                  final historyLeads = driveState.leadsForMission(mission);
+                  final historyMiles = driveState.milesForMission(mission);
+                  final historyCovered = driveState
+                      .coveredStreetCountForMission(mission);
+                  return Card(
+                    child: ListTile(
+                      title: Text(
+                        completedDate == null
+                            ? 'Completed mission'
+                            : 'Completed ${completedDate.month}/${completedDate.day}/${completedDate.year}',
+                      ),
+                      subtitle: Text(
+                        '$historyCovered/${mission.streetCount} streets | '
+                        '${historyLeads.length} leads | '
+                        '${historyMiles.toStringAsFixed(2)} mi',
+                      ),
+                      onTap: () => driveState.openMissionResults(
+                        mission: mission,
+                        areaName: activeArea.name,
+                        leads: historyLeads,
+                        streetsCovered: historyCovered,
+                        opportunityCaptured: mission.opportunityCaptured ?? 0,
+                        milesDriven: historyMiles,
+                        actualMinutes: mission.actualMinutes,
+                        areaRemainingEstimatedMinutes: driveState
+                            .estimatedMinutesForStreets(activeAreaUncovered),
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ],
           ],
         ),
       ),
@@ -2918,6 +3243,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Map<String, List<Lead>> missionLeadsById = {};
   bool isLoadingMissions = false;
   bool isSavingMission = false;
+  int? selectedMissionTimeBudgetMinutes = 30;
+  final customMissionTimeController = TextEditingController();
+  bool customMissionTimeInHours = false;
+  int? defaultSessionMinutes;
+  bool timeMissionsEnabled = true;
 
   // Lead map filters (display-only; does not affect data or other layers).
   bool showLeadsOnMap = true;
@@ -2932,6 +3262,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     loadSavedDrivingPoints();
     loadStreetCoverage();
     loadDriveAreas();
+    loadMissionPlannerPreferences();
   }
 
   @override
@@ -2948,7 +3279,39 @@ class _DrivingScreenState extends State<DrivingScreen> {
     visibleParcelLoadTimer?.cancel();
     visibleStreetLoadTimer?.cancel();
     positionStream?.cancel();
+    customMissionTimeController.dispose();
     super.dispose();
+  }
+
+  Future<void> loadMissionPlannerPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
+    setState(() {
+      defaultSessionMinutes = prefs.getInt(defaultSessionMinutesPrefsKey);
+      timeMissionsEnabled = prefs.getBool(timeMissionsEnabledPrefsKey) ?? true;
+    });
+  }
+
+  Future<void> saveDefaultSessionMinutes(int minutes) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(defaultSessionMinutesPrefsKey, minutes);
+    if (!mounted) return;
+
+    setState(() {
+      defaultSessionMinutes = minutes;
+      selectedMissionTimeBudgetMinutes = minutes;
+    });
+  }
+
+  Future<void> saveTimeMissionsEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(timeMissionsEnabledPrefsKey, value);
+    if (!mounted) return;
+
+    setState(() {
+      timeMissionsEnabled = value;
+    });
   }
 
   Future<void> loadDrivingLeads() async {
@@ -3377,9 +3740,66 @@ class _DrivingScreenState extends State<DrivingScreen> {
     return mission.id;
   }
 
-  Future<void> generateMission(
+  int estimatedMinutesForMissionStreets(List<StreetOpportunity> streets) {
+    return streets
+        .fold<double>(
+          0,
+          (total, opportunity) =>
+              total + estimateStreetMinutes(opportunity.street),
+        )
+        .ceil();
+  }
+
+  int estimatedMinutesForStreets(Iterable<CityStreet> streets) {
+    return streets
+        .fold<double>(
+          0,
+          (total, street) => total + estimateStreetMinutes(street),
+        )
+        .ceil();
+  }
+
+  List<StreetOpportunity> selectMissionStreetsForBudget(
     List<StreetOpportunity> streetOpportunities,
-  ) async {
+    int timeBudgetMinutes,
+  ) {
+    final candidates =
+        streetOpportunities
+            .where(
+              (opportunity) => !opportunity.isCovered && opportunity.score > 0,
+            )
+            .toList()
+          ..sort((a, b) => b.score.compareTo(a.score));
+    final selected = <StreetOpportunity>[];
+    var estimatedMinutes = 0.0;
+
+    for (final opportunity in candidates) {
+      final streetMinutes = estimateStreetMinutes(opportunity.street);
+      final wouldFit =
+          selected.isEmpty ||
+          estimatedMinutes + streetMinutes <= timeBudgetMinutes;
+
+      if (!wouldFit) continue;
+
+      selected.add(opportunity);
+      estimatedMinutes += streetMinutes;
+    }
+
+    return selected;
+  }
+
+  int? parsedCustomMissionMinutes() {
+    final value = double.tryParse(customMissionTimeController.text.trim());
+    if (value == null || value <= 0) return null;
+
+    final minutes = customMissionTimeInHours ? value * 60 : value;
+    return minutes.round();
+  }
+
+  Future<void> generateMission(
+    List<StreetOpportunity> streetOpportunities, {
+    int? timeBudgetMinutes,
+  }) async {
     final area = activeDriveArea;
     if (area == null || isSavingMission) return;
 
@@ -3391,10 +3811,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
       return;
     }
 
-    final missionStreets = streetOpportunities
-        .where((opportunity) => !opportunity.isCovered && opportunity.score > 0)
-        .take(missionStreetCount)
-        .toList(growable: false);
+    final missionStreets = timeBudgetMinutes == null
+        ? (streetOpportunities
+              .where(
+                (opportunity) =>
+                    !opportunity.isCovered && opportunity.score > 0,
+              )
+              .take(missionStreetCount)
+              .toList(growable: false))
+        : selectMissionStreetsForBudget(streetOpportunities, timeBudgetMinutes);
 
     if (missionStreets.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3410,7 +3835,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
 
     try {
-      await supabase.from('missions').insert({
+      final estimatedMinutes = estimatedMinutesForMissionStreets(
+        missionStreets,
+      );
+      final row = {
         'account_id': widget.activeAccountId,
         'created_by': supabase.auth.currentUser?.id,
         'drive_area_id': area.id,
@@ -3423,7 +3851,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
           0,
           (total, opportunity) => total + opportunity.score,
         ),
-      });
+      };
+      if (timeBudgetMinutes != null) {
+        row['time_budget_minutes'] = timeBudgetMinutes;
+        row['estimated_minutes'] = estimatedMinutes;
+      }
+
+      await supabase.from('missions').insert(row);
 
       await loadMissions();
 
@@ -3523,20 +3957,37 @@ class _DrivingScreenState extends State<DrivingScreen> {
         await stopTracking();
       }
 
+      final completedAt = DateTime.now().toUtc();
+      final startedAt = mission.startedAt?.toUtc();
+      final actualMinutes = startedAt == null
+          ? null
+          : completedAt.difference(startedAt).inMinutes;
+      final missionUpdate = <String, dynamic>{
+        'status': 'completed',
+        'completed_at': completedAt.toIso8601String(),
+        'leads_generated': leadsFound,
+        'miles_driven': milesDriven,
+        'streets_covered': streetsCovered,
+        'opportunity_captured': opportunityCaptured,
+      };
+      if (actualMinutes != null) {
+        missionUpdate['actual_minutes'] = actualMinutes;
+      }
+
       await supabase
           .from('missions')
-          .update({
-            'status': 'completed',
-            'completed_at': DateTime.now().toUtc().toIso8601String(),
-            'leads_generated': leadsFound,
-            'miles_driven': milesDriven,
-            'streets_covered': streetsCovered,
-            'opportunity_captured': opportunityCaptured,
-          })
+          .update(missionUpdate)
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
 
       final attributedLeads = leadsForMission(mission);
+      final remainingAreaMinutes = activeDriveArea == null
+          ? 0
+          : estimatedMinutesForStreets(
+              streetsInsideArea(
+                activeDriveArea!,
+              ).where((street) => !coveredStreetIds.contains(street.id)),
+            );
       await loadMissions();
 
       if (!mounted) return;
@@ -3548,6 +3999,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
         streetsCovered: streetsCovered,
         opportunityCaptured: opportunityCaptured,
         milesDriven: milesDriven,
+        actualMinutes: actualMinutes,
+        areaRemainingEstimatedMinutes: remainingAreaMinutes,
       );
     } catch (_) {
       if (!mounted) return;
@@ -3565,6 +4018,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
     required int streetsCovered,
     required double opportunityCaptured,
     required double milesDriven,
+    int? actualMinutes,
+    int areaRemainingEstimatedMinutes = 0,
   }) {
     showModalBottomSheet<void>(
       context: context,
@@ -3577,12 +4032,459 @@ class _DrivingScreenState extends State<DrivingScreen> {
         streetsCovered: streetsCovered,
         opportunityCaptured: opportunityCaptured,
         milesDriven: milesDriven,
+        actualMinutes: actualMinutes,
+        areaRemainingEstimatedMinutes: areaRemainingEstimatedMinutes,
         onUpdateLeadStatus: widget.onUpdateLeadStatus,
         onUpdateLeadSource: widget.onUpdateLeadSource,
         onUpdateLeadScoreData: widget.onUpdateLeadScoreData,
         onUpdateLeadParcelData: widget.onUpdateLeadParcelData,
         onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
         onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
+      ),
+    );
+  }
+
+  void openQuickCaptureSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Quick Capture',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Fast lead actions while you are driving.',
+                style: TextStyle(color: Color(0xFF6B7280)),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.add_home_work),
+                label: const Text('Add Lead At My Location'),
+                onPressed: () {
+                  Navigator.pop(context);
+                  openAddLeadFromLocation();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void openPlanTodayDriveSheet(List<StreetOpportunity> streetOpportunities) {
+    var step = !timeMissionsEnabled
+        ? activeDriveArea == null
+              ? 1
+              : 2
+        : defaultSessionMinutes == null
+        ? 0
+        : activeDriveArea == null
+        ? 1
+        : 2;
+    int? selectedBudget = timeMissionsEnabled
+        ? (defaultSessionMinutes ?? selectedMissionTimeBudgetMinutes ?? 30)
+        : null;
+    var showAreaList = false;
+    var isCustom = false;
+    var rememberAsDefault = false;
+    final customController = TextEditingController();
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final previewStreets = timeMissionsEnabled && selectedBudget != null
+              ? selectMissionStreetsForBudget(
+                  streetOpportunities,
+                  selectedBudget!,
+                )
+              : streetOpportunities
+                    .where(
+                      (opportunity) =>
+                          !opportunity.isCovered && opportunity.score > 0,
+                    )
+                    .take(missionStreetCount)
+                    .toList(growable: false);
+          final previewMinutes = estimatedMinutesForMissionStreets(
+            previewStreets,
+          );
+
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 18,
+                right: 18,
+                bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    step == 0
+                        ? 'How much time?'
+                        : step == 1
+                        ? 'Drive Area'
+                        : 'Mission preview',
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (step == 0) ...[
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('30 min'),
+                          selected: selectedBudget == 30 && !isCustom,
+                          onSelected: (_) async {
+                            if (rememberAsDefault) {
+                              await saveDefaultSessionMinutes(30);
+                            }
+                            if (!mounted) return;
+                            setSheetState(() {
+                              selectedBudget = 30;
+                              isCustom = false;
+                              step = 1;
+                            });
+                          },
+                        ),
+                        ChoiceChip(
+                          label: const Text('1 hour'),
+                          selected: selectedBudget == 60 && !isCustom,
+                          onSelected: (_) async {
+                            if (rememberAsDefault) {
+                              await saveDefaultSessionMinutes(60);
+                            }
+                            if (!mounted) return;
+                            setSheetState(() {
+                              selectedBudget = 60;
+                              isCustom = false;
+                              step = 1;
+                            });
+                          },
+                        ),
+                        ChoiceChip(
+                          label: const Text('2 hours'),
+                          selected: selectedBudget == 120 && !isCustom,
+                          onSelected: (_) async {
+                            if (rememberAsDefault) {
+                              await saveDefaultSessionMinutes(120);
+                            }
+                            if (!mounted) return;
+                            setSheetState(() {
+                              selectedBudget = 120;
+                              isCustom = false;
+                              step = 1;
+                            });
+                          },
+                        ),
+                        ChoiceChip(
+                          label: const Text('Custom'),
+                          selected: isCustom,
+                          onSelected: (_) {
+                            setSheetState(() {
+                              isCustom = true;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Remember as my default'),
+                      value: rememberAsDefault,
+                      onChanged: (value) {
+                        setSheetState(() {
+                          rememberAsDefault = value ?? false;
+                        });
+                      },
+                    ),
+                    if (isCustom) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: customController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Minutes',
+                          suffixText: 'min',
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      FilledButton(
+                        onPressed: () async {
+                          final customMinutes = int.tryParse(
+                            customController.text.trim(),
+                          );
+                          if (customMinutes == null || customMinutes <= 0) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Enter a valid minute budget.'),
+                              ),
+                            );
+                            return;
+                          }
+                          if (rememberAsDefault) {
+                            await saveDefaultSessionMinutes(customMinutes);
+                          }
+                          if (!mounted) return;
+                          setSheetState(() {
+                            selectedBudget = customMinutes;
+                            step = 1;
+                          });
+                        },
+                        child: const Text('Continue'),
+                      ),
+                    ],
+                  ] else if (step == 1) ...[
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(activeDriveArea?.name ?? 'No active area'),
+                      subtitle: Text(activeDriveArea?.city ?? 'Pick an area'),
+                      trailing: TextButton(
+                        onPressed: () {
+                          setSheetState(() {
+                            showAreaList = !showAreaList;
+                          });
+                        },
+                        child: const Text('Change'),
+                      ),
+                    ),
+                    if (showAreaList)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: driveAreas
+                              .map(
+                                (area) => ListTile(
+                                  title: Text(area.name),
+                                  subtitle: Text(area.city),
+                                  onTap: () async {
+                                    await setActiveDriveArea(area);
+                                    if (!mounted) return;
+                                    setSheetState(() {
+                                      showAreaList = false;
+                                    });
+                                  },
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: activeDriveArea == null
+                          ? null
+                          : () => setSheetState(() => step = 2),
+                      child: const Text('Continue'),
+                    ),
+                  ] else ...[
+                    Text(
+                      activeDriveArea?.name ?? 'Mission',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          previewStreets.isEmpty
+                              ? 'No available mission streets for this time.'
+                              : '${previewStreets.length} streets - ~$previewMinutes min',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (timeMissionsEnabled &&
+                        defaultSessionMinutes != null) ...[
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          foregroundColor: const Color(0xFF6B7280),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () {
+                          setSheetState(() {
+                            rememberAsDefault = false;
+                            isCustom = false;
+                            step = 0;
+                          });
+                        },
+                        child: Text(
+                          'Change time (currently: $selectedBudget min) ↓',
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.arrow_forward),
+                      label: const Text('Start Driving →'),
+                      onPressed:
+                          previewStreets.isEmpty ||
+                              isSavingMission ||
+                              activeDriveArea == null
+                          ? null
+                          : () async {
+                              Navigator.pop(sheetContext);
+                              setState(() {
+                                selectedMissionTimeBudgetMinutes =
+                                    selectedBudget;
+                              });
+                              await generateMission(
+                                streetOpportunities,
+                                timeBudgetMinutes: timeMissionsEnabled
+                                    ? selectedBudget
+                                    : null,
+                              );
+                            },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ).whenComplete(customController.dispose);
+  }
+
+  void openMissionDetailSheet({
+    required int missionCoveredCount,
+    required int missionStreetTotal,
+    required StreetOpportunity? nextMissionStreet,
+    required int missionEstimatedMinutesRemaining,
+    required double missionOpportunityRemaining,
+    required int missionLeadsFound,
+    required double missionMiles,
+    required double missionOpportunityCaptured,
+  }) {
+    final mission = activeMission;
+    if (mission == null) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                activeDriveArea?.name ?? 'Mission',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 10),
+              LinearProgressIndicator(
+                value: missionStreetTotal == 0
+                    ? 0
+                    : missionCoveredCount / missionStreetTotal,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '$missionCoveredCount of $missionStreetTotal streets - ${missionEstimatedMinutesRemaining}m left',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                nextMissionStreet == null
+                    ? 'Mission streets complete'
+                    : 'Next: ${nextMissionStreet.street.streetName.isEmpty ? 'Unnamed street' : nextMissionStreet.street.streetName}',
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  Chip(label: Text('$missionLeadsFound leads')),
+                  Chip(label: Text('${missionMiles.toStringAsFixed(2)} mi')),
+                  Chip(
+                    label: Text(
+                      '${missionOpportunityRemaining.toStringAsFixed(0)} opp left',
+                    ),
+                  ),
+                ],
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Show only active area'),
+                value: showOnlyActiveArea,
+                onChanged: (value) {
+                  setState(() {
+                    showOnlyActiveArea = value;
+                  });
+                  Navigator.pop(context);
+                },
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    icon: Icon(
+                      isTracking ? Icons.navigation : Icons.play_arrow,
+                    ),
+                    label: Text(isTracking ? 'Driving' : 'Start Driving'),
+                    onPressed: isTracking ? null : startMissionDriving,
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.pause),
+                    label: const Text('Pause'),
+                    onPressed: pauseMission,
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.check),
+                    label: const Text('Complete'),
+                    onPressed: () => completeMission(
+                      streetsCovered: missionCoveredCount,
+                      opportunityCaptured: missionOpportunityCaptured,
+                      leadsFound: missionLeadsFound,
+                      milesDriven: missionMiles,
+                    ),
+                  ),
+                ],
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Time-based missions'),
+                value: timeMissionsEnabled,
+                onChanged: (value) async {
+                  await saveTimeMissionsEnabled(value);
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3961,6 +4863,27 @@ class _DrivingScreenState extends State<DrivingScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Tap the map to draw your area boundary.')),
     );
+  }
+
+  void setShowOnlyActiveArea(bool value) {
+    setState(() {
+      showOnlyActiveArea = value;
+    });
+  }
+
+  void setTargetFilter(String filter, bool value) {
+    setState(() {
+      switch (filter) {
+        case 'out_of_state':
+          targetFilterOutOfState = value;
+        case 'absentee':
+          targetFilterAbsentee = value;
+        case 'portfolio':
+          targetFilterPortfolio = value;
+        case 'low_improvement':
+          targetFilterLowImprovement = value;
+      }
+    });
   }
 
   List<CityStreet> streetsInsideArea(DriveArea area) {
@@ -5753,6 +6676,35 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final nextMissionStreet = chooseNextMissionStreet(
       uncoveredMissionOpportunities,
     );
+    final missionEstimatedMinutesRemaining = estimatedMinutesForMissionStreets(
+      uncoveredMissionOpportunities,
+    );
+    final missionBudgetMinutes = activeMission?.timeBudgetMinutes;
+    final missionElapsedMinutes = activeMission?.startedAt == null
+        ? 0
+        : DateTime.now()
+              .toUtc()
+              .difference(activeMission!.startedAt!.toUtc())
+              .inMinutes;
+    final isMissionOverTimeBudget =
+        missionBudgetMinutes != null &&
+        activeMission?.startedAt != null &&
+        missionElapsedMinutes > missionBudgetMinutes;
+    final selectedTimeBudgetMinutes =
+        selectedMissionTimeBudgetMinutes ?? parsedCustomMissionMinutes();
+    final previewMissionStreets = selectedTimeBudgetMinutes == null
+        ? const <StreetOpportunity>[]
+        : selectMissionStreetsForBudget(
+            streetOpportunities,
+            selectedTimeBudgetMinutes,
+          );
+    final previewMissionEstimatedMinutes = estimatedMinutesForMissionStreets(
+      previewMissionStreets,
+    );
+    final previewMissionOpportunity = previewMissionStreets.fold<double>(
+      0,
+      (total, opportunity) => total + opportunity.score,
+    );
     final missionLeads = leadsForMission(activeMission);
     final missionLeadsFound = missionLeads.length;
     final missionMiles = activeMission?.driveSessionId == null
@@ -5810,141 +6762,617 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final nextStreetName = nextMissionStreet?.street.streetName.isEmpty ?? true
         ? 'Unnamed street'
         : nextMissionStreet!.street.streetName;
+    final showLegacyDriveControls = isDrawAreaMode && DateTime.now().year < 0;
 
     return Scaffold(
       body: Stack(
         children: [
-          SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1280),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        coverageHeadline,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
+          Positioned.fill(
+            child: SizedBox(
+              key: mapWorkspaceKey,
+              width: double.infinity,
+              height: MediaQuery.of(context).size.height,
+              child: FlutterMap(
+                mapController: mapController,
+                options: MapOptions(
+                  initialCenter: currentMapCenter,
+                  initialZoom: 13,
+                  onMapReady: () {
+                    mapIsReady = true;
+                    currentZoom = mapController.camera.zoom;
+                    loadVisibleParcels();
+                    loadVisibleCityStreets();
+                  },
+                  onPositionChanged: (camera, _) {
+                    final wasShowingHouseNumbers =
+                        currentZoom >= houseNumberLabelZoom;
+                    final isShowingHouseNumbers =
+                        camera.zoom >= houseNumberLabelZoom;
+
+                    if (wasShowingHouseNumbers != isShowingHouseNumbers) {
+                      setState(() {
+                        currentMapCenter = camera.center;
+                        currentZoom = camera.zoom;
+                      });
+                    } else {
+                      currentMapCenter = camera.center;
+                      currentZoom = camera.zoom;
+                    }
+
+                    scheduleVisibleParcelLoad();
+                    scheduleVisibleStreetLoad();
+                  },
+                  onTap: (_, point) => handleMapTap(point),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.example.market_coverage',
+                  ),
+                  if (completedRouteSegments.isNotEmpty)
+                    PolylineLayer(
+                      polylines: completedRouteSegments
+                          .map(
+                            (points) => Polyline(
+                              points: points,
+                              strokeWidth: 2,
+                              color: const Color(0x665F6368),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  if (showCoverageMap && mapUncoveredStreets.isNotEmpty)
+                    PolylineLayer(
+                      polylines: mapUncoveredStreets
+                          .map(
+                            (street) => Polyline(
+                              points: street.path,
+                              strokeWidth: 2,
+                              color: const Color(0x66E53935),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  if (showCoverageMap && mapCoveredStreets.isNotEmpty)
+                    PolylineLayer(
+                      polylines: mapCoveredStreets
+                          .map(
+                            (street) => Polyline(
+                              points: street.path,
+                              strokeWidth: 4,
+                              color: const Color(0xCC2E7D32),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  if (heatOpportunities.isNotEmpty)
+                    PolylineLayer(
+                      polylines: heatOpportunities
+                          .map(
+                            (opportunity) => Polyline(
+                              points: opportunity.street.path,
+                              strokeWidth: opportunity.score > 0 ? 6 : 3,
+                              color: streetOpportunityColor(opportunity),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  if (showMissionMap && missionOpportunities.isNotEmpty)
+                    PolylineLayer(
+                      polylines: missionOpportunities
+                          .map(
+                            (opportunity) => Polyline(
+                              points: opportunity.street.path,
+                              strokeWidth:
+                                  coveredStreetIds.contains(
+                                    opportunity.street.id,
+                                  )
+                                  ? 3.5
+                                  : 2.5,
+                              color:
+                                  coveredStreetIds.contains(
+                                    opportunity.street.id,
+                                  )
+                                  ? const Color(0xFF2E7D32)
+                                  : const Color(0xFFE53935),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  if (showMissionMap && nextMissionStreet != null)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: nextMissionStreet.street.path,
+                          strokeWidth: 4,
+                          color: const Color(0xFF2196F3),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(locationMessage),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 8,
-                        children: [
-                          SizedBox(
-                            width: 210,
-                            height: 44,
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.my_location),
-                              onPressed: isFindingLocation
-                                  ? null
-                                  : findMyLocation,
-                              label: Text(
-                                isFindingLocation ? 'Finding...' : 'Find Me',
+                      ],
+                    ),
+                  if (showDriveMap &&
+                      !limitMapToActiveArea &&
+                      activeAreaUncoveredStreets.isNotEmpty)
+                    PolylineLayer(
+                      polylines: activeAreaUncoveredStreets
+                          .map(
+                            (street) => Polyline(
+                              points: street.path,
+                              strokeWidth: 5,
+                              color: const Color(0xFFFF9800),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  if (activeAreaPolygon.length >= 3)
+                    PolygonLayer(
+                      polygons: [
+                        Polygon(
+                          points: activeAreaPolygon,
+                          color: const Color(0x1A1976D2),
+                          borderColor: const Color(0xFF0D47A1),
+                          borderStrokeWidth: 4,
+                        ),
+                      ],
+                    ),
+                  if (drawingBoundaryPoints.length > 1)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: drawingBoundaryPoints,
+                          strokeWidth: 4,
+                          color: const Color(0xFF7B1FA2),
+                        ),
+                      ],
+                    ),
+                  if (drawingAreaPoints.length >= 3)
+                    PolygonLayer(
+                      polygons: [
+                        Polygon(
+                          points: drawingAreaPoints,
+                          color: const Color(0x247B1FA2),
+                          borderColor: const Color(0xFF7B1FA2),
+                          borderStrokeWidth: 2,
+                        ),
+                      ],
+                    ),
+                  if (mapParcels.any((parcel) => parcel.rings.isNotEmpty))
+                    PolygonLayer(
+                      polygons: mapParcels
+                          .where((parcel) => parcel.rings.isNotEmpty)
+                          .expand(
+                            (parcel) => parcel.rings.map(
+                              (ring) => Polygon(
+                                points: ring,
+                                color: Colors.transparent,
+                                borderColor: const Color(0xCC4F5257),
+                                borderStrokeWidth: 1.6,
                               ),
                             ),
-                          ),
-                          SizedBox(
-                            width: 210,
-                            height: 44,
-                            child: ElevatedButton.icon(
-                              icon: Icon(
-                                isTracking ? Icons.stop : Icons.play_arrow,
-                              ),
-                              onPressed: isTracking
-                                  ? stopTracking
-                                  : startTracking,
-                              label: Text(
-                                isTracking ? 'Stop Tracking' : 'Start Tracking',
-                              ),
+                          )
+                          .toList(),
+                    ),
+                  if (selectedParcel != null &&
+                      selectedParcel!.rings.isNotEmpty)
+                    PolygonLayer(
+                      polygons: selectedParcel!.rings
+                          .map(
+                            (ring) => Polygon(
+                              points: ring,
+                              color: const Color(0x262196F3),
+                              borderColor: const Color(0xFF1565C0),
+                              borderStrokeWidth: 4,
                             ),
-                          ),
-                          SizedBox(
-                            width: 210,
-                            height: 44,
-                            child: OutlinedButton.icon(
-                              icon: const Icon(Icons.route),
-                              onPressed: isTracking ? null : simulateDrive,
-                              label: const Text('Simulate Drive'),
+                          )
+                          .toList(),
+                    ),
+                  if (isTracking && activeRouteSegments.isNotEmpty)
+                    PolylineLayer(
+                      polylines: activeRouteSegments
+                          .map(
+                            (points) => Polyline(
+                              points: points,
+                              strokeWidth: 5,
+                              color: Colors.blue,
                             ),
-                          ),
-                          SizedBox(
-                            width: 210,
-                            height: 44,
-                            child: OutlinedButton.icon(
-                              icon: Icon(
-                                isDrawAreaMode ? Icons.edit_off : Icons.edit,
-                              ),
-                              label: Text(
-                                isDrawAreaMode ? 'Exit Draw Area' : 'Draw Area',
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  isDrawAreaMode = !isDrawAreaMode;
-                                  selectedParcel = null;
-                                });
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (isDrawAreaMode) ...[
-                        const SizedBox(height: 12),
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Boundary points: ${drawingAreaPoints.length}',
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                          )
+                          .toList(),
+                    ),
+                  if (mapParcels.isNotEmpty)
+                    MarkerLayer(
+                      markers: mapParcels
+                          .where((parcel) => parcel.centroid != null)
+                          .map((parcel) {
+                            final houseNumber = houseNumberFromAddress(
+                              parcel.propertyAddress,
+                            );
+                            final showLabel =
+                                showHouseNumberLabels && houseNumber != null;
+
+                            return Marker(
+                              point: parcel.centroid!,
+                              width: showLabel ? 66 : 28,
+                              height: 32,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => openParcelPreview(parcel),
+                                child: Center(
+                                  child: showLabel
+                                      ? parcelHouseNumberLabel(
+                                          parcel,
+                                          houseNumber,
+                                        )
+                                      : parcelStatusDot(parcel),
                                 ),
-                                const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton(
-                                        onPressed: drawingAreaPoints.isEmpty
-                                            ? null
-                                            : undoLastDrawingPoint,
-                                        child: const Text('Undo last point'),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: OutlinedButton(
-                                        onPressed: drawingAreaPoints.isEmpty
-                                            ? null
-                                            : clearDrawingArea,
-                                        child: const Text('Clear'),
-                                      ),
+                              ),
+                            );
+                          })
+                          .toList(),
+                    ),
+                  if (myLocation != null)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: myLocation!,
+                          width: 50,
+                          height: 50,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Container(
+                                width: 44,
+                                height: 44,
+                                decoration: const BoxDecoration(
+                                  color: Color(0x332196F3),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              Container(
+                                width: 18,
+                                height: 18,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2196F3),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 3,
+                                  ),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x33000000),
+                                      blurRadius: 4,
+                                      offset: Offset(0, 1),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 8),
-                                SizedBox(
-                                  width: double.infinity,
-                                  height: 48,
-                                  child: ElevatedButton(
-                                    onPressed:
-                                        drawingAreaPoints.length < 3 ||
-                                            isSavingDriveArea
-                                        ? null
-                                        : saveDrawingArea,
-                                    child: Text(
-                                      isSavingDriveArea
-                                          ? 'Saving...'
-                                          : 'Save area',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (drawingAreaPoints.isNotEmpty)
+                    MarkerLayer(
+                      markers: drawingAreaPoints
+                          .asMap()
+                          .entries
+                          .map(
+                            (entry) => Marker(
+                              point: entry.value,
+                              width: 30,
+                              height: 30,
+                              child: Container(
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF7B1FA2),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Text(
+                                  '${entry.key + 1}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  if (shouldDrawLeads)
+                    MarkerLayer(
+                      markers: mapLeads
+                          .map(
+                            (lead) => Marker(
+                              point: LatLng(lead.latitude!, lead.longitude!),
+                              width: 28,
+                              height: 28,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => openLeadDetails(lead),
+                                child: Center(
+                                  child: Container(
+                                    width: 18,
+                                    height: 18,
+                                    decoration: BoxDecoration(
+                                      color: leadScoreColor(lead.score),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Container(
+                                      width: 10,
+                                      height: 10,
+                                      decoration: BoxDecoration(
+                                        color: leadStatusColor(lead.status),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (showLegacyDriveControls)
+            SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1280),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          coverageHeadline,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(locationMessage),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 8,
+                          children: [
+                            SizedBox(
+                              width: 210,
+                              height: 44,
+                              child: ElevatedButton.icon(
+                                icon: const Icon(Icons.my_location),
+                                onPressed: isFindingLocation
+                                    ? null
+                                    : findMyLocation,
+                                label: Text(
+                                  isFindingLocation ? 'Finding...' : 'Find Me',
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 210,
+                              height: 44,
+                              child: ElevatedButton.icon(
+                                icon: Icon(
+                                  isTracking ? Icons.stop : Icons.play_arrow,
+                                ),
+                                onPressed: isTracking
+                                    ? stopTracking
+                                    : startTracking,
+                                label: Text(
+                                  isTracking
+                                      ? 'Stop Tracking'
+                                      : 'Start Tracking',
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 210,
+                              height: 44,
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.route),
+                                onPressed: isTracking ? null : simulateDrive,
+                                label: const Text('Simulate Drive'),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 210,
+                              height: 44,
+                              child: OutlinedButton.icon(
+                                icon: Icon(
+                                  isDrawAreaMode ? Icons.edit_off : Icons.edit,
+                                ),
+                                label: Text(
+                                  isDrawAreaMode
+                                      ? 'Exit Draw Area'
+                                      : 'Draw Area',
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    isDrawAreaMode = !isDrawAreaMode;
+                                    selectedParcel = null;
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (isDrawAreaMode) ...[
+                          const SizedBox(height: 12),
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Boundary points: ${drawingAreaPoints.length}',
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: drawingAreaPoints.isEmpty
+                                              ? null
+                                              : undoLastDrawingPoint,
+                                          child: const Text('Undo last point'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: drawingAreaPoints.isEmpty
+                                              ? null
+                                              : clearDrawingArea,
+                                          child: const Text('Clear'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    height: 48,
+                                    child: ElevatedButton(
+                                      onPressed:
+                                          drawingAreaPoints.length < 3 ||
+                                              isSavingDriveArea
+                                          ? null
+                                          : saveDrawingArea,
+                                      child: Text(
+                                        isSavingDriveArea
+                                            ? 'Saving...'
+                                            : 'Save area',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                    color: const Color(
+                                      0xFF2563EB,
+                                    ).withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    mapModeIcon(mapMode),
+                                    color: const Color(0xFF2563EB),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Smart map: ${mapModeLabel(mapMode)}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        mapModeDescription(mapMode),
+                                        style: const TextStyle(
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                PopupMenuButton<String>(
+                                  tooltip: 'Change map view',
+                                  onSelected: (mode) {
+                                    focusMapWorkspace(
+                                      mode: mode,
+                                      point: currentMapCenter,
+                                      minZoom: currentZoom,
+                                      message:
+                                          'Map view changed to ${mapModeLabel(mode)}.',
+                                    );
+                                  },
+                                  itemBuilder: (context) => const [
+                                    PopupMenuItem(
+                                      value: 'mission',
+                                      child: ListTile(
+                                        leading: Icon(Icons.flag),
+                                        title: Text('Mission Drive'),
+                                        subtitle: Text('Next street and heat'),
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'targets',
+                                      child: ListTile(
+                                        leading: Icon(Icons.adjust),
+                                        title: Text('Targets'),
+                                        subtitle: Text('Scored parcels'),
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'coverage',
+                                      child: ListTile(
+                                        leading: Icon(Icons.timeline),
+                                        title: Text('Coverage'),
+                                        subtitle: Text('Covered vs remaining'),
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'drive',
+                                      child: ListTile(
+                                        leading: Icon(Icons.directions_car),
+                                        title: Text('Drive'),
+                                        subtitle: Text('Light parcel tapping'),
+                                      ),
+                                    ),
+                                  ],
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: const Color(0xFFD1D5DB),
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text('Map View'),
+                                        SizedBox(width: 6),
+                                        Icon(Icons.expand_more),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -5952,734 +7380,836 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             ),
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 16),
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Row(
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          key: mapWorkspaceKey,
+                          width: double.infinity,
+                          height: MediaQuery.of(context).size.height,
+                          child: FlutterMap(
+                            mapController: mapController,
+                            options: MapOptions(
+                              initialCenter: currentMapCenter,
+                              initialZoom: 13,
+                              onMapReady: () {
+                                mapIsReady = true;
+                                currentZoom = mapController.camera.zoom;
+                                loadVisibleParcels();
+                                loadVisibleCityStreets();
+                              },
+                              onPositionChanged: (camera, _) {
+                                final wasShowingHouseNumbers =
+                                    currentZoom >= houseNumberLabelZoom;
+                                final isShowingHouseNumbers =
+                                    camera.zoom >= houseNumberLabelZoom;
+
+                                if (wasShowingHouseNumbers !=
+                                    isShowingHouseNumbers) {
+                                  setState(() {
+                                    currentMapCenter = camera.center;
+                                    currentZoom = camera.zoom;
+                                  });
+                                } else {
+                                  currentMapCenter = camera.center;
+                                  currentZoom = camera.zoom;
+                                }
+
+                                scheduleVisibleParcelLoad();
+                                scheduleVisibleStreetLoad();
+                              },
+                              onTap: (_, point) => handleMapTap(point),
+                            ),
                             children: [
-                              Container(
-                                width: 42,
-                                height: 42,
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF2563EB,
-                                  ).withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Icon(
-                                  mapModeIcon(mapMode),
-                                  color: const Color(0xFF2563EB),
-                                ),
+                              TileLayer(
+                                urlTemplate:
+                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName:
+                                    'com.example.market_coverage',
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Smart map: ${mapModeLabel(mapMode)}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
+                              if (completedRouteSegments.isNotEmpty)
+                                PolylineLayer(
+                                  polylines: completedRouteSegments
+                                      .map(
+                                        (points) => Polyline(
+                                          points: points,
+                                          strokeWidth: 2,
+                                          color: const Color(0x665F6368),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (showCoverageMap &&
+                                  mapUncoveredStreets.isNotEmpty)
+                                PolylineLayer(
+                                  polylines: mapUncoveredStreets
+                                      .map(
+                                        (street) => Polyline(
+                                          points: street.path,
+                                          strokeWidth: 2,
+                                          color: const Color(0x66E53935),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (showCoverageMap &&
+                                  mapCoveredStreets.isNotEmpty)
+                                PolylineLayer(
+                                  polylines: mapCoveredStreets
+                                      .map(
+                                        (street) => Polyline(
+                                          points: street.path,
+                                          strokeWidth: 4,
+                                          color: const Color(0xCC2E7D32),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (heatOpportunities.isNotEmpty)
+                                PolylineLayer(
+                                  polylines: heatOpportunities
+                                      .map(
+                                        (opportunity) => Polyline(
+                                          points: opportunity.street.path,
+                                          strokeWidth: opportunity.score > 0
+                                              ? 6
+                                              : 3,
+                                          color: streetOpportunityColor(
+                                            opportunity,
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (showMissionMap &&
+                                  missionOpportunities.isNotEmpty)
+                                PolylineLayer(
+                                  polylines: missionOpportunities
+                                      .map(
+                                        (opportunity) => Polyline(
+                                          points: opportunity.street.path,
+                                          strokeWidth:
+                                              coveredStreetIds.contains(
+                                                opportunity.street.id,
+                                              )
+                                              ? 3.5
+                                              : 2.5,
+                                          color:
+                                              coveredStreetIds.contains(
+                                                opportunity.street.id,
+                                              )
+                                              ? const Color(0xFF2E7D32)
+                                              : const Color(0xFFE53935),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (showMissionMap && nextMissionStreet != null)
+                                PolylineLayer(
+                                  polylines: [
+                                    Polyline(
+                                      points: nextMissionStreet.street.path,
+                                      strokeWidth: 4,
+                                      color: const Color(0xFF2196F3),
                                     ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      mapModeDescription(mapMode),
-                                      style: const TextStyle(
-                                        color: Color(0xFF6B7280),
+                                  ],
+                                ),
+                              if (showDriveMap &&
+                                  !limitMapToActiveArea &&
+                                  activeAreaUncoveredStreets.isNotEmpty)
+                                PolylineLayer(
+                                  polylines: activeAreaUncoveredStreets
+                                      .map(
+                                        (street) => Polyline(
+                                          points: street.path,
+                                          strokeWidth: 5,
+                                          color: const Color(0xFFFF9800),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (activeAreaPolygon.length >= 3)
+                                PolygonLayer(
+                                  polygons: [
+                                    Polygon(
+                                      points: activeAreaPolygon,
+                                      color: const Color(0x1A1976D2),
+                                      borderColor: const Color(0xFF0D47A1),
+                                      borderStrokeWidth: 4,
+                                    ),
+                                  ],
+                                ),
+                              if (drawingBoundaryPoints.length > 1)
+                                PolylineLayer(
+                                  polylines: [
+                                    Polyline(
+                                      points: drawingBoundaryPoints,
+                                      strokeWidth: 4,
+                                      color: const Color(0xFF7B1FA2),
+                                    ),
+                                  ],
+                                ),
+                              if (drawingAreaPoints.length >= 3)
+                                PolygonLayer(
+                                  polygons: [
+                                    Polygon(
+                                      points: drawingAreaPoints,
+                                      color: const Color(0x247B1FA2),
+                                      borderColor: const Color(0xFF7B1FA2),
+                                      borderStrokeWidth: 2,
+                                    ),
+                                  ],
+                                ),
+                              if (mapParcels.any(
+                                (parcel) => parcel.rings.isNotEmpty,
+                              ))
+                                PolygonLayer(
+                                  polygons: mapParcels
+                                      .where(
+                                        (parcel) => parcel.rings.isNotEmpty,
+                                      )
+                                      .expand(
+                                        (parcel) => parcel.rings.map(
+                                          (ring) => Polygon(
+                                            points: ring,
+                                            color: Colors.transparent,
+                                            borderColor: const Color(
+                                              0xCC4F5257,
+                                            ),
+                                            borderStrokeWidth: 1.6,
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (selectedParcel != null &&
+                                  selectedParcel!.rings.isNotEmpty)
+                                PolygonLayer(
+                                  polygons: selectedParcel!.rings
+                                      .map(
+                                        (ring) => Polygon(
+                                          points: ring,
+                                          color: const Color(0x262196F3),
+                                          borderColor: const Color(0xFF1565C0),
+                                          borderStrokeWidth: 4,
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (isTracking && activeRouteSegments.isNotEmpty)
+                                PolylineLayer(
+                                  polylines: activeRouteSegments
+                                      .map(
+                                        (points) => Polyline(
+                                          points: points,
+                                          strokeWidth: 5,
+                                          color: Colors.blue,
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              if (mapParcels.isNotEmpty)
+                                MarkerLayer(
+                                  markers: mapParcels
+                                      .where(
+                                        (parcel) => parcel.centroid != null,
+                                      )
+                                      .map((parcel) {
+                                        final houseNumber =
+                                            houseNumberFromAddress(
+                                              parcel.propertyAddress,
+                                            );
+                                        final showLabel =
+                                            showHouseNumberLabels &&
+                                            houseNumber != null;
+
+                                        return Marker(
+                                          point: parcel.centroid!,
+                                          width: showLabel ? 66 : 28,
+                                          height: 32,
+                                          child: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: () =>
+                                                openParcelPreview(parcel),
+                                            child: Center(
+                                              child: showLabel
+                                                  ? parcelHouseNumberLabel(
+                                                      parcel,
+                                                      houseNumber,
+                                                    )
+                                                  : parcelStatusDot(parcel),
+                                            ),
+                                          ),
+                                        );
+                                      })
+                                      .toList(),
+                                ),
+                              if (myLocation != null)
+                                MarkerLayer(
+                                  markers: [
+                                    Marker(
+                                      point: myLocation!,
+                                      width: 50,
+                                      height: 50,
+                                      child: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          Container(
+                                            width: 44,
+                                            height: 44,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0x332196F3),
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                          Container(
+                                            width: 18,
+                                            height: 18,
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF2196F3),
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color: Colors.white,
+                                                width: 3,
+                                              ),
+                                              boxShadow: const [
+                                                BoxShadow(
+                                                  color: Color(0x33000000),
+                                                  blurRadius: 4,
+                                                  offset: Offset(0, 1),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
-                              ),
-                              PopupMenuButton<String>(
-                                tooltip: 'Change map view',
-                                onSelected: (mode) {
-                                  focusMapWorkspace(
-                                    mode: mode,
-                                    point: currentMapCenter,
-                                    minZoom: currentZoom,
-                                    message:
-                                        'Map view changed to ${mapModeLabel(mode)}.',
-                                  );
-                                },
-                                itemBuilder: (context) => const [
-                                  PopupMenuItem(
-                                    value: 'mission',
-                                    child: ListTile(
-                                      leading: Icon(Icons.flag),
-                                      title: Text('Mission Drive'),
-                                      subtitle: Text('Next street and heat'),
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'targets',
-                                    child: ListTile(
-                                      leading: Icon(Icons.adjust),
-                                      title: Text('Targets'),
-                                      subtitle: Text('Scored parcels'),
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'coverage',
-                                    child: ListTile(
-                                      leading: Icon(Icons.timeline),
-                                      title: Text('Coverage'),
-                                      subtitle: Text('Covered vs remaining'),
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'drive',
-                                    child: ListTile(
-                                      leading: Icon(Icons.directions_car),
-                                      title: Text('Drive'),
-                                      subtitle: Text('Light parcel tapping'),
-                                    ),
-                                  ),
-                                ],
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: const Color(0xFFD1D5DB),
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text('Map View'),
-                                      SizedBox(width: 6),
-                                      Icon(Icons.expand_more),
-                                    ],
-                                  ),
+                              if (drawingAreaPoints.isNotEmpty)
+                                MarkerLayer(
+                                  markers: drawingAreaPoints
+                                      .asMap()
+                                      .entries
+                                      .map(
+                                        (entry) => Marker(
+                                          point: entry.value,
+                                          width: 30,
+                                          height: 30,
+                                          child: Container(
+                                            alignment: Alignment.center,
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF7B1FA2),
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color: Colors.white,
+                                                width: 2,
+                                              ),
+                                            ),
+                                            child: Text(
+                                              '${entry.key + 1}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        key: mapWorkspaceKey,
-                        width: double.infinity,
-                        height: MediaQuery.of(context).size.height,
-                        child: FlutterMap(
-                          mapController: mapController,
-                          options: MapOptions(
-                            initialCenter: currentMapCenter,
-                            initialZoom: 13,
-                            onMapReady: () {
-                              mapIsReady = true;
-                              currentZoom = mapController.camera.zoom;
-                              loadVisibleParcels();
-                              loadVisibleCityStreets();
-                            },
-                            onPositionChanged: (camera, _) {
-                              final wasShowingHouseNumbers =
-                                  currentZoom >= houseNumberLabelZoom;
-                              final isShowingHouseNumbers =
-                                  camera.zoom >= houseNumberLabelZoom;
-
-                              if (wasShowingHouseNumbers !=
-                                  isShowingHouseNumbers) {
-                                setState(() {
-                                  currentMapCenter = camera.center;
-                                  currentZoom = camera.zoom;
-                                });
-                              } else {
-                                currentMapCenter = camera.center;
-                                currentZoom = camera.zoom;
-                              }
-
-                              scheduleVisibleParcelLoad();
-                              scheduleVisibleStreetLoad();
-                            },
-                            onTap: (_, point) => handleMapTap(point),
-                          ),
-                          children: [
-                            TileLayer(
-                              urlTemplate:
-                                  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                              userAgentPackageName:
-                                  'com.example.market_coverage',
-                            ),
-                            if (completedRouteSegments.isNotEmpty)
-                              PolylineLayer(
-                                polylines: completedRouteSegments
-                                    .map(
-                                      (points) => Polyline(
-                                        points: points,
-                                        strokeWidth: 2,
-                                        color: const Color(0x665F6368),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (showCoverageMap &&
-                                mapUncoveredStreets.isNotEmpty)
-                              PolylineLayer(
-                                polylines: mapUncoveredStreets
-                                    .map(
-                                      (street) => Polyline(
-                                        points: street.path,
-                                        strokeWidth: 2,
-                                        color: const Color(0x66E53935),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (showCoverageMap && mapCoveredStreets.isNotEmpty)
-                              PolylineLayer(
-                                polylines: mapCoveredStreets
-                                    .map(
-                                      (street) => Polyline(
-                                        points: street.path,
-                                        strokeWidth: 4,
-                                        color: const Color(0xCC2E7D32),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (heatOpportunities.isNotEmpty)
-                              PolylineLayer(
-                                polylines: heatOpportunities
-                                    .map(
-                                      (opportunity) => Polyline(
-                                        points: opportunity.street.path,
-                                        strokeWidth: opportunity.score > 0
-                                            ? 6
-                                            : 3,
-                                        color: streetOpportunityColor(
-                                          opportunity,
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (showMissionMap &&
-                                missionOpportunities.isNotEmpty)
-                              PolylineLayer(
-                                polylines: missionOpportunities
-                                    .map(
-                                      (opportunity) => Polyline(
-                                        points: opportunity.street.path,
-                                        strokeWidth:
-                                            coveredStreetIds.contains(
-                                              opportunity.street.id,
-                                            )
-                                            ? 3.5
-                                            : 2.5,
-                                        color:
-                                            coveredStreetIds.contains(
-                                              opportunity.street.id,
-                                            )
-                                            ? const Color(0xFF2E7D32)
-                                            : const Color(0xFFE53935),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (showMissionMap && nextMissionStreet != null)
-                              PolylineLayer(
-                                polylines: [
-                                  Polyline(
-                                    points: nextMissionStreet.street.path,
-                                    strokeWidth: 4,
-                                    color: const Color(0xFF2196F3),
-                                  ),
-                                ],
-                              ),
-                            if (showDriveMap &&
-                                !limitMapToActiveArea &&
-                                activeAreaUncoveredStreets.isNotEmpty)
-                              PolylineLayer(
-                                polylines: activeAreaUncoveredStreets
-                                    .map(
-                                      (street) => Polyline(
-                                        points: street.path,
-                                        strokeWidth: 5,
-                                        color: const Color(0xFFFF9800),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (activeAreaPolygon.length >= 3)
-                              PolygonLayer(
-                                polygons: [
-                                  Polygon(
-                                    points: activeAreaPolygon,
-                                    color: const Color(0x1A1976D2),
-                                    borderColor: const Color(0xFF0D47A1),
-                                    borderStrokeWidth: 4,
-                                  ),
-                                ],
-                              ),
-                            if (drawingBoundaryPoints.length > 1)
-                              PolylineLayer(
-                                polylines: [
-                                  Polyline(
-                                    points: drawingBoundaryPoints,
-                                    strokeWidth: 4,
-                                    color: const Color(0xFF7B1FA2),
-                                  ),
-                                ],
-                              ),
-                            if (drawingAreaPoints.length >= 3)
-                              PolygonLayer(
-                                polygons: [
-                                  Polygon(
-                                    points: drawingAreaPoints,
-                                    color: const Color(0x247B1FA2),
-                                    borderColor: const Color(0xFF7B1FA2),
-                                    borderStrokeWidth: 2,
-                                  ),
-                                ],
-                              ),
-                            if (mapParcels.any(
-                              (parcel) => parcel.rings.isNotEmpty,
-                            ))
-                              PolygonLayer(
-                                polygons: mapParcels
-                                    .where((parcel) => parcel.rings.isNotEmpty)
-                                    .expand(
-                                      (parcel) => parcel.rings.map(
-                                        (ring) => Polygon(
-                                          points: ring,
-                                          color: Colors.transparent,
-                                          borderColor: const Color(0xCC4F5257),
-                                          borderStrokeWidth: 1.6,
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (selectedParcel != null &&
-                                selectedParcel!.rings.isNotEmpty)
-                              PolygonLayer(
-                                polygons: selectedParcel!.rings
-                                    .map(
-                                      (ring) => Polygon(
-                                        points: ring,
-                                        color: const Color(0x262196F3),
-                                        borderColor: const Color(0xFF1565C0),
-                                        borderStrokeWidth: 4,
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (isTracking && activeRouteSegments.isNotEmpty)
-                              PolylineLayer(
-                                polylines: activeRouteSegments
-                                    .map(
-                                      (points) => Polyline(
-                                        points: points,
-                                        strokeWidth: 5,
-                                        color: Colors.blue,
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (mapParcels.isNotEmpty)
-                              MarkerLayer(
-                                markers: mapParcels
-                                    .where((parcel) => parcel.centroid != null)
-                                    .map((parcel) {
-                                      final houseNumber =
-                                          houseNumberFromAddress(
-                                            parcel.propertyAddress,
-                                          );
-                                      final showLabel =
-                                          showHouseNumberLabels &&
-                                          houseNumber != null;
-
-                                      return Marker(
-                                        point: parcel.centroid!,
-                                        width: showLabel ? 66 : 28,
-                                        height: 32,
-                                        child: GestureDetector(
-                                          behavior: HitTestBehavior.opaque,
-                                          onTap: () =>
-                                              openParcelPreview(parcel),
-                                          child: Center(
-                                            child: showLabel
-                                                ? parcelHouseNumberLabel(
-                                                    parcel,
-                                                    houseNumber,
-                                                  )
-                                                : parcelStatusDot(parcel),
+                              if (shouldDrawLeads)
+                                MarkerLayer(
+                                  markers: mapLeads
+                                      .map(
+                                        (lead) => Marker(
+                                          point: LatLng(
+                                            lead.latitude!,
+                                            lead.longitude!,
                                           ),
-                                        ),
-                                      );
-                                    })
-                                    .toList(),
-                              ),
-                            if (myLocation != null)
-                              MarkerLayer(
-                                markers: [
-                                  Marker(
-                                    point: myLocation!,
-                                    width: 50,
-                                    height: 50,
-                                    child: Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        Container(
-                                          width: 44,
-                                          height: 44,
-                                          decoration: const BoxDecoration(
-                                            color: Color(0x332196F3),
-                                            shape: BoxShape.circle,
-                                          ),
-                                        ),
-                                        Container(
-                                          width: 18,
-                                          height: 18,
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF2196F3),
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: Colors.white,
-                                              width: 3,
-                                            ),
-                                            boxShadow: const [
-                                              BoxShadow(
-                                                color: Color(0x33000000),
-                                                blurRadius: 4,
-                                                offset: Offset(0, 1),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            if (drawingAreaPoints.isNotEmpty)
-                              MarkerLayer(
-                                markers: drawingAreaPoints
-                                    .asMap()
-                                    .entries
-                                    .map(
-                                      (entry) => Marker(
-                                        point: entry.value,
-                                        width: 30,
-                                        height: 30,
-                                        child: Container(
-                                          alignment: Alignment.center,
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF7B1FA2),
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: Colors.white,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            '${entry.key + 1}',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                            if (shouldDrawLeads)
-                              MarkerLayer(
-                                markers: mapLeads
-                                    .map(
-                                      (lead) => Marker(
-                                        point: LatLng(
-                                          lead.latitude!,
-                                          lead.longitude!,
-                                        ),
-                                        width: 28,
-                                        height: 28,
-                                        child: GestureDetector(
-                                          behavior: HitTestBehavior.opaque,
-                                          onTap: () => openLeadDetails(lead),
-                                          child: Center(
-                                            child: Container(
-                                              width: 18,
-                                              height: 18,
-                                              decoration: BoxDecoration(
-                                                color: leadScoreColor(
-                                                  lead.score,
-                                                ),
-                                                shape: BoxShape.circle,
-                                              ),
-                                              alignment: Alignment.center,
+                                          width: 28,
+                                          height: 28,
+                                          child: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: () => openLeadDetails(lead),
+                                            child: Center(
                                               child: Container(
-                                                width: 10,
-                                                height: 10,
+                                                width: 18,
+                                                height: 18,
                                                 decoration: BoxDecoration(
-                                                  color: leadStatusColor(
-                                                    lead.status,
+                                                  color: leadScoreColor(
+                                                    lead.score,
                                                   ),
                                                   shape: BoxShape.circle,
                                                 ),
+                                                alignment: Alignment.center,
+                                                child: Container(
+                                                  width: 10,
+                                                  height: 10,
+                                                  decoration: BoxDecoration(
+                                                    color: leadStatusColor(
+                                                      lead.status,
+                                                    ),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    )
-                                    .toList(),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Active Work Area',
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
+                                      )
+                                      .toList(),
                                 ),
-                              ),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Pick the area this map, mission, and coverage should work from.',
-                                style: TextStyle(color: Color(0xFF6B7280)),
-                              ),
-                              const SizedBox(height: 12),
-                              if (isLoadingDriveAreas)
-                                const Text('Loading saved drive areas...')
-                              else if (driveAreas.isEmpty)
-                                const Text('No saved drive areas yet.')
-                              else ...[
-                                DropdownButtonFormField<String>(
-                                  initialValue: activeDriveArea?.id,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Active area',
-                                    border: OutlineInputBorder(),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Active Work Area',
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  items: [
-                                    const DropdownMenuItem<String>(
-                                      value: '',
-                                      child: Text('No active area'),
-                                    ),
-                                    ...rankedDriveAreas.map(
-                                      (area) => DropdownMenuItem<String>(
-                                        value: area.id,
-                                        child: Text(
-                                          '${area.isComplete ? '${area.name} (complete)' : area.name} '
-                                          '(${(driveAreaRemainingOpportunity[area.id] ?? 0).toStringAsFixed(0)} opp)',
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                  onChanged: (areaId) {
-                                    if (areaId == null) return;
-
-                                    final area = areaId.isEmpty
-                                        ? null
-                                        : driveAreas
-                                              .where(
-                                                (item) => item.id == areaId,
-                                              )
-                                              .firstOrNull;
-                                    setActiveDriveArea(area);
-                                  },
+                                ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Pick the area this map, mission, and coverage should work from.',
+                                  style: TextStyle(color: Color(0xFF6B7280)),
                                 ),
                                 const SizedBox(height: 12),
-                                if (activeDriveArea == null)
-                                  const Text('Pick an area to resume it.')
+                                if (isLoadingDriveAreas)
+                                  const Text('Loading saved drive areas...')
+                                else if (driveAreas.isEmpty)
+                                  const Text('No saved drive areas yet.')
                                 else ...[
-                                  Text(
-                                    activeDriveArea!.name,
-                                    style: const TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
+                                  DropdownButtonFormField<String>(
+                                    initialValue: activeDriveArea?.id,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Active area',
+                                      border: OutlineInputBorder(),
                                     ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text('City: ${activeDriveArea!.city}'),
-                                  const SizedBox(height: 8),
-                                  if (activeAreaStreets.isEmpty)
-                                    const Text(
-                                      'No street data for this area yet',
-                                    )
-                                  else ...[
-                                    Text(
-                                      'Area coverage: ${activeAreaCoveragePercent.toStringAsFixed(0)}% '
-                                      '($activeAreaCoveredStreetCount/${activeAreaStreets.length} streets)',
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Covered streets: $activeAreaCoveredStreetCount',
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Remaining streets: $activeAreaRemainingStreetCount',
-                                    ),
-                                  ],
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Leads found inside area: $activeAreaLeadsFound',
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Remaining opportunity: ${activeAreaRemainingOpportunity.toStringAsFixed(0)}',
-                                  ),
-                                  const SizedBox(height: 12),
-                                  SwitchListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: const Text('Show only active area'),
-                                    value: showOnlyActiveArea,
-                                    onChanged: (value) {
-                                      setState(() {
-                                        showOnlyActiveArea = value;
-                                      });
+                                    items: [
+                                      const DropdownMenuItem<String>(
+                                        value: '',
+                                        child: Text('No active area'),
+                                      ),
+                                      ...rankedDriveAreas.map(
+                                        (area) => DropdownMenuItem<String>(
+                                          value: area.id,
+                                          child: Text(
+                                            '${area.isComplete ? '${area.name} (complete)' : area.name} '
+                                            '(${(driveAreaRemainingOpportunity[area.id] ?? 0).toStringAsFixed(0)} opp)',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                    onChanged: (areaId) {
+                                      if (areaId == null) return;
+
+                                      final area = areaId.isEmpty
+                                          ? null
+                                          : driveAreas
+                                                .where(
+                                                  (item) => item.id == areaId,
+                                                )
+                                                .firstOrNull;
+                                      setActiveDriveArea(area);
                                     },
                                   ),
-                                  const SizedBox(height: 8),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    height: 48,
-                                    child: ElevatedButton.icon(
-                                      icon: Icon(
-                                        isTracking
-                                            ? Icons.navigation
-                                            : Icons.play_arrow,
-                                      ),
-                                      label: Text(
-                                        isTracking
-                                            ? 'Area Drive Running'
-                                            : 'Start Area Drive',
-                                      ),
-                                      onPressed: startAreaDrive,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    height: 48,
-                                    child: OutlinedButton.icon(
-                                      icon: const Icon(Icons.near_me),
-                                      label: const Text(
-                                        'Next uncovered street',
-                                      ),
-                                      onPressed:
-                                          activeAreaUncoveredStreets.isEmpty
-                                          ? null
-                                          : () => focusNextUncoveredStreet(
-                                              activeAreaUncoveredStreets,
-                                            ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    height: 48,
-                                    child: OutlinedButton.icon(
-                                      icon: const Icon(Icons.map),
-                                      label: Text(
-                                        isBuildingMarketMap
-                                            ? 'Building Market Map...'
-                                            : 'Build Market Map',
-                                      ),
-                                      onPressed: isBuildingMarketMap
-                                          ? null
-                                          : buildMarketMap,
-                                    ),
-                                  ),
-                                  if (marketMapMessage.isNotEmpty) ...[
-                                    const SizedBox(height: 8),
-                                    Text(marketMapMessage),
-                                  ],
-                                  if (topUncoveredOpportunities.isNotEmpty) ...[
-                                    const SizedBox(height: 16),
-                                    const Text(
-                                      'Best uncovered streets first',
-                                      style: TextStyle(
-                                        fontSize: 18,
+                                  const SizedBox(height: 12),
+                                  if (activeDriveArea == null)
+                                    const Text('Pick an area to resume it.')
+                                  else ...[
+                                    Text(
+                                      activeDriveArea!.name,
+                                      style: const TextStyle(
+                                        fontSize: 20,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                     const SizedBox(height: 8),
-                                    ...topUncoveredOpportunities.map(
-                                      (opportunity) => ListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        title: Text(
-                                          opportunity.street.streetName.isEmpty
-                                              ? 'Unnamed street'
-                                              : opportunity.street.streetName,
+                                    Text('City: ${activeDriveArea!.city}'),
+                                    const SizedBox(height: 8),
+                                    if (activeAreaStreets.isEmpty)
+                                      const Text(
+                                        'No street data for this area yet',
+                                      )
+                                    else ...[
+                                      Text(
+                                        'Area coverage: ${activeAreaCoveragePercent.toStringAsFixed(0)}% '
+                                        '($activeAreaCoveredStreetCount/${activeAreaStreets.length} streets)',
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Covered streets: $activeAreaCoveredStreetCount',
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Remaining streets: $activeAreaRemainingStreetCount',
+                                      ),
+                                    ],
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Leads found inside area: $activeAreaLeadsFound',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Remaining opportunity: ${activeAreaRemainingOpportunity.toStringAsFixed(0)}',
+                                    ),
+                                    const SizedBox(height: 12),
+                                    SwitchListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: const Text(
+                                        'Show only active area',
+                                      ),
+                                      value: showOnlyActiveArea,
+                                      onChanged: (value) {
+                                        setState(() {
+                                          showOnlyActiveArea = value;
+                                        });
+                                      },
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      height: 48,
+                                      child: ElevatedButton.icon(
+                                        icon: Icon(
+                                          isTracking
+                                              ? Icons.navigation
+                                              : Icons.play_arrow,
                                         ),
-                                        subtitle: Text(
-                                          'Opportunity ${opportunity.score.toStringAsFixed(0)}',
+                                        label: Text(
+                                          isTracking
+                                              ? 'Area Drive Running'
+                                              : 'Start Area Drive',
                                         ),
-                                        trailing: IconButton(
-                                          icon: const Icon(
-                                            Icons.center_focus_strong,
-                                          ),
-                                          tooltip: 'Pan map here',
-                                          onPressed: () => focusStreetWorkspace(
-                                            'mission',
-                                            opportunity.street,
-                                            message:
-                                                opportunity
+                                        onPressed: startAreaDrive,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      height: 48,
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(Icons.near_me),
+                                        label: const Text(
+                                          'Next uncovered street',
+                                        ),
+                                        onPressed:
+                                            activeAreaUncoveredStreets.isEmpty
+                                            ? null
+                                            : () => focusNextUncoveredStreet(
+                                                activeAreaUncoveredStreets,
+                                              ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      height: 48,
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(Icons.map),
+                                        label: Text(
+                                          isBuildingMarketMap
+                                              ? 'Building Market Map...'
+                                              : 'Build Market Map',
+                                        ),
+                                        onPressed: isBuildingMarketMap
+                                            ? null
+                                            : buildMarketMap,
+                                      ),
+                                    ),
+                                    if (marketMapMessage.isNotEmpty) ...[
+                                      const SizedBox(height: 8),
+                                      Text(marketMapMessage),
+                                    ],
+                                    if (topUncoveredOpportunities
+                                        .isNotEmpty) ...[
+                                      const SizedBox(height: 16),
+                                      const Text(
+                                        'Best uncovered streets first',
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      ...topUncoveredOpportunities.map(
+                                        (opportunity) => ListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          title: Text(
+                                            opportunity
                                                     .street
                                                     .streetName
                                                     .isEmpty
-                                                ? 'Mission map focused on this street.'
-                                                : 'Mission map focused on ${opportunity.street.streetName}.',
+                                                ? 'Unnamed street'
+                                                : opportunity.street.streetName,
+                                          ),
+                                          subtitle: Text(
+                                            'Opportunity ${opportunity.score.toStringAsFixed(0)}',
+                                          ),
+                                          trailing: IconButton(
+                                            icon: const Icon(
+                                              Icons.center_focus_strong,
+                                            ),
+                                            tooltip: 'Pan map here',
+                                            onPressed: () => focusStreetWorkspace(
+                                              'mission',
+                                              opportunity.street,
+                                              message:
+                                                  opportunity
+                                                      .street
+                                                      .streetName
+                                                      .isEmpty
+                                                  ? 'Mission map focused on this street.'
+                                                  : 'Mission map focused on ${opportunity.street.streetName}.',
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 16),
-                                  Card(
-                                    color: const Color(0xFFF7F9FC),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(14),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          const Text(
-                                            'Opportunity Mission',
-                                            style: TextStyle(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 10),
-                                          if (isLoadingMissions)
-                                            const Text('Loading mission...')
-                                          else if (activeMission == null) ...[
-                                            Text(
-                                              'Ready to create a ${math.min(missionStreetCount, topUncoveredOpportunities.length)} street mission.',
+                                    ],
+                                    const SizedBox(height: 16),
+                                    Card(
+                                      color: const Color(0xFFF7F9FC),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(14),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              'Opportunity Mission',
+                                              style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             ),
                                             const SizedBox(height: 10),
-                                            SizedBox(
-                                              width: double.infinity,
-                                              height: 46,
-                                              child: ElevatedButton.icon(
-                                                icon: const Icon(Icons.flag),
-                                                label: Text(
-                                                  isSavingMission
-                                                      ? 'Starting...'
-                                                      : 'Start Mission',
+                                            if (isLoadingMissions)
+                                              const Text('Loading mission...')
+                                            else if (activeMission == null) ...[
+                                              Text(
+                                                'Ready to create a ${math.min(missionStreetCount, topUncoveredOpportunities.length)} street mission.',
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Card(
+                                                color: Colors.white,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.all(
+                                                    14,
+                                                  ),
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      const Text(
+                                                        'How much time do you have?',
+                                                        style: TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                          fontSize: 16,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(
+                                                        height: 10,
+                                                      ),
+                                                      Wrap(
+                                                        spacing: 8,
+                                                        runSpacing: 8,
+                                                        children: [
+                                                          ChoiceChip(
+                                                            label: const Text(
+                                                              '30 min',
+                                                            ),
+                                                            selected:
+                                                                selectedMissionTimeBudgetMinutes ==
+                                                                30,
+                                                            onSelected: (_) {
+                                                              setState(() {
+                                                                selectedMissionTimeBudgetMinutes =
+                                                                    30;
+                                                              });
+                                                            },
+                                                          ),
+                                                          ChoiceChip(
+                                                            label: const Text(
+                                                              '1 hour',
+                                                            ),
+                                                            selected:
+                                                                selectedMissionTimeBudgetMinutes ==
+                                                                60,
+                                                            onSelected: (_) {
+                                                              setState(() {
+                                                                selectedMissionTimeBudgetMinutes =
+                                                                    60;
+                                                              });
+                                                            },
+                                                          ),
+                                                          ChoiceChip(
+                                                            label: const Text(
+                                                              '2 hours',
+                                                            ),
+                                                            selected:
+                                                                selectedMissionTimeBudgetMinutes ==
+                                                                120,
+                                                            onSelected: (_) {
+                                                              setState(() {
+                                                                selectedMissionTimeBudgetMinutes =
+                                                                    120;
+                                                              });
+                                                            },
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      const SizedBox(
+                                                        height: 10,
+                                                      ),
+                                                      Row(
+                                                        children: [
+                                                          Expanded(
+                                                            child: TextField(
+                                                              controller:
+                                                                  customMissionTimeController,
+                                                              keyboardType:
+                                                                  TextInputType
+                                                                      .number,
+                                                              decoration:
+                                                                  const InputDecoration(
+                                                                    labelText:
+                                                                        'Custom time',
+                                                                  ),
+                                                              onChanged: (_) {
+                                                                setState(() {
+                                                                  selectedMissionTimeBudgetMinutes =
+                                                                      null;
+                                                                });
+                                                              },
+                                                            ),
+                                                          ),
+                                                          const SizedBox(
+                                                            width: 8,
+                                                          ),
+                                                          SegmentedButton<bool>(
+                                                            segments: const [
+                                                              ButtonSegment(
+                                                                value: false,
+                                                                label: Text(
+                                                                  'min',
+                                                                ),
+                                                              ),
+                                                              ButtonSegment(
+                                                                value: true,
+                                                                label: Text(
+                                                                  'hr',
+                                                                ),
+                                                              ),
+                                                            ],
+                                                            selected: {
+                                                              customMissionTimeInHours,
+                                                            },
+                                                            onSelectionChanged:
+                                                                (selection) {
+                                                                  setState(() {
+                                                                    customMissionTimeInHours =
+                                                                        selection
+                                                                            .first;
+                                                                    selectedMissionTimeBudgetMinutes =
+                                                                        null;
+                                                                  });
+                                                                },
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      const SizedBox(
+                                                        height: 12,
+                                                      ),
+                                                      Container(
+                                                        width: double.infinity,
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                              12,
+                                                            ),
+                                                        decoration: BoxDecoration(
+                                                          color: const Color(
+                                                            0xFFF3F4F6,
+                                                          ),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                8,
+                                                              ),
+                                                        ),
+                                                        child: Row(
+                                                          children: [
+                                                            Expanded(
+                                                              child: Text(
+                                                                previewMissionStreets
+                                                                        .isEmpty
+                                                                    ? 'No time-budgeted streets available yet.'
+                                                                    : '${previewMissionStreets.length} streets · est. $previewMissionEstimatedMinutes min · ${previewMissionOpportunity.toStringAsFixed(0)} opp pts',
+                                                                style: const TextStyle(
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w700,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                            TextButton(
+                                                              onPressed: () {
+                                                                ScaffoldMessenger.of(
+                                                                  context,
+                                                                ).showSnackBar(
+                                                                  const SnackBar(
+                                                                    content: Text(
+                                                                      'Adjust coming soon',
+                                                                    ),
+                                                                  ),
+                                                                );
+                                                              },
+                                                              child: const Text(
+                                                                'Adjust',
+                                                              ),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
                                                 ),
+                                              ),
+                                              const SizedBox(height: 10),
+                                              SizedBox(
+                                                width: double.infinity,
+                                                height: 46,
+                                                child: ElevatedButton.icon(
+                                                  icon: const Icon(Icons.flag),
+                                                  label: Text(
+                                                    isSavingMission
+                                                        ? 'Starting...'
+                                                        : 'Start Mission',
+                                                  ),
+                                                  onPressed:
+                                                      isSavingMission ||
+                                                          previewMissionStreets
+                                                              .isEmpty ||
+                                                          selectedTimeBudgetMinutes ==
+                                                              null
+                                                      ? null
+                                                      : () => generateMission(
+                                                          streetOpportunities,
+                                                          timeBudgetMinutes:
+                                                              selectedTimeBudgetMinutes,
+                                                        ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 8),
+                                              TextButton(
                                                 onPressed:
                                                     isSavingMission ||
                                                         topUncoveredOpportunities
@@ -6688,725 +8218,816 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                     : () => generateMission(
                                                         streetOpportunities,
                                                       ),
-                                              ),
-                                            ),
-                                          ] else ...[
-                                            Row(
-                                              children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    activeMission!.status ==
-                                                            'paused'
-                                                        ? 'Mission paused'
-                                                        : 'Mission running',
-                                                    style: const TextStyle(
-                                                      fontSize: 18,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                    ),
-                                                  ),
+                                                child: const Text(
+                                                  'Start default 12-street mission',
                                                 ),
-                                                Text(
-                                                  '$missionCoveredCount / $missionStreetTotal',
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 8),
-                                            LinearProgressIndicator(
-                                              value: missionStreetTotal == 0
-                                                  ? 0
-                                                  : missionCoveredCount /
-                                                        missionStreetTotal,
-                                            ),
-                                            const SizedBox(height: 12),
-                                            Container(
-                                              width: double.infinity,
-                                              padding: const EdgeInsets.all(14),
-                                              decoration: BoxDecoration(
-                                                color: const Color(0xFFEEF2FF),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
                                               ),
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
+                                            ] else ...[
+                                              Row(
                                                 children: [
-                                                  const Text(
-                                                    'Next street',
-                                                    style: TextStyle(
-                                                      color: Color(0xFF4F46E5),
-                                                      fontWeight:
-                                                          FontWeight.bold,
+                                                  Expanded(
+                                                    child: Text(
+                                                      activeMission!.status ==
+                                                              'paused'
+                                                          ? 'Mission paused'
+                                                          : 'Mission running',
+                                                      style: const TextStyle(
+                                                        fontSize: 18,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
                                                     ),
                                                   ),
-                                                  const SizedBox(height: 4),
                                                   Text(
-                                                    nextMissionStreet == null
-                                                        ? 'Mission streets complete'
-                                                        : nextMissionStreet
-                                                              .street
-                                                              .streetName
-                                                              .isEmpty
-                                                        ? 'Unnamed street'
-                                                        : nextMissionStreet
-                                                              .street
-                                                              .streetName,
+                                                    '$missionCoveredCount / $missionStreetTotal',
                                                     style: const TextStyle(
-                                                      fontSize: 18,
                                                       fontWeight:
                                                           FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    'Remaining opportunity: ${missionOpportunityRemaining.toStringAsFixed(0)} pts',
-                                                    style: const TextStyle(
-                                                      color: Color(0xFF4B5563),
                                                     ),
                                                   ),
                                                 ],
                                               ),
-                                            ),
-                                            const SizedBox(height: 10),
-                                            Wrap(
-                                              spacing: 8,
-                                              runSpacing: 8,
-                                              children: [
-                                                Chip(
-                                                  avatar: const Icon(
-                                                    Icons.person_pin_circle,
-                                                    size: 18,
-                                                  ),
-                                                  label: Text(
-                                                    '$missionLeadsFound leads',
-                                                  ),
-                                                ),
-                                                Chip(
-                                                  avatar: const Icon(
-                                                    Icons.route,
-                                                    size: 18,
-                                                  ),
-                                                  label: Text(
-                                                    '${missionMiles.toStringAsFixed(2)} mi',
-                                                  ),
-                                                ),
-                                                Chip(
-                                                  avatar: const Icon(
-                                                    Icons.bolt,
-                                                    size: 18,
-                                                  ),
-                                                  label: Text(
-                                                    '${missionOpportunityCaptured.toStringAsFixed(0)} pts captured',
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 10),
-                                            SizedBox(
-                                              width: double.infinity,
-                                              child: FilledButton.icon(
-                                                icon: const Icon(
-                                                  Icons.navigation,
-                                                ),
-                                                label: Text(
-                                                  isTracking
-                                                      ? 'Tracking mission'
-                                                      : 'Drive next street',
-                                                ),
-                                                onPressed:
-                                                    nextMissionStreet == null
-                                                    ? null
-                                                    : () async {
-                                                        focusStreetWorkspace(
-                                                          'mission',
-                                                          nextMissionStreet
-                                                              .street,
-                                                          message:
-                                                              'Mission map focused on your next street.',
-                                                        );
-
-                                                        if (!isTracking) {
-                                                          await startMissionDriving();
-                                                        }
-                                                      },
+                                              const SizedBox(height: 8),
+                                              LinearProgressIndicator(
+                                                value: missionStreetTotal == 0
+                                                    ? 0
+                                                    : missionCoveredCount /
+                                                          missionStreetTotal,
                                               ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Row(
-                                              children: [
-                                                Expanded(
-                                                  child: OutlinedButton.icon(
-                                                    icon: const Icon(
-                                                      Icons.pause,
-                                                    ),
-                                                    onPressed: pauseMission,
-                                                    label: const Text('Pause'),
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  child: OutlinedButton.icon(
-                                                    icon: const Icon(
-                                                      Icons.check_circle,
-                                                    ),
-                                                    onPressed: () => completeMission(
-                                                      streetsCovered:
-                                                          missionCoveredCount,
-                                                      opportunityCaptured:
-                                                          missionOpportunityCaptured,
-                                                      leadsFound:
-                                                          missionLeadsFound,
-                                                      milesDriven: missionMiles,
-                                                    ),
-                                                    label: const Text('Finish'),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            if (missionOpportunities
-                                                .isNotEmpty) ...[
                                               const SizedBox(height: 12),
-                                              ExpansionTile(
-                                                tilePadding: EdgeInsets.zero,
-                                                childrenPadding:
-                                                    EdgeInsets.zero,
-                                                title: const Text(
-                                                  'Mission streets',
+                                              Container(
+                                                width: double.infinity,
+                                                padding: const EdgeInsets.all(
+                                                  14,
                                                 ),
-                                                subtitle: Text(
-                                                  '$missionCoveredCount of $missionStreetTotal covered',
+                                                decoration: BoxDecoration(
+                                                  color: const Color(
+                                                    0xFFEEF2FF,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
                                                 ),
-                                                children: missionOpportunities.map((
-                                                  opportunity,
-                                                ) {
-                                                  final isCovered =
-                                                      coveredStreetIds.contains(
-                                                        opportunity.street.id,
-                                                      );
-
-                                                  return ListTile(
-                                                    contentPadding:
-                                                        EdgeInsets.zero,
-                                                    dense: true,
-                                                    title: Text(
-                                                      opportunity
-                                                              .street
-                                                              .streetName
-                                                              .isEmpty
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    const Text(
+                                                      'Next street',
+                                                      style: TextStyle(
+                                                        color: Color(
+                                                          0xFF4F46E5,
+                                                        ),
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      nextMissionStreet == null
+                                                          ? 'Mission streets complete'
+                                                          : nextMissionStreet
+                                                                .street
+                                                                .streetName
+                                                                .isEmpty
                                                           ? 'Unnamed street'
-                                                          : opportunity
+                                                          : nextMissionStreet
                                                                 .street
                                                                 .streetName,
-                                                    ),
-                                                    subtitle: Text(
-                                                      '${isCovered ? 'Covered' : 'Pending'} | ${opportunity.score.toStringAsFixed(0)} opportunity pts',
-                                                    ),
-                                                    trailing: IconButton(
-                                                      icon: const Icon(
-                                                        Icons
-                                                            .center_focus_strong,
+                                                      style: const TextStyle(
+                                                        fontSize: 18,
+                                                        fontWeight:
+                                                            FontWeight.bold,
                                                       ),
-                                                      tooltip: 'Pan map here',
-                                                      onPressed: () =>
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      'Remaining opportunity: ${missionOpportunityRemaining.toStringAsFixed(0)} pts',
+                                                      style: const TextStyle(
+                                                        color: Color(
+                                                          0xFF4B5563,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Wrap(
+                                                spacing: 8,
+                                                runSpacing: 8,
+                                                children: [
+                                                  Chip(
+                                                    avatar: const Icon(
+                                                      Icons.person_pin_circle,
+                                                      size: 18,
+                                                    ),
+                                                    label: Text(
+                                                      '$missionLeadsFound leads',
+                                                    ),
+                                                  ),
+                                                  Chip(
+                                                    avatar: const Icon(
+                                                      Icons.route,
+                                                      size: 18,
+                                                    ),
+                                                    label: Text(
+                                                      '${missionMiles.toStringAsFixed(2)} mi',
+                                                    ),
+                                                  ),
+                                                  Chip(
+                                                    avatar: const Icon(
+                                                      Icons.bolt,
+                                                      size: 18,
+                                                    ),
+                                                    label: Text(
+                                                      '${missionOpportunityCaptured.toStringAsFixed(0)} pts captured',
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 10),
+                                              SizedBox(
+                                                width: double.infinity,
+                                                child: FilledButton.icon(
+                                                  icon: const Icon(
+                                                    Icons.navigation,
+                                                  ),
+                                                  label: Text(
+                                                    isTracking
+                                                        ? 'Tracking mission'
+                                                        : 'Drive next street',
+                                                  ),
+                                                  onPressed:
+                                                      nextMissionStreet == null
+                                                      ? null
+                                                      : () async {
                                                           focusStreetWorkspace(
                                                             'mission',
-                                                            opportunity.street,
+                                                            nextMissionStreet
+                                                                .street,
                                                             message:
-                                                                'Mission map focused on this street.',
-                                                          ),
-                                                    ),
-                                                  );
-                                                }).toList(),
+                                                                'Mission map focused on your next street.',
+                                                          );
+
+                                                          if (!isTracking) {
+                                                            await startMissionDriving();
+                                                          }
+                                                        },
+                                                ),
                                               ),
+                                              const SizedBox(height: 8),
+                                              Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: OutlinedButton.icon(
+                                                      icon: const Icon(
+                                                        Icons.pause,
+                                                      ),
+                                                      onPressed: pauseMission,
+                                                      label: const Text(
+                                                        'Pause',
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: OutlinedButton.icon(
+                                                      icon: const Icon(
+                                                        Icons.check_circle,
+                                                      ),
+                                                      onPressed: () => completeMission(
+                                                        streetsCovered:
+                                                            missionCoveredCount,
+                                                        opportunityCaptured:
+                                                            missionOpportunityCaptured,
+                                                        leadsFound:
+                                                            missionLeadsFound,
+                                                        milesDriven:
+                                                            missionMiles,
+                                                      ),
+                                                      label: const Text(
+                                                        'Finish',
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              if (missionOpportunities
+                                                  .isNotEmpty) ...[
+                                                const SizedBox(height: 12),
+                                                ExpansionTile(
+                                                  tilePadding: EdgeInsets.zero,
+                                                  childrenPadding:
+                                                      EdgeInsets.zero,
+                                                  title: const Text(
+                                                    'Mission streets',
+                                                  ),
+                                                  subtitle: Text(
+                                                    '$missionCoveredCount of $missionStreetTotal covered',
+                                                  ),
+                                                  children: missionOpportunities.map((
+                                                    opportunity,
+                                                  ) {
+                                                    final isCovered =
+                                                        coveredStreetIds
+                                                            .contains(
+                                                              opportunity
+                                                                  .street
+                                                                  .id,
+                                                            );
+
+                                                    return ListTile(
+                                                      contentPadding:
+                                                          EdgeInsets.zero,
+                                                      dense: true,
+                                                      title: Text(
+                                                        opportunity
+                                                                .street
+                                                                .streetName
+                                                                .isEmpty
+                                                            ? 'Unnamed street'
+                                                            : opportunity
+                                                                  .street
+                                                                  .streetName,
+                                                      ),
+                                                      subtitle: Text(
+                                                        '${isCovered ? 'Covered' : 'Pending'} | ${opportunity.score.toStringAsFixed(0)} opportunity pts',
+                                                      ),
+                                                      trailing: IconButton(
+                                                        icon: const Icon(
+                                                          Icons
+                                                              .center_focus_strong,
+                                                        ),
+                                                        tooltip: 'Pan map here',
+                                                        onPressed: () =>
+                                                            focusStreetWorkspace(
+                                                              'mission',
+                                                              opportunity
+                                                                  .street,
+                                                              message:
+                                                                  'Mission map focused on this street.',
+                                                            ),
+                                                      ),
+                                                    );
+                                                  }).toList(),
+                                                ),
+                                              ],
+                                            ],
+                                            if (completedMissions
+                                                .isNotEmpty) ...[
+                                              const Divider(height: 24),
+                                              const Text(
+                                                'Completed missions',
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              ...sortedCompletedMissions.take(5).map((
+                                                mission,
+                                              ) {
+                                                final completedDate = mission
+                                                    .completedAt
+                                                    ?.toLocal();
+                                                final historyLeads =
+                                                    leadsForMission(mission);
+                                                final historyMiles =
+                                                    milesForMission(mission);
+                                                final historyCovered =
+                                                    coveredStreetCountForMission(
+                                                      mission,
+                                                    );
+                                                final historyYield =
+                                                    historyMiles == 0
+                                                    ? 0.0
+                                                    : historyLeads.length /
+                                                          historyMiles;
+
+                                                return ListTile(
+                                                  contentPadding:
+                                                      EdgeInsets.zero,
+                                                  dense: true,
+                                                  title: Text(
+                                                    completedDate == null
+                                                        ? 'Completed mission'
+                                                        : 'Completed ${completedDate.month}/${completedDate.day}/${completedDate.year}',
+                                                  ),
+                                                  subtitle: Text(
+                                                    '$historyCovered/${mission.streetCount} streets | '
+                                                    '${historyLeads.length} leads | '
+                                                    '${historyYield.toStringAsFixed(2)} leads/mi',
+                                                  ),
+                                                  onTap: () => openMissionResults(
+                                                    mission: mission,
+                                                    areaName:
+                                                        activeDriveArea?.name ??
+                                                        'Drive Area',
+                                                    leads: historyLeads,
+                                                    streetsCovered:
+                                                        historyCovered,
+                                                    opportunityCaptured:
+                                                        mission
+                                                            .opportunityCaptured ??
+                                                        0,
+                                                    milesDriven: historyMiles,
+                                                    actualMinutes:
+                                                        mission.actualMinutes,
+                                                    areaRemainingEstimatedMinutes:
+                                                        estimatedMinutesForStreets(
+                                                          activeAreaUncoveredStreets,
+                                                        ),
+                                                  ),
+                                                );
+                                              }),
                                             ],
                                           ],
-                                          if (completedMissions.isNotEmpty) ...[
-                                            const Divider(height: 24),
-                                            const Text(
-                                              'Completed missions',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                            ...sortedCompletedMissions.take(5).map((
-                                              mission,
-                                            ) {
-                                              final completedDate = mission
-                                                  .completedAt
-                                                  ?.toLocal();
-                                              final historyLeads =
-                                                  leadsForMission(mission);
-                                              final historyMiles =
-                                                  milesForMission(mission);
-                                              final historyCovered =
-                                                  coveredStreetCountForMission(
-                                                    mission,
-                                                  );
-                                              final historyYield =
-                                                  historyMiles == 0
-                                                  ? 0.0
-                                                  : historyLeads.length /
-                                                        historyMiles;
-
-                                              return ListTile(
-                                                contentPadding: EdgeInsets.zero,
-                                                dense: true,
-                                                title: Text(
-                                                  completedDate == null
-                                                      ? 'Completed mission'
-                                                      : 'Completed ${completedDate.month}/${completedDate.day}/${completedDate.year}',
-                                                ),
-                                                subtitle: Text(
-                                                  '$historyCovered/${mission.streetCount} streets | '
-                                                  '${historyLeads.length} leads | '
-                                                  '${historyYield.toStringAsFixed(2)} leads/mi',
-                                                ),
-                                                onTap: () => openMissionResults(
-                                                  mission: mission,
-                                                  areaName:
-                                                      activeDriveArea?.name ??
-                                                      'Drive Area',
-                                                  leads: historyLeads,
-                                                  streetsCovered:
-                                                      historyCovered,
-                                                  opportunityCaptured:
-                                                      mission
-                                                          .opportunityCaptured ??
-                                                      0,
-                                                  milesDriven: historyMiles,
-                                                ),
-                                              );
-                                            }),
-                                          ],
-                                        ],
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    height: 48,
-                                    child: OutlinedButton(
-                                      onPressed: markActiveDriveAreaComplete,
-                                      child: const Text('Mark area complete'),
+                                    const SizedBox(height: 12),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      height: 48,
+                                      child: OutlinedButton(
+                                        onPressed: markActiveDriveAreaComplete,
+                                        child: const Text('Mark area complete'),
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (activeDriveArea != null)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Targets',
-                                  style: TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                if (isLoadingMarketProperties)
-                                  const Text('Loading targets...')
-                                else ...[
-                                  Text(
-                                    '${filteredMarketProperties.length} of ${marketProperties.length} properties shown',
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 4,
-                                    children: [
-                                      FilterChip(
-                                        label: const Text('Out of state'),
-                                        selected: targetFilterOutOfState,
-                                        onSelected: (value) => setState(
-                                          () => targetFilterOutOfState = value,
-                                        ),
-                                      ),
-                                      FilterChip(
-                                        label: const Text('Absentee'),
-                                        selected: targetFilterAbsentee,
-                                        onSelected: (value) => setState(
-                                          () => targetFilterAbsentee = value,
-                                        ),
-                                      ),
-                                      FilterChip(
-                                        label: const Text('Portfolio 3+'),
-                                        selected: targetFilterPortfolio,
-                                        onSelected: (value) => setState(
-                                          () => targetFilterPortfolio = value,
-                                        ),
-                                      ),
-                                      FilterChip(
-                                        label: const Text('Low improvement'),
-                                        selected: targetFilterLowImprovement,
-                                        onSelected: (value) => setState(
-                                          () => targetFilterLowImprovement =
-                                              value,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  SwitchListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: const Text(
-                                      'Show only targets on map',
-                                    ),
-                                    value: showOnlyTargetsOnMap,
-                                    onChanged: marketProperties.isEmpty
-                                        ? null
-                                        : (value) {
-                                            setState(() {
-                                              showOnlyTargetsOnMap = value;
-                                            });
-                                          },
-                                  ),
-                                  const SizedBox(height: 8),
-                                  if (marketProperties.isEmpty)
-                                    const Text(
-                                      'Build the Market Map to ingest parcels for this area.',
-                                    )
-                                  else if (filteredMarketProperties.isEmpty)
-                                    const Text(
-                                      'No targets match these filters.',
-                                    )
-                                  else
-                                    ...filteredMarketProperties
-                                        .take(25)
-                                        .map(
-                                          (property) => ListTile(
-                                            contentPadding: EdgeInsets.zero,
-                                            title: Text(
-                                              property.parcel.displayAddress,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            subtitle: Text(
-                                              [
-                                                    if (property.outOfState)
-                                                      'out of state',
-                                                    if (property.absentee)
-                                                      'absentee',
-                                                    if (property
-                                                            .portfolioCount >=
-                                                        3)
-                                                      'portfolio ${property.portfolioCount}',
-                                                    if (property
-                                                        .lowImprovementRatio)
-                                                      'low improvement',
-                                                  ].isEmpty
-                                                  ? property.parcel.ownerName ??
-                                                        'No signals'
-                                                  : [
-                                                      if (property
-                                                              .parcel
-                                                              .ownerName !=
-                                                          null)
-                                                        property
-                                                            .parcel
-                                                            .ownerName!,
-                                                      [
-                                                        if (property.outOfState)
-                                                          'out of state',
-                                                        if (property.absentee)
-                                                          'absentee',
-                                                        if (property
-                                                                .portfolioCount >=
-                                                            3)
-                                                          'portfolio ${property.portfolioCount}',
-                                                        if (property
-                                                            .lowImprovementRatio)
-                                                          'low improvement',
-                                                      ].join(', '),
-                                                    ].join(' | '),
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            trailing: targetScoreBadge(
-                                              property.targetScore,
-                                              onTap: () =>
-                                                  showTargetScoreBreakdown(
-                                                    property,
-                                                  ),
-                                            ),
-                                            onTap: () => openParcelPreview(
-                                              property.parcel,
-                                            ),
-                                          ),
-                                        ),
+                                  ],
                                 ],
                               ],
                             ),
                           ),
                         ),
-                      if (activeDriveArea != null) const SizedBox(height: 12),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final isWide = constraints.maxWidth >= 900;
-                          final summaryCard = Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      const Expanded(
-                                        child: Text(
-                                          'Drive Summary',
-                                          style: TextStyle(
-                                            fontSize: 22,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 6,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: isTracking
-                                              ? const Color(0xFFE8F5E9)
-                                              : const Color(0xFFF3F4F6),
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          isTracking ? 'Tracking' : 'Idle',
-                                          style: TextStyle(
-                                            color: isTracking
-                                                ? const Color(0xFF2E7D32)
-                                                : const Color(0xFF4B5563),
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    isStreetCoverageLoading
-                                        ? 'Loading saved coverage...'
-                                        : hasStreetReferenceData
-                                        ? '$selectedCoverageCity coverage and drive activity'
-                                        : 'No street data loaded for $selectedCoverageCity yet.',
-                                    style: const TextStyle(
-                                      color: Color(0xFF6B7280),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Wrap(
-                                    spacing: 10,
-                                    runSpacing: 10,
-                                    children: [
-                                      _DriveStatTile(
-                                        label: 'Street coverage',
-                                        value: hasStreetReferenceData
-                                            ? '${streetCoveragePercent.toStringAsFixed(0)}%'
-                                            : 'N/A',
-                                        icon: Icons.timeline,
-                                        color: const Color(0xFF2563EB),
-                                      ),
-                                      _DriveStatTile(
-                                        label: 'Covered',
-                                        value: coveredStreetCount.toString(),
-                                        icon: Icons.check_circle,
-                                        color: const Color(0xFF059669),
-                                      ),
-                                      _DriveStatTile(
-                                        label: 'Remaining',
-                                        value: remainingStreetCount.toString(),
-                                        icon: Icons.route,
-                                        color: const Color(0xFFF59E0B),
-                                      ),
-                                      _DriveStatTile(
-                                        label: 'Miles left',
-                                        value: remainingStreetMiles
-                                            .toStringAsFixed(1),
-                                        icon: Icons.social_distance,
-                                        color: const Color(0xFFEA580C),
-                                      ),
-                                      _DriveStatTile(
-                                        label: 'Total streets',
-                                        value: totalStreetCount.toString(),
-                                        icon: Icons.add_road,
-                                        color: const Color(0xFF7C3AED),
-                                      ),
-                                      _DriveStatTile(
-                                        label: 'Miles driven',
-                                        value: totalMiles.toStringAsFixed(2),
-                                        icon: Icons.speed,
-                                        color: const Color(0xFF111827),
-                                      ),
-                                      _DriveStatTile(
-                                        label: 'Leads',
-                                        value: leadsFound.toString(),
-                                        icon: Icons.person_pin_circle,
-                                        color: const Color(0xFFDC2626),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'Visible covered streets: $visibleCoveredStreetCount | Route points: $totalRoutePoints | Leads/mi: ${leadsPerMile.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Color(0xFF6B7280),
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-
-                          final actionsCard = Card(
+                        const SizedBox(height: 12),
+                        if (activeDriveArea != null)
+                          Card(
                             child: Padding(
                               padding: const EdgeInsets.all(16),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   const Text(
-                                    'Quick Actions',
+                                    'Targets',
                                     style: TextStyle(
                                       fontSize: 22,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  const SizedBox(height: 6),
-                                  const Text(
-                                    'The basics you need while driving.',
-                                    style: TextStyle(color: Color(0xFF6B7280)),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: FilledButton.icon(
-                                      icon: const Icon(Icons.add_home_work),
-                                      onPressed: openAddLeadFromLocation,
-                                      label: const Text(
-                                        'Add Lead At My Location',
-                                      ),
+                                  const SizedBox(height: 12),
+                                  if (isLoadingMarketProperties)
+                                    const Text('Loading targets...')
+                                  else ...[
+                                    Text(
+                                      '${filteredMarketProperties.length} of ${marketProperties.length} properties shown',
                                     ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: OutlinedButton.icon(
-                                      icon: Icon(
-                                        isTracking
-                                            ? Icons.stop
-                                            : Icons.play_arrow,
-                                      ),
-                                      onPressed: isTracking
-                                          ? stopTracking
-                                          : startTracking,
-                                      label: Text(
-                                        isTracking
-                                            ? 'Stop Tracking'
-                                            : 'Start Tracking',
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: OutlinedButton.icon(
-                                      icon: const Icon(Icons.my_location),
-                                      onPressed: isFindingLocation
-                                          ? null
-                                          : findMyLocation,
-                                      label: Text(
-                                        isFindingLocation
-                                            ? 'Finding...'
-                                            : 'Center On Me',
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 14),
-                                  DropdownButtonFormField<String>(
-                                    initialValue: selectedCoverageCity,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Coverage city',
-                                    ),
-                                    items: supportedCoverageCities
-                                        .map(
-                                          (city) => DropdownMenuItem(
-                                            value: city,
-                                            child: Text(city),
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 4,
+                                      children: [
+                                        FilterChip(
+                                          label: const Text('Out of state'),
+                                          selected: targetFilterOutOfState,
+                                          onSelected: (value) => setState(
+                                            () =>
+                                                targetFilterOutOfState = value,
                                           ),
-                                        )
-                                        .toList(),
-                                    onChanged: isTracking
-                                        ? null
-                                        : (city) {
-                                            if (city == null ||
-                                                city == selectedCoverageCity) {
-                                              return;
-                                            }
-
-                                            changeCoverageCity(city);
-                                          },
-                                  ),
+                                        ),
+                                        FilterChip(
+                                          label: const Text('Absentee'),
+                                          selected: targetFilterAbsentee,
+                                          onSelected: (value) => setState(
+                                            () => targetFilterAbsentee = value,
+                                          ),
+                                        ),
+                                        FilterChip(
+                                          label: const Text('Portfolio 3+'),
+                                          selected: targetFilterPortfolio,
+                                          onSelected: (value) => setState(
+                                            () => targetFilterPortfolio = value,
+                                          ),
+                                        ),
+                                        FilterChip(
+                                          label: const Text('Low improvement'),
+                                          selected: targetFilterLowImprovement,
+                                          onSelected: (value) => setState(
+                                            () => targetFilterLowImprovement =
+                                                value,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SwitchListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: const Text(
+                                        'Show only targets on map',
+                                      ),
+                                      value: showOnlyTargetsOnMap,
+                                      onChanged: marketProperties.isEmpty
+                                          ? null
+                                          : (value) {
+                                              setState(() {
+                                                showOnlyTargetsOnMap = value;
+                                              });
+                                            },
+                                    ),
+                                    const SizedBox(height: 8),
+                                    if (marketProperties.isEmpty)
+                                      const Text(
+                                        'Build the Market Map to ingest parcels for this area.',
+                                      )
+                                    else if (filteredMarketProperties.isEmpty)
+                                      const Text(
+                                        'No targets match these filters.',
+                                      )
+                                    else
+                                      ...filteredMarketProperties
+                                          .take(25)
+                                          .map(
+                                            (property) => ListTile(
+                                              contentPadding: EdgeInsets.zero,
+                                              title: Text(
+                                                property.parcel.displayAddress,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              subtitle: Text(
+                                                [
+                                                      if (property.outOfState)
+                                                        'out of state',
+                                                      if (property.absentee)
+                                                        'absentee',
+                                                      if (property
+                                                              .portfolioCount >=
+                                                          3)
+                                                        'portfolio ${property.portfolioCount}',
+                                                      if (property
+                                                          .lowImprovementRatio)
+                                                        'low improvement',
+                                                    ].isEmpty
+                                                    ? property
+                                                              .parcel
+                                                              .ownerName ??
+                                                          'No signals'
+                                                    : [
+                                                        if (property
+                                                                .parcel
+                                                                .ownerName !=
+                                                            null)
+                                                          property
+                                                              .parcel
+                                                              .ownerName!,
+                                                        [
+                                                          if (property
+                                                              .outOfState)
+                                                            'out of state',
+                                                          if (property.absentee)
+                                                            'absentee',
+                                                          if (property
+                                                                  .portfolioCount >=
+                                                              3)
+                                                            'portfolio ${property.portfolioCount}',
+                                                          if (property
+                                                              .lowImprovementRatio)
+                                                            'low improvement',
+                                                        ].join(', '),
+                                                      ].join(' | '),
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              trailing: targetScoreBadge(
+                                                property.targetScore,
+                                                onTap: () =>
+                                                    showTargetScoreBreakdown(
+                                                      property,
+                                                    ),
+                                              ),
+                                              onTap: () => openParcelPreview(
+                                                property.parcel,
+                                              ),
+                                            ),
+                                          ),
+                                  ],
                                 ],
                               ),
                             ),
-                          );
+                          ),
+                        if (activeDriveArea != null) const SizedBox(height: 12),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isWide = constraints.maxWidth >= 900;
+                            final summaryCard = Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Expanded(
+                                          child: Text(
+                                            'Drive Summary',
+                                            style: TextStyle(
+                                              fontSize: 22,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: isTracking
+                                                ? const Color(0xFFE8F5E9)
+                                                : const Color(0xFFF3F4F6),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            isTracking ? 'Tracking' : 'Idle',
+                                            style: TextStyle(
+                                              color: isTracking
+                                                  ? const Color(0xFF2E7D32)
+                                                  : const Color(0xFF4B5563),
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      isStreetCoverageLoading
+                                          ? 'Loading saved coverage...'
+                                          : hasStreetReferenceData
+                                          ? '$selectedCoverageCity coverage and drive activity'
+                                          : 'No street data loaded for $selectedCoverageCity yet.',
+                                      style: const TextStyle(
+                                        color: Color(0xFF6B7280),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Wrap(
+                                      spacing: 10,
+                                      runSpacing: 10,
+                                      children: [
+                                        _DriveStatTile(
+                                          label: 'Street coverage',
+                                          value: hasStreetReferenceData
+                                              ? '${streetCoveragePercent.toStringAsFixed(0)}%'
+                                              : 'N/A',
+                                          icon: Icons.timeline,
+                                          color: const Color(0xFF2563EB),
+                                        ),
+                                        _DriveStatTile(
+                                          label: 'Covered',
+                                          value: coveredStreetCount.toString(),
+                                          icon: Icons.check_circle,
+                                          color: const Color(0xFF059669),
+                                        ),
+                                        _DriveStatTile(
+                                          label: 'Remaining',
+                                          value: remainingStreetCount
+                                              .toString(),
+                                          icon: Icons.route,
+                                          color: const Color(0xFFF59E0B),
+                                        ),
+                                        _DriveStatTile(
+                                          label: 'Miles left',
+                                          value: remainingStreetMiles
+                                              .toStringAsFixed(1),
+                                          icon: Icons.social_distance,
+                                          color: const Color(0xFFEA580C),
+                                        ),
+                                        _DriveStatTile(
+                                          label: 'Total streets',
+                                          value: totalStreetCount.toString(),
+                                          icon: Icons.add_road,
+                                          color: const Color(0xFF7C3AED),
+                                        ),
+                                        _DriveStatTile(
+                                          label: 'Miles driven',
+                                          value: totalMiles.toStringAsFixed(2),
+                                          icon: Icons.speed,
+                                          color: const Color(0xFF111827),
+                                        ),
+                                        _DriveStatTile(
+                                          label: 'Leads',
+                                          value: leadsFound.toString(),
+                                          icon: Icons.person_pin_circle,
+                                          color: const Color(0xFFDC2626),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Visible covered streets: $visibleCoveredStreetCount | Route points: $totalRoutePoints | Leads/mi: ${leadsPerMile.toStringAsFixed(2)}',
+                                      style: const TextStyle(
+                                        color: Color(0xFF6B7280),
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
 
-                          if (!isWide) {
-                            return Column(
+                            final actionsCard = Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Quick Actions',
+                                      style: TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      'The basics you need while driving.',
+                                      style: TextStyle(
+                                        color: Color(0xFF6B7280),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: FilledButton.icon(
+                                        icon: const Icon(Icons.add_home_work),
+                                        onPressed: openAddLeadFromLocation,
+                                        label: const Text(
+                                          'Add Lead At My Location',
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        icon: Icon(
+                                          isTracking
+                                              ? Icons.stop
+                                              : Icons.play_arrow,
+                                        ),
+                                        onPressed: isTracking
+                                            ? stopTracking
+                                            : startTracking,
+                                        label: Text(
+                                          isTracking
+                                              ? 'Stop Tracking'
+                                              : 'Start Tracking',
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(Icons.my_location),
+                                        onPressed: isFindingLocation
+                                            ? null
+                                            : findMyLocation,
+                                        label: Text(
+                                          isFindingLocation
+                                              ? 'Finding...'
+                                              : 'Center On Me',
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 14),
+                                    DropdownButtonFormField<String>(
+                                      initialValue: selectedCoverageCity,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Coverage city',
+                                      ),
+                                      items: supportedCoverageCities
+                                          .map(
+                                            (city) => DropdownMenuItem(
+                                              value: city,
+                                              child: Text(city),
+                                            ),
+                                          )
+                                          .toList(),
+                                      onChanged: isTracking
+                                          ? null
+                                          : (city) {
+                                              if (city == null ||
+                                                  city ==
+                                                      selectedCoverageCity) {
+                                                return;
+                                              }
+
+                                              changeCoverageCity(city);
+                                            },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+
+                            if (!isWide) {
+                              return Column(
+                                children: [
+                                  summaryCard,
+                                  const SizedBox(height: 12),
+                                  actionsCard,
+                                ],
+                              );
+                            }
+
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                summaryCard,
-                                const SizedBox(height: 12),
-                                actionsCard,
+                                Expanded(flex: 2, child: summaryCard),
+                                const SizedBox(width: 12),
+                                Expanded(child: actionsCard),
                               ],
                             );
-                          }
-
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(flex: 2, child: summaryCard),
-                              const SizedBox(width: 12),
-                              Expanded(child: actionsCard),
-                            ],
-                          );
-                        },
-                      ),
-                    ],
+                          },
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
           Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
+              child: Container(
+                height: 56,
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                color: const Color(0xE6111827),
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  activeDriveArea?.name ?? 'Market Coverage',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (activeMission == null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Container(
+                  height: 92,
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(18),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x22000000),
+                        blurRadius: 18,
+                        offset: Offset(0, -4),
+                      ),
+                    ],
+                  ),
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.arrow_forward),
+                    label: const Text("Plan Today's Drive"),
+                    onPressed: () =>
+                        openPlanTodayDriveSheet(streetOpportunities),
+                  ),
+                ),
+              ),
+            )
+          else ...[
+            Positioned(
+              top: 72,
+              right: 12,
+              child: SafeArea(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
-                    vertical: 12,
+                    vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.88),
-                    borderRadius: BorderRadius.circular(8),
+                    color: isMissionOverTimeBudget
+                        ? const Color(0xFFFFF7ED)
+                        : Colors.white.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(999),
                     boxShadow: const [
                       BoxShadow(
                         color: Color(0x22000000),
@@ -7415,136 +9036,92 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       ),
                     ],
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          activeMission == null
-                              ? 'No Active Mission'
-                              : activeDriveArea?.name ?? 'Active Mission',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Filter leads',
-                        onPressed: openLeadFilterSheet,
-                        icon: const Icon(Icons.filter_list),
-                      ),
-                      PopupMenuButton<String>(
-                        tooltip: 'Change map view',
-                        icon: Icon(mapModeIcon(mapMode)),
-                        onSelected: (mode) {
-                          focusMapWorkspace(
-                            mode: mode,
-                            point: currentMapCenter,
-                            minZoom: currentZoom,
-                            message:
-                                'Map view changed to ${mapModeLabel(mode)}.',
-                          );
-                        },
-                        itemBuilder: (context) => const [
-                          PopupMenuItem(
-                            value: 'mission',
-                            child: Text('Mission'),
-                          ),
-                          PopupMenuItem(
-                            value: 'targets',
-                            child: Text('Targets'),
-                          ),
-                          PopupMenuItem(
-                            value: 'coverage',
-                            child: Text('Coverage'),
-                          ),
-                          PopupMenuItem(value: 'drive', child: Text('Drive')),
-                        ],
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${missionPercent.toStringAsFixed(0)}%',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF2563EB),
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    '${missionPercent.toStringAsFixed(0)}% - $missionEstimatedMinutesRemaining min left',
+                    style: TextStyle(
+                      color: isMissionOverTimeBudget
+                          ? const Color(0xFFF59E0B)
+                          : const Color(0xFF111827),
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            left: 12,
-            right: 92,
-            bottom: 16,
-            child: SafeArea(
-              child: Container(
-                height: 72,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x22000000),
-                      blurRadius: 12,
-                      offset: Offset(0, 4),
+            Positioned(
+              left: 12,
+              right: 92,
+              bottom: 16,
+              child: SafeArea(
+                top: false,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => openMissionDetailSheet(
+                    missionCoveredCount: missionCoveredCount,
+                    missionStreetTotal: missionStreetTotal,
+                    nextMissionStreet: nextMissionStreet,
+                    missionEstimatedMinutesRemaining:
+                        missionEstimatedMinutesRemaining,
+                    missionOpportunityRemaining: missionOpportunityRemaining,
+                    missionLeadsFound: missionLeadsFound,
+                    missionMiles: missionMiles,
+                    missionOpportunityCaptured: missionOpportunityCaptured,
+                  ),
+                  child: Container(
+                    height: 58,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x22000000),
+                          blurRadius: 12,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.route, color: Color(0xFF2563EB)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        activeMission == null
-                            ? 'No active mission - go to Areas to start one.'
-                            : 'Next street: $nextStreetName',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Next: $nextStreetName - ${nextMissionStreet == null ? 0 : estimateStreetMinutes(nextMissionStreet.street).ceil()} min',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    IconButton(
-                      tooltip: 'Pan to next street',
-                      onPressed: nextMissionStreet == null
-                          ? null
-                          : () => focusStreetWorkspace(
-                              'mission',
-                              nextMissionStreet.street,
-                              message:
-                                  'Mission map focused on your next street.',
-                            ),
-                      icon: const Icon(Icons.center_focus_strong),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            right: 16,
-            bottom: 22,
-            child: SafeArea(
-              child: FloatingActionButton(
-                backgroundColor: const Color(0xFFF97316),
-                foregroundColor: Colors.white,
-                tooltip: 'Quick Capture',
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Quick Capture coming soon')),
-                  );
-                },
-                child: const Icon(Icons.bolt),
+            Positioned(
+              left: 12,
+              bottom: 86,
+              child: SafeArea(
+                top: false,
+                child: FloatingActionButton.small(
+                  heroTag: 'drive-center-me',
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF111827),
+                  tooltip: 'Center On Me',
+                  onPressed: isFindingLocation ? null : findMyLocation,
+                  child: const Icon(Icons.my_location),
+                ),
               ),
             ),
-          ),
+            Positioned(
+              right: 16,
+              bottom: 22,
+              child: SafeArea(
+                top: false,
+                child: FloatingActionButton(
+                  backgroundColor: const Color(0xFFF97316),
+                  foregroundColor: Colors.white,
+                  tooltip: 'Quick Capture',
+                  onPressed: openQuickCaptureSheet,
+                  child: const Icon(Icons.bolt),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -7608,6 +9185,8 @@ class MissionResultsSheet extends StatelessWidget {
   final int streetsCovered;
   final double opportunityCaptured;
   final double milesDriven;
+  final int? actualMinutes;
+  final int areaRemainingEstimatedMinutes;
   final Future<void> Function(String leadId, String status) onUpdateLeadStatus;
   final Future<void> Function(String leadId, String source) onUpdateLeadSource;
   final Future<void> Function(String leadId, LeadScoreData scoreData)
@@ -7627,6 +9206,8 @@ class MissionResultsSheet extends StatelessWidget {
     required this.streetsCovered,
     required this.opportunityCaptured,
     required this.milesDriven,
+    required this.actualMinutes,
+    required this.areaRemainingEstimatedMinutes,
     required this.onUpdateLeadStatus,
     required this.onUpdateLeadSource,
     required this.onUpdateLeadScoreData,
@@ -7642,6 +9223,12 @@ class MissionResultsSheet extends StatelessWidget {
     final opportunityPercent = mission.opportunityAtStart == 0
         ? 0.0
         : (opportunityCaptured / mission.opportunityAtStart) * 100;
+    final plannedMinutes = mission.timeBudgetMinutes;
+    final takenMinutes = actualMinutes ?? mission.actualMinutes;
+    final sessionBudget = plannedMinutes ?? mission.estimatedMinutes ?? 30;
+    final sessionsRemaining = sessionBudget <= 0
+        ? 0
+        : (areaRemainingEstimatedMinutes / sessionBudget).ceil();
 
     return SafeArea(
       child: FractionallySizedBox(
@@ -7738,6 +9325,32 @@ class MissionResultsSheet extends StatelessWidget {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _MissionResultMetric(
+                              label: 'Planned',
+                              value: plannedMinutes == null
+                                  ? 'N/A'
+                                  : '${plannedMinutes}m',
+                              icon: Icons.schedule,
+                              color: const Color(0xFF0F766E),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _MissionResultMetric(
+                              label: 'Time taken',
+                              value: takenMinutes == null
+                                  ? 'N/A'
+                                  : '${takenMinutes}m',
+                              icon: Icons.timer,
+                              color: const Color(0xFFEA580C),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -7777,6 +9390,42 @@ class MissionResultsSheet extends StatelessWidget {
                               style: const TextStyle(color: Color(0xFF6B7280)),
                             ),
                           ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: const Color(
+                            0xFF2563EB,
+                          ).withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.event_available,
+                          color: Color(0xFF2563EB),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          areaRemainingEstimatedMinutes <= 0
+                              ? 'This area is estimated complete.'
+                              : 'Est. $sessionsRemaining more sessions at $sessionBudget min each to finish this area.',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF111827),
+                          ),
                         ),
                       ),
                     ],
