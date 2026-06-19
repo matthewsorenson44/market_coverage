@@ -37,6 +37,9 @@ Future<void> main() async {
     authOptions: const FlutterAuthClientOptions(autoRefreshToken: true),
   );
 
+  await FieldTestLogger.load();
+  unawaited(FieldTestLogger.log('app_start'));
+
   runApp(const MarketCoverageApp());
 }
 
@@ -193,7 +196,11 @@ Future<void> flushPendingLeadsQueue() async {
     return;
   }
 
+  unawaited(
+    FieldTestLogger.log('queue_flush_start', detail: 'count: ${rows.length}'),
+  );
   final remainingRows = <Map<String, dynamic>>[];
+  var syncedCount = 0;
 
   for (final row in rows) {
     try {
@@ -201,12 +208,100 @@ Future<void> flushPendingLeadsQueue() async {
           .from('leads')
           .insert(jsonSafeLeadRow(row))
           .timeout(leadInsertTimeout);
+      syncedCount++;
     } catch (_) {
       remainingRows.add(row);
     }
   }
 
   await savePendingLeadRows(remainingRows);
+  unawaited(
+    FieldTestLogger.log('queue_flush_done', detail: 'synced: $syncedCount'),
+  );
+}
+
+class FieldTestLogger {
+  static const String _prefsKey = 'field_test_log';
+  static const int _limit = 200;
+  static final List<Map<String, String?>> _entries = [];
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  static List<Map<String, String?>> get entries => List.unmodifiable(_entries);
+
+  static Future<void> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final encoded = prefs.getString(_prefsKey);
+      if (encoded == null || encoded.trim().isEmpty) return;
+
+      final decoded = jsonDecode(encoded);
+      if (decoded is! List) return;
+
+      _entries
+        ..clear()
+        ..addAll(
+          decoded.whereType<Map>().map((entry) {
+            return {
+              'timestamp': entry['timestamp']?.toString(),
+              'event': entry['event']?.toString(),
+              'detail': entry['detail']?.toString(),
+            };
+          }),
+        );
+      _trim();
+      revision.value++;
+    } catch (_) {
+      // Field-test logging must never affect app behavior.
+    }
+  }
+
+  static Future<void> log(String event, {String? detail}) async {
+    try {
+      _entries.add({
+        'timestamp': DateTime.now().toIso8601String(),
+        'event': event,
+        'detail': detail,
+      });
+      _trim();
+      revision.value++;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKey, jsonEncode(_entries));
+    } catch (_) {
+      // Field-test logging must never affect app behavior.
+    }
+  }
+
+  static Future<void> clear() async {
+    try {
+      _entries.clear();
+      revision.value++;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefsKey);
+    } catch (_) {
+      // Field-test logging must never affect app behavior.
+    }
+  }
+
+  static String plainText() {
+    return _entries
+        .map((entry) {
+          final timestamp = entry['timestamp'] ?? '';
+          final event = entry['event'] ?? '';
+          final detail = entry['detail'];
+
+          return detail == null || detail.isEmpty
+              ? '$timestamp  $event'
+              : '$timestamp  $event  $detail';
+        })
+        .join('\n');
+  }
+
+  static void _trim() {
+    while (_entries.length > _limit) {
+      _entries.removeAt(0);
+    }
+  }
 }
 
 class LeadScoreData {
@@ -1556,6 +1651,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     connectivitySubscription = Connectivity().onConnectivityChanged.listen((
       results,
     ) {
+      final status = results.map((result) => result.name).join(',');
+      unawaited(FieldTestLogger.log('connectivity_change', detail: status));
       final hasConnection = results.any(
         (result) => result != ConnectivityResult.none,
       );
@@ -3407,6 +3504,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool mapIsReady = false;
   String locationMessage = 'Location not found yet.';
   String? currentDriveSessionId;
+  int gpsUpdateLogCounter = 0;
 
   final List<LatLng> routePoints = [];
   List<Lead> drivingLeads = [];
@@ -3446,6 +3544,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool isLoadingMissions = false;
   bool isSavingMission = false;
   bool hasShownActiveMissionResume = false;
+  int fieldTestTitleTapCount = 0;
+  Timer? fieldTestTitleTapResetTimer;
   int? selectedMissionTimeBudgetMinutes = 30;
   final customMissionTimeController = TextEditingController();
   bool customMissionTimeInHours = false;
@@ -3483,6 +3583,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   void dispose() {
     visibleParcelLoadTimer?.cancel();
     visibleStreetLoadTimer?.cancel();
+    fieldTestTitleTapResetTimer?.cancel();
     positionStream?.cancel();
     customMissionTimeController.dispose();
     super.dispose();
@@ -3535,6 +3636,29 @@ class _DrivingScreenState extends State<DrivingScreen> {
       calibrationFactor = factor;
       calibrationMissionCount = count;
     });
+  }
+
+  void handleFieldTestTitleTap() {
+    fieldTestTitleTapResetTimer?.cancel();
+    fieldTestTitleTapCount++;
+
+    if (fieldTestTitleTapCount >= 5) {
+      fieldTestTitleTapCount = 0;
+      openFieldTestLogDialog();
+      return;
+    }
+
+    fieldTestTitleTapResetTimer = Timer(const Duration(seconds: 2), () {
+      fieldTestTitleTapCount = 0;
+    });
+  }
+
+  void openFieldTestLogDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) =>
+          const Dialog.fullscreen(child: FieldTestLogScreen()),
+    );
   }
 
   Future<void> loadDrivingLeads() async {
@@ -3962,6 +4086,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     if (!mounted || hasShownActiveMissionResume) return;
 
     hasShownActiveMissionResume = true;
+    unawaited(FieldTestLogger.log('mission_restored', detail: openMission.id));
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Resumed your active mission.')),
@@ -4079,23 +4204,20 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   List<StreetOpportunity> selectMissionStreetsForBudget(
     List<StreetOpportunity> streetOpportunities,
-    int timeBudgetMinutes,
-  ) {
-    final candidates =
-        streetOpportunities
-            .where(
-              (opportunity) => !opportunity.isCovered && opportunity.score > 0,
-            )
-            .toList()
-          ..sort((a, b) => b.score.compareTo(a.score));
+    int timeBudgetMinutes, {
+    bool includeUnscored = false,
+    bool forceAtLeastOne = false,
+  }) {
+    final candidates = uncoveredMissionCandidates(
+      streetOpportunities,
+      includeUnscored: includeUnscored,
+    );
     final selected = <StreetOpportunity>[];
     var estimatedMinutes = 0.0;
 
     for (final opportunity in candidates) {
       final streetMinutes = calibratedStreetMinutes(opportunity.street);
-      final wouldFit =
-          selected.isEmpty ||
-          estimatedMinutes + streetMinutes <= timeBudgetMinutes;
+      final wouldFit = estimatedMinutes + streetMinutes <= timeBudgetMinutes;
 
       if (!wouldFit) continue;
 
@@ -4103,7 +4225,61 @@ class _DrivingScreenState extends State<DrivingScreen> {
       estimatedMinutes += streetMinutes;
     }
 
+    if (selected.isEmpty && forceAtLeastOne && candidates.isNotEmpty) {
+      return [bestAvailableStreetForTinyWindow(candidates)];
+    }
+
     return selected;
+  }
+
+  List<StreetOpportunity> uncoveredMissionCandidates(
+    List<StreetOpportunity> streetOpportunities, {
+    bool includeUnscored = false,
+  }) {
+    final candidates =
+        streetOpportunities
+            .where(
+              (opportunity) =>
+                  !opportunity.isCovered &&
+                  (includeUnscored || opportunity.score > 0),
+            )
+            .toList()
+          ..sort((a, b) {
+            final scoreCompare = b.score.compareTo(a.score);
+            if (scoreCompare != 0) return scoreCompare;
+
+            return calibratedStreetMinutes(
+              a.street,
+            ).compareTo(calibratedStreetMinutes(b.street));
+          });
+
+    return candidates;
+  }
+
+  StreetOpportunity bestAvailableStreetForTinyWindow(
+    List<StreetOpportunity> candidates,
+  ) {
+    final ranked = [...candidates]
+      ..sort((a, b) {
+        final timeCompare = calibratedStreetMinutes(
+          a.street,
+        ).compareTo(calibratedStreetMinutes(b.street));
+        if (timeCompare != 0) return timeCompare;
+
+        return b.score.compareTo(a.score);
+      });
+
+    return ranked.first;
+  }
+
+  List<StreetOpportunity> defaultMissionStreets(
+    List<StreetOpportunity> streetOpportunities, {
+    bool includeUnscored = false,
+  }) {
+    return uncoveredMissionCandidates(
+      streetOpportunities,
+      includeUnscored: includeUnscored,
+    ).take(missionStreetCount).toList(growable: false);
   }
 
   Map<String, dynamic> missionRowForStreets(
@@ -4190,6 +4366,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Future<void> generateMission(
     List<StreetOpportunity> streetOpportunities, {
     int? timeBudgetMinutes,
+    bool includeUnscored = false,
+    bool forceAtLeastOne = false,
   }) async {
     final area = activeDriveArea;
     if (area == null || isSavingMission) return;
@@ -4203,14 +4381,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
 
     final missionStreets = timeBudgetMinutes == null
-        ? (streetOpportunities
-              .where(
-                (opportunity) =>
-                    !opportunity.isCovered && opportunity.score > 0,
-              )
-              .take(missionStreetCount)
-              .toList(growable: false))
-        : selectMissionStreetsForBudget(streetOpportunities, timeBudgetMinutes);
+        ? defaultMissionStreets(
+            streetOpportunities,
+            includeUnscored: includeUnscored,
+          )
+        : selectMissionStreetsForBudget(
+            streetOpportunities,
+            timeBudgetMinutes,
+            includeUnscored: includeUnscored,
+            forceAtLeastOne: forceAtLeastOne,
+          );
 
     if (missionStreets.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4232,7 +4412,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
         timeBudgetMinutes: timeBudgetMinutes,
       );
 
-      await supabase.from('missions').insert(row);
+      final insertedMission = await supabase
+          .from('missions')
+          .insert(row)
+          .select('id')
+          .single();
+      unawaited(
+        FieldTestLogger.log(
+          'mission_start',
+          detail: insertedMission['id']?.toString(),
+        ),
+      );
 
       await loadMissions();
 
@@ -4370,6 +4560,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           })
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
+      unawaited(FieldTestLogger.log('mission_start', detail: mission.id));
 
       await loadMissions();
       await startTracking(sessionIdOverride: sessionId);
@@ -4450,6 +4641,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           })
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
+      unawaited(FieldTestLogger.log('mission_start', detail: mission.id));
 
       await loadMissions();
       await startTracking(sessionIdOverride: sessionId);
@@ -4523,6 +4715,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .update(missionUpdate)
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
+      unawaited(
+        FieldTestLogger.log(
+          'mission_complete',
+          detail: 'streets: $streetsCovered, leads: $leadsFound',
+        ),
+      );
       await clearPersistedActiveMissionId();
 
       await updateCalibrationFromCompletedMissions();
@@ -4720,6 +4918,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }) async {
     final duplicate = await findDuplicateLeadNear(parcel.centroid);
     if (duplicate == null || !mounted || !sheetContext.mounted) return true;
+    unawaited(
+      FieldTestLogger.log('qc_duplicate_detected', detail: duplicate.address),
+    );
 
     final action = await showDialog<String>(
       context: context,
@@ -4798,6 +4999,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   void openQuickCaptureSheet() {
+    unawaited(FieldTestLogger.log('qc_open'));
     final usedGpsForQuickCapture = myLocation != null;
     final quickCaptureAccuracyMeters = lastKnownPosition?.accuracy;
     final lookupPoint = myLocation ?? currentMapCenter;
@@ -4876,6 +5078,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
               if (!mounted || !sheetContext.mounted) return;
 
+              if (foundParcel == null) {
+                unawaited(FieldTestLogger.log('qc_parcel_failed'));
+              } else {
+                unawaited(
+                  FieldTestLogger.log(
+                    'qc_parcel_found',
+                    detail: foundParcel.displayAddress,
+                  ),
+                );
+              }
+
               setSheetState(() {
                 quickParcel = foundParcel;
                 existingLead = foundParcel == null
@@ -4923,6 +5136,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
             );
 
             try {
+              unawaited(
+                FieldTestLogger.log(
+                  'qc_save_attempt',
+                  detail: parcel.displayAddress,
+                ),
+              );
               final saveResult = await saveQuickCaptureParcelLead(
                 parcel: parcel,
                 scoreData: currentScoreData(),
@@ -4930,6 +5149,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 notes: noteController.text.trim(),
               );
               final savedLead = saveResult.lead;
+              unawaited(
+                FieldTestLogger.log(
+                  saveResult.queuedLocally
+                      ? 'qc_save_queued'
+                      : 'qc_save_success',
+                ),
+              );
 
               if (!mounted || !sheetContext.mounted) return;
 
@@ -4959,6 +5185,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 ),
               );
             } catch (_) {
+              unawaited(FieldTestLogger.log('qc_save_failed'));
               if (!mounted || !sheetContext.mounted) return;
 
               setSheetState(() {
@@ -5217,6 +5444,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                         );
 
                                         try {
+                                          unawaited(
+                                            FieldTestLogger.log(
+                                              'qc_save_attempt',
+                                              detail: parcel.displayAddress,
+                                            ),
+                                          );
                                           final saveResult =
                                               await saveQuickCaptureParcelLead(
                                                 parcel: parcel,
@@ -5226,6 +5459,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                     .trim(),
                                               );
                                           final savedLead = saveResult.lead;
+                                          unawaited(
+                                            FieldTestLogger.log(
+                                              saveResult.queuedLocally
+                                                  ? 'qc_save_queued'
+                                                  : 'qc_save_success',
+                                            ),
+                                          );
 
                                           if (!mounted ||
                                               !sheetContext.mounted) {
@@ -5268,6 +5508,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                             ),
                                           );
                                         } catch (_) {
+                                          unawaited(
+                                            FieldTestLogger.log(
+                                              'qc_save_failed',
+                                            ),
+                                          );
                                           if (!mounted ||
                                               !sheetContext.mounted) {
                                             return;
@@ -5582,21 +5827,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
       showDragHandle: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final previewStreets = timeMissionsEnabled && selectedBudget != null
-              ? selectMissionStreetsForBudget(
-                  streetOpportunities,
-                  selectedBudget!,
-                )
-              : streetOpportunities
-                    .where(
-                      (opportunity) =>
-                          !opportunity.isCovered && opportunity.score > 0,
-                    )
-                    .take(missionStreetCount)
-                    .toList(growable: false);
-          final previewMinutes = estimatedMinutesForMissionStreets(
-            previewStreets,
-          );
           final areaStreets = activeDriveArea == null
               ? const <CityStreet>[]
               : streetsInsideArea(activeDriveArea!);
@@ -5609,9 +5839,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
           final areaCoveragePercent = areaStreets.isEmpty
               ? 0.0
               : (areaCoveredStreetCount / areaStreets.length) * 100;
-          final missionRemainingCoveragePercent = areaUncoveredStreets.isEmpty
-              ? 0.0
-              : (previewStreets.length / areaUncoveredStreets.length) * 100;
           final areaRemainingMinutes = estimatedMinutesForStreets(
             areaUncoveredStreets,
           );
@@ -5621,6 +5848,65 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ? 0
               : (areaRemainingMinutes / sessionBudgetForEstimate).ceil();
           final hasAreaStreetData = areaStreets.isNotEmpty;
+          final hasUncoveredAreaStreets = areaUncoveredStreets.isNotEmpty;
+          final hasMarketMapData = marketProperties.isNotEmpty;
+          final includeUnscoredMissionStreets =
+              hasMarketMapData && hasAreaStreetData;
+          final previewStreets = timeMissionsEnabled && selectedBudget != null
+              ? selectMissionStreetsForBudget(
+                  streetOpportunities,
+                  selectedBudget!,
+                  includeUnscored: includeUnscoredMissionStreets,
+                )
+              : defaultMissionStreets(
+                  streetOpportunities,
+                  includeUnscored: includeUnscoredMissionStreets,
+                );
+          final forcedBestAvailableStreets =
+              timeMissionsEnabled && selectedBudget != null
+              ? selectMissionStreetsForBudget(
+                  streetOpportunities,
+                  selectedBudget!,
+                  includeUnscored: includeUnscoredMissionStreets,
+                  forceAtLeastOne: true,
+                )
+              : const <StreetOpportunity>[];
+          final previewMinutes = estimatedMinutesForMissionStreets(
+            previewStreets,
+          );
+          final missionRemainingCoveragePercent = areaUncoveredStreets.isEmpty
+              ? 0.0
+              : (previewStreets.length / areaUncoveredStreets.length) * 100;
+          final noMarketMapForArea =
+              hasAreaStreetData && hasUncoveredAreaStreets && !hasMarketMapData;
+          final noTimeFit =
+              timeMissionsEnabled &&
+              selectedBudget != null &&
+              hasAreaStreetData &&
+              hasUncoveredAreaStreets &&
+              hasMarketMapData &&
+              previewStreets.isEmpty;
+          final noUncoveredStreets =
+              hasAreaStreetData && !hasUncoveredAreaStreets;
+          final availableTimeLabel = selectedBudget == null
+              ? 'Default mission'
+              : '$selectedBudget min available';
+          final previewTitle = noMarketMapForArea
+              ? 'Build Market Map to unlock time estimates.'
+              : noTimeFit
+              ? 'No streets fit this time window.'
+              : noUncoveredStreets
+              ? 'Area streets are already covered.'
+              : previewStreets.isEmpty
+              ? 'No available mission streets.'
+              : '${previewStreets.length} streets - ~$previewMinutes min';
+          final previewHelper = noMarketMapForArea
+              ? 'Market Map data is needed before the time planner can rank streets here.'
+              : noTimeFit
+              ? 'Increase your time or start a default mission.'
+              : calibrationMissionCount >= 3
+              ? 'Based on your driving history'
+              : 'Estimated at 10 mph scouting speed';
 
           return SafeArea(
             child: Padding(
@@ -5830,9 +6116,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             ),
                             const SizedBox(height: 14),
                             Text(
-                              previewStreets.isEmpty
-                                  ? 'No available mission streets for this time.'
-                                  : '${previewStreets.length} streets - ~$previewMinutes min',
+                              previewTitle,
                               style: const TextStyle(
                                 fontSize: 24,
                                 fontWeight: FontWeight.bold,
@@ -5840,27 +6124,44 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              calibrationMissionCount >= 3
-                                  ? 'Based on your driving history'
-                                  : 'Estimated at 10 mph scouting speed',
+                              previewHelper,
                               style: const TextStyle(
                                 color: Color(0xFF6B7280),
                                 fontSize: 12,
                               ),
                             ),
                             const SizedBox(height: 12),
-                            if (hasAreaStreetData) ...[
-                              Text(
-                                'This mission covers ${missionRemainingCoveragePercent.toStringAsFixed(0)}% of remaining area.',
-                              ),
-                              const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                Chip(label: Text(availableTimeLabel)),
+                                Chip(
+                                  label: Text(
+                                    '${previewStreets.length} streets selected',
+                                  ),
+                                ),
+                                Chip(
+                                  label: Text(
+                                    '${missionRemainingCoveragePercent.toStringAsFixed(0)}% coverage gain',
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (!noTimeFit &&
+                                !noMarketMapForArea &&
+                                hasAreaStreetData &&
+                                previewStreets.isNotEmpty) ...[
+                              const SizedBox(height: 8),
                               Text(
                                 '~$sessionsToFinish more sessions to finish this area.',
                                 style: const TextStyle(
                                   color: Color(0xFF6B7280),
                                 ),
                               ),
-                            ] else
+                            ],
+                            if (!hasAreaStreetData || noMarketMapForArea) ...[
+                              const SizedBox(height: 8),
                               TextButton(
                                 style: TextButton.styleFrom(
                                   padding: EdgeInsets.zero,
@@ -5872,66 +6173,117 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                   Navigator.pop(sheetContext);
                                   widget.onOpenAreas();
                                 },
-                                child: const Text(
-                                  'Build Market Map to unlock time estimates ->',
-                                ),
+                                child: const Text('Build Market Map ->'),
                               ),
+                            ],
                           ],
                         ),
                       ),
                     ),
                     const SizedBox(height: 12),
-                    FilledButton.icon(
-                      icon: const Icon(Icons.arrow_forward),
-                      label: const Text('Start Driving ->'),
-                      onPressed:
-                          previewStreets.isEmpty ||
-                              isSavingMission ||
-                              activeDriveArea == null
-                          ? null
-                          : () async {
-                              Navigator.pop(sheetContext);
-                              setState(() {
-                                selectedMissionTimeBudgetMinutes =
-                                    selectedBudget;
-                              });
-                              await generateMission(
-                                streetOpportunities,
-                                timeBudgetMinutes: timeMissionsEnabled
-                                    ? selectedBudget
-                                    : null,
-                              );
-                            },
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (timeMissionsEnabled)
+                    if (noTimeFit) ...[
+                      TextButton(
+                        onPressed: () {
+                          setSheetState(() {
+                            rememberAsDefault = false;
+                            isCustom = false;
+                            step = 0;
+                          });
+                        },
+                        child: const Text('Change time'),
+                      ),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.route),
+                        label: const Text('Start default mission'),
+                        onPressed: isSavingMission || activeDriveArea == null
+                            ? null
+                            : () async {
+                                Navigator.pop(sheetContext);
+                                await generateMission(
+                                  streetOpportunities,
+                                  includeUnscored:
+                                      includeUnscoredMissionStreets,
+                                );
+                              },
+                      ),
+                      FilledButton.icon(
+                        icon: const Icon(Icons.arrow_forward),
+                        label: const Text('Use best available streets anyway'),
+                        onPressed:
+                            isSavingMission ||
+                                activeDriveArea == null ||
+                                forcedBestAvailableStreets.isEmpty
+                            ? null
+                            : () async {
+                                Navigator.pop(sheetContext);
+                                setState(() {
+                                  selectedMissionTimeBudgetMinutes =
+                                      selectedBudget;
+                                });
+                                await generateMission(
+                                  streetOpportunities,
+                                  timeBudgetMinutes: selectedBudget,
+                                  includeUnscored:
+                                      includeUnscoredMissionStreets,
+                                  forceAtLeastOne: true,
+                                );
+                              },
+                      ),
+                    ] else ...[
+                      FilledButton.icon(
+                        icon: const Icon(Icons.arrow_forward),
+                        label: const Text('Start Driving ->'),
+                        onPressed:
+                            previewStreets.isEmpty ||
+                                isSavingMission ||
+                                activeDriveArea == null
+                            ? null
+                            : () async {
+                                Navigator.pop(sheetContext);
+                                setState(() {
+                                  selectedMissionTimeBudgetMinutes =
+                                      selectedBudget;
+                                });
+                                await generateMission(
+                                  streetOpportunities,
+                                  timeBudgetMinutes: timeMissionsEnabled
+                                      ? selectedBudget
+                                      : null,
+                                  includeUnscored:
+                                      includeUnscoredMissionStreets,
+                                );
+                              },
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (timeMissionsEnabled)
+                            TextButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  rememberAsDefault = false;
+                                  isCustom = false;
+                                  step = 0;
+                                });
+                              },
+                              child: const Text('Change time'),
+                            ),
+                          if (timeMissionsEnabled)
+                            const Text(
+                              '-',
+                              style: TextStyle(color: Color(0xFF6B7280)),
+                            ),
                           TextButton(
                             onPressed: () {
-                              setSheetState(() {
-                                rememberAsDefault = false;
-                                isCustom = false;
-                                step = 0;
-                              });
+                              Navigator.pop(sheetContext);
+                              openWeeklyPlannerSheet(streetOpportunities);
                             },
-                            child: const Text('Change time'),
+                            child: const Text('Plan my week'),
                           ),
-                        if (timeMissionsEnabled)
-                          const Text(
-                            '-',
-                            style: TextStyle(color: Color(0xFF6B7280)),
-                          ),
-                        TextButton(
-                          onPressed: () {
-                            Navigator.pop(sheetContext);
-                            openWeeklyPlannerSheet(streetOpportunities);
-                          },
-                          child: const Text('Plan my week'),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ],
                 ],
               ),
@@ -6736,6 +7088,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
   }
 
+  void cancelDrawAreaMode() {
+    setState(() {
+      isDrawAreaMode = false;
+      drawingAreaPoints = [];
+    });
+  }
+
   Future<String?> promptForDriveAreaName() {
     final controller = TextEditingController();
 
@@ -6814,6 +7173,94 @@ class _DrivingScreenState extends State<DrivingScreen> {
         const SnackBar(content: Text('Could not save drive area.')),
       );
     }
+  }
+
+  Widget drawAreaMobileActionBar() {
+    final canSave = drawingAreaPoints.length >= 3 && !isSavingDriveArea;
+    final helperText = drawingAreaPoints.length < 3
+        ? 'Add at least 3 points.'
+        : '${drawingAreaPoints.length} points ready.';
+
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 18,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                helperText,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.undo),
+                      label: const Text('Undo'),
+                      onPressed: drawingAreaPoints.isEmpty
+                          ? null
+                          : undoLastDrawingPoint,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.clear),
+                      label: const Text('Clear'),
+                      onPressed: drawingAreaPoints.isEmpty
+                          ? null
+                          : clearDrawingArea,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: isSavingDriveArea ? null : cancelDrawAreaMode,
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton.icon(
+                      icon: const Icon(Icons.save),
+                      label: Text(
+                        isSavingDriveArea ? 'Saving...' : 'Save Area',
+                      ),
+                      onPressed: canSave ? saveDrawingArea : null,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> changeCoverageCity(String city) async {
@@ -6942,6 +7389,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     try {
       await saveStreetCoverage(newlyCoveredStreets, driveSessionId);
+      for (final street in newlyCoveredStreets) {
+        unawaited(FieldTestLogger.log('street_covered', detail: street.id));
+      }
     } catch (_) {
       if (!mounted) return;
 
@@ -6977,6 +7427,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
       }
 
       await saveStreetCoverage(newlyCoveredStreets, null);
+      for (final street in newlyCoveredStreets) {
+        unawaited(FieldTestLogger.log('street_covered', detail: street.id));
+      }
     } catch (_) {
       if (!mounted) return;
 
@@ -7795,6 +8248,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
         accuracy: LocationAccuracy.bestForNavigation,
       ),
     );
+    unawaited(
+      FieldTestLogger.log(
+        'gps_acquired',
+        detail: 'accuracy: ${position.accuracy}m',
+      ),
+    );
 
     final newLocation = LatLng(position.latitude, position.longitude);
 
@@ -7834,6 +8293,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
           locationSettings: locationSettings,
         ).listen((Position position) async {
           final point = LatLng(position.latitude, position.longitude);
+          gpsUpdateLogCounter++;
+          if (gpsUpdateLogCounter % 10 == 0) {
+            unawaited(
+              FieldTestLogger.log(
+                'gps_update',
+                detail: 'accuracy: ${position.accuracy}m',
+              ),
+            );
+          }
 
           setState(() {
             myLocation = point;
@@ -10570,20 +11038,24 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 18),
                 color: const Color(0xE6111827),
                 alignment: Alignment.centerLeft,
-                child: Text(
-                  activeDriveArea?.name ?? 'Market Coverage',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: handleFieldTestTitleTap,
+                  child: Text(
+                    activeDriveArea?.name ?? 'Market Coverage',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-          if (activeMission == null)
+          if (activeMission == null && !isDrawAreaMode)
             Positioned(
               left: 0,
               right: 0,
@@ -10791,7 +11263,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ),
             ),
           ],
-          if (activeMission == null)
+          if (activeMission == null && !isDrawAreaMode)
             Positioned(
               right: 16,
               bottom: todayScheduledMission == null ? 108 : 198,
@@ -10806,6 +11278,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
                   child: const Icon(Icons.bolt),
                 ),
               ),
+            ),
+          if (isDrawAreaMode)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: drawAreaMobileActionBar(),
             ),
         ],
       ),
@@ -11261,6 +11740,73 @@ class AddLeadScreen extends StatefulWidget {
   State<AddLeadScreen> createState() => _AddLeadScreenState();
 }
 
+class FieldTestLogScreen extends StatelessWidget {
+  const FieldTestLogScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Field Test Log'),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(
+                ClipboardData(text: FieldTestLogger.plainText()),
+              );
+              if (!context.mounted) return;
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Field test log copied.')),
+              );
+            },
+            child: const Text('Copy All'),
+          ),
+          TextButton(
+            onPressed: () => FieldTestLogger.clear(),
+            child: const Text('Clear Log'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+      body: ValueListenableBuilder<int>(
+        valueListenable: FieldTestLogger.revision,
+        builder: (context, _, child) {
+          final entries = FieldTestLogger.entries.reversed.toList();
+          if (entries.isEmpty) {
+            return const Center(child: Text('No field test events yet.'));
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: entries.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              final timestamp = entry['timestamp'] ?? '';
+              final event = entry['event'] ?? '';
+              final detail = entry['detail'];
+
+              return ListTile(
+                dense: true,
+                title: Text(event),
+                subtitle: Text(
+                  detail == null || detail.isEmpty
+                      ? timestamp
+                      : '$timestamp\n$detail',
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _AddLeadScreenState extends State<AddLeadScreen> {
   final addressController = TextEditingController();
   final notesController = TextEditingController();
@@ -11699,6 +12245,116 @@ class _LeadListScreenState extends State<LeadListScreen> {
     );
   }
 
+  void openLeadDetails(Lead lead) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LeadDetailsScreen(
+          lead: lead,
+          onUpdateLeadStatus: (leadId, status) async {
+            await widget.onUpdateLeadStatus(leadId, status);
+
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          onUpdateLeadSource: (leadId, source) async {
+            await widget.onUpdateLeadSource(leadId, source);
+
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          onUpdateLeadScoreData: (leadId, scoreData) async {
+            await widget.onUpdateLeadScoreData(leadId, scoreData);
+
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          onUpdateLeadParcelData: (leadId, parcelData) async {
+            await widget.onUpdateLeadParcelData(leadId, parcelData);
+
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          onUpdateLeadReminderData: (leadId, reminderData) async {
+            await widget.onUpdateLeadReminderData(leadId, reminderData);
+
+            if (mounted) {
+              setState(() {});
+            }
+          },
+          onUpdateLeadOfferData: (leadId, offerData) async {
+            await widget.onUpdateLeadOfferData(leadId, offerData);
+
+            if (mounted) {
+              setState(() {});
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget leadResultsList(List<Lead> filteredLeads, {required bool scroll}) {
+    if (filteredLeads.isEmpty) {
+      return Card(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.manage_search,
+                  size: 48,
+                  color: Colors.grey.shade500,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'No matching leads',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Adjust the search or pipeline filter.',
+                  style: TextStyle(color: Color(0xFF6B7280)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (!scroll) {
+      return Column(
+        children: [
+          for (var index = 0; index < filteredLeads.length; index++) ...[
+            _LeadListRow(
+              lead: filteredLeads[index],
+              onTap: () => openLeadDetails(filteredLeads[index]),
+            ),
+            if (index != filteredLeads.length - 1) const SizedBox(height: 10),
+          ],
+        ],
+      );
+    }
+
+    return ListView.separated(
+      itemCount: filteredLeads.length,
+      padding: EdgeInsets.zero,
+      separatorBuilder: (context, index) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final lead = filteredLeads[index];
+
+        return _LeadListRow(lead: lead, onTap: () => openLeadDetails(lead));
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sortedLeads = [...widget.leads];
@@ -11782,610 +12438,522 @@ class _LeadListScreenState extends State<LeadListScreen> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Lead command center',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Find the right property, prioritize the highest scores, and move deals forward.',
-                        style: TextStyle(
-                          color: Color(0xFF6B7280),
-                          fontSize: 15,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                FilledButton.icon(
-                  onPressed: filteredLeads.isEmpty
-                      ? null
-                      : () => exportLeadsCsv(filteredLeads),
-                  icon: const Icon(Icons.download),
-                  label: const Text('Export CSV'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            ValueListenableBuilder<int>(
-              valueListenable: widget.pendingSyncCountListenable,
-              builder: (context, pendingCount, _) {
-                if (pendingCount == 0) return const SizedBox.shrink();
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF7ED),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFF97316)),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.sync_problem,
-                                size: 18,
-                                color: Color(0xFFC2410C),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '$pendingCount lead${pendingCount == 1 ? '' : 's'} pending sync',
-                                style: const TextStyle(
-                                  color: Color(0xFF9A3412),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                          FutureBuilder<List<Map<String, dynamic>>>(
-                            future: pendingLeadRows(),
-                            builder: (context, snapshot) {
-                              final rows =
-                                  snapshot.data ??
-                                  const <Map<String, dynamic>>[];
-                              if (rows.isEmpty) return const SizedBox.shrink();
-
-                              final previewRows = rows.take(3).toList();
-
-                              return Padding(
-                                padding: const EdgeInsets.only(
-                                  top: 6,
-                                  left: 26,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    ...previewRows.map(
-                                      (row) => Text(
-                                        row['address']?.toString().isNotEmpty ==
-                                                true
-                                            ? row['address'].toString()
-                                            : 'Unsynced lead',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Color(0xFF9A3412),
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                    if (rows.length > previewRows.length)
-                                      Text(
-                                        '+${rows.length - previewRows.length} more',
-                                        style: const TextStyle(
-                                          color: Color(0xFF9A3412),
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final columns = constraints.maxWidth > 900 ? 4 : 2;
-                final width =
-                    (constraints.maxWidth - ((columns - 1) * 12)) / columns;
-
-                return Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    SizedBox(
-                      width: width,
-                      child: _LeadSummaryCard(
-                        label: 'Visible leads',
-                        value: filteredLeads.length.toString(),
-                        icon: Icons.visibility,
-                        color: const Color(0xFF2563EB),
-                      ),
-                    ),
-                    SizedBox(
-                      width: width,
-                      child: _LeadSummaryCard(
-                        label: 'Total leads',
-                        value: sortedLeads.length.toString(),
-                        icon: Icons.home_work,
-                        color: const Color(0xFF111827),
-                      ),
-                    ),
-                    SizedBox(
-                      width: width,
-                      child: _LeadSummaryCard(
-                        label: 'Hot leads',
-                        value: hotLeads.toString(),
-                        icon: Icons.local_fire_department,
-                        color: const Color(0xFFDC2626),
-                      ),
-                    ),
-                    SizedBox(
-                      width: width,
-                      child: _LeadSummaryCard(
-                        label: 'Avg score',
-                        value: avgScore.toStringAsFixed(0),
-                        icon: Icons.speed,
-                        color: const Color(0xFFF59E0B),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  children: [
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isWide = constraints.maxWidth >= 900;
-                        final searchField = TextField(
-                          controller: searchController,
-                          decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.search),
-                            labelText: 'Search owner, address, source, notes',
-                          ),
-                          onChanged: (value) {
-                            setState(() {
-                              searchQuery = value;
-                            });
-                          },
-                        );
-                        final stageField = DropdownButtonFormField<String>(
-                          initialValue: stages.contains(stageFilter)
-                              ? stageFilter
-                              : 'All',
-                          decoration: const InputDecoration(
-                            labelText: 'Pipeline stage',
-                          ),
-                          items: stages
-                              .map(
-                                (stage) => DropdownMenuItem(
-                                  value: stage,
-                                  child: Text(stage),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (value) {
-                            setState(() {
-                              stageFilter = value ?? 'All';
-                            });
-                          },
-                        );
-                        final sortField = DropdownButtonFormField<String>(
-                          initialValue: sortMode,
-                          decoration: const InputDecoration(labelText: 'Sort'),
-                          items:
-                              const [
-                                    'Score high to low',
-                                    'Score low to high',
-                                    'Newest first',
-                                    'Oldest first',
-                                    'Owner A-Z',
-                                    'Stage A-Z',
-                                  ]
-                                  .map(
-                                    (sort) => DropdownMenuItem(
-                                      value: sort,
-                                      child: Text(sort),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged: (value) {
-                            setState(() {
-                              sortMode = value ?? 'Score high to low';
-                            });
-                          },
-                        );
-
-                        if (!isWide) {
-                          return Column(
-                            children: [
-                              searchField,
-                              const SizedBox(height: 10),
-                              stageField,
-                              const SizedBox(height: 10),
-                              sortField,
-                            ],
-                          );
-                        }
-
-                        return Row(
-                          children: [
-                            Expanded(flex: 2, child: searchField),
-                            const SizedBox(width: 10),
-                            Expanded(child: stageField),
-                            const SizedBox(width: 10),
-                            Expanded(child: sortField),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isMobile = constraints.maxWidth < 700;
+          final content = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Chip(
-                                avatar: const Icon(Icons.filter_list, size: 18),
-                                label: Text(
-                                  '$activeFilterCount active filters',
-                                ),
-                              ),
-                              Text(
-                                '${filteredLeads.length} of ${sortedLeads.length} leads shown',
-                                style: const TextStyle(
-                                  color: Color(0xFF6B7280),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
+                        Text(
+                          'Lead command center',
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        TextButton.icon(
-                          onPressed: activeFilterCount == 0
-                              ? null
-                              : resetFilters,
-                          icon: const Icon(Icons.restart_alt),
-                          label: const Text('Reset'),
-                        ),
-                        IconButton(
-                          tooltip: showAdvancedFilters
-                              ? 'Hide advanced filters'
-                              : 'Show advanced filters',
-                          onPressed: () {
-                            setState(() {
-                              showAdvancedFilters = !showAdvancedFilters;
-                            });
-                          },
-                          icon: Icon(
-                            showAdvancedFilters
-                                ? Icons.expand_less
-                                : Icons.tune,
+                        SizedBox(height: 4),
+                        Text(
+                          'Find the right property, prioritize the highest scores, and move deals forward.',
+                          style: TextStyle(
+                            color: Color(0xFF6B7280),
+                            fontSize: 15,
                           ),
                         ),
                       ],
                     ),
-                    if (showAdvancedFilters) ...[
-                      const Divider(height: 22),
+                  ),
+                  const SizedBox(width: 16),
+                  FilledButton.icon(
+                    onPressed: filteredLeads.isEmpty
+                        ? null
+                        : () => exportLeadsCsv(filteredLeads),
+                    icon: const Icon(Icons.download),
+                    label: const Text('Export CSV'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<int>(
+                valueListenable: widget.pendingSyncCountListenable,
+                builder: (context, pendingCount, _) {
+                  if (pendingCount == 0) return const SizedBox.shrink();
+
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7ED),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFF97316)),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.sync_problem,
+                                  size: 18,
+                                  color: Color(0xFFC2410C),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '$pendingCount lead${pendingCount == 1 ? '' : 's'} pending sync',
+                                  style: const TextStyle(
+                                    color: Color(0xFF9A3412),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            FutureBuilder<List<Map<String, dynamic>>>(
+                              future: pendingLeadRows(),
+                              builder: (context, snapshot) {
+                                final rows =
+                                    snapshot.data ??
+                                    const <Map<String, dynamic>>[];
+                                if (rows.isEmpty) {
+                                  return const SizedBox.shrink();
+                                }
+
+                                final previewRows = rows.take(3).toList();
+
+                                return Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 6,
+                                    left: 26,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      ...previewRows.map(
+                                        (row) => Text(
+                                          row['address']
+                                                      ?.toString()
+                                                      .isNotEmpty ==
+                                                  true
+                                              ? row['address'].toString()
+                                              : 'Unsynced lead',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: Color(0xFF9A3412),
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                      if (rows.length > previewRows.length)
+                                        Text(
+                                          '+${rows.length - previewRows.length} more',
+                                          style: const TextStyle(
+                                            color: Color(0xFF9A3412),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final columns = constraints.maxWidth > 900 ? 4 : 2;
+                  final width =
+                      (constraints.maxWidth - ((columns - 1) * 12)) / columns;
+
+                  return Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      SizedBox(
+                        width: width,
+                        child: _LeadSummaryCard(
+                          label: 'Visible leads',
+                          value: filteredLeads.length.toString(),
+                          icon: Icons.visibility,
+                          color: const Color(0xFF2563EB),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _LeadSummaryCard(
+                          label: 'Total leads',
+                          value: sortedLeads.length.toString(),
+                          icon: Icons.home_work,
+                          color: const Color(0xFF111827),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _LeadSummaryCard(
+                          label: 'Hot leads',
+                          value: hotLeads.toString(),
+                          icon: Icons.local_fire_department,
+                          color: const Color(0xFFDC2626),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _LeadSummaryCard(
+                          label: 'Avg score',
+                          value: avgScore.toStringAsFixed(0),
+                          icon: Icons.speed,
+                          color: const Color(0xFFF59E0B),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    children: [
                       LayoutBuilder(
                         builder: (context, constraints) {
                           final isWide = constraints.maxWidth >= 900;
-                          final sourceField = DropdownButtonFormField<String>(
-                            initialValue: sources.contains(sourceFilter)
-                                ? sourceFilter
+                          final searchField = TextField(
+                            controller: searchController,
+                            decoration: const InputDecoration(
+                              prefixIcon: Icon(Icons.search),
+                              labelText: 'Search owner, address, source, notes',
+                            ),
+                            onChanged: (value) {
+                              setState(() {
+                                searchQuery = value;
+                              });
+                            },
+                          );
+                          final stageField = DropdownButtonFormField<String>(
+                            initialValue: stages.contains(stageFilter)
+                                ? stageFilter
                                 : 'All',
                             decoration: const InputDecoration(
-                              labelText: 'Lead source',
+                              labelText: 'Pipeline stage',
                             ),
-                            items: sources
+                            items: stages
                                 .map(
-                                  (source) => DropdownMenuItem(
-                                    value: source,
-                                    child: Text(source),
+                                  (stage) => DropdownMenuItem(
+                                    value: stage,
+                                    child: Text(stage),
                                   ),
                                 )
                                 .toList(),
                             onChanged: (value) {
                               setState(() {
-                                sourceFilter = value ?? 'All';
+                                stageFilter = value ?? 'All';
                               });
                             },
                           );
-                          final revisitField = DropdownButtonFormField<String>(
-                            initialValue: revisitFilter,
+                          final sortField = DropdownButtonFormField<String>(
+                            initialValue: sortMode,
                             decoration: const InputDecoration(
-                              labelText: 'Revisit status',
+                              labelText: 'Sort',
                             ),
                             items:
                                 const [
-                                      'All',
-                                      'Needs revisit',
-                                      'Scheduled',
-                                      'Due today',
-                                      'Overdue',
-                                      'No reminder',
+                                      'Score high to low',
+                                      'Score low to high',
+                                      'Newest first',
+                                      'Oldest first',
+                                      'Owner A-Z',
+                                      'Stage A-Z',
                                     ]
                                     .map(
-                                      (filter) => DropdownMenuItem(
-                                        value: filter,
-                                        child: Text(filter),
+                                      (sort) => DropdownMenuItem(
+                                        value: sort,
+                                        child: Text(sort),
                                       ),
                                     )
                                     .toList(),
                             onChanged: (value) {
                               setState(() {
-                                revisitFilter = value ?? 'All';
+                                sortMode = value ?? 'Score high to low';
                               });
                             },
-                          );
-                          final signalField = DropdownButtonFormField<String>(
-                            initialValue: propertySignalFilter,
-                            decoration: const InputDecoration(
-                              labelText: 'Property signal',
-                            ),
-                            items:
-                                const [
-                                      'All',
-                                      'Out-of-state owner',
-                                      'Has owner name',
-                                      'Has mailing address',
-                                      'Has ARV/MAO',
-                                      'Has location',
-                                      'Hot score 70+',
-                                    ]
-                                    .map(
-                                      (filter) => DropdownMenuItem(
-                                        value: filter,
-                                        child: Text(filter),
-                                      ),
-                                    )
-                                    .toList(),
-                            onChanged: (value) {
-                              setState(() {
-                                propertySignalFilter = value ?? 'All';
-                              });
-                            },
-                          );
-                          final scoreFilter = Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              border: Border.all(
-                                color: const Color(0xFFD1D5DB),
-                              ),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Score ${minScoreFilter.round()}-${maxScoreFilter.round()}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                RangeSlider(
-                                  min: 0,
-                                  max: 100,
-                                  divisions: 20,
-                                  labels: RangeLabels(
-                                    minScoreFilter.round().toString(),
-                                    maxScoreFilter.round().toString(),
-                                  ),
-                                  values: RangeValues(
-                                    minScoreFilter,
-                                    maxScoreFilter,
-                                  ),
-                                  onChanged: (values) {
-                                    setState(() {
-                                      minScoreFilter = values.start;
-                                      maxScoreFilter = values.end;
-                                    });
-                                  },
-                                ),
-                              ],
-                            ),
                           );
 
                           if (!isWide) {
                             return Column(
                               children: [
-                                sourceField,
+                                searchField,
                                 const SizedBox(height: 10),
-                                revisitField,
+                                stageField,
                                 const SizedBox(height: 10),
-                                signalField,
-                                const SizedBox(height: 10),
-                                scoreFilter,
+                                sortField,
                               ],
                             );
                           }
 
-                          return Column(
+                          return Row(
                             children: [
-                              Row(
-                                children: [
-                                  Expanded(child: sourceField),
-                                  const SizedBox(width: 10),
-                                  Expanded(child: revisitField),
-                                  const SizedBox(width: 10),
-                                  Expanded(child: signalField),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              scoreFilter,
+                              Expanded(flex: 2, child: searchField),
+                              const SizedBox(width: 10),
+                              Expanded(child: stageField),
+                              const SizedBox(width: 10),
+                              Expanded(child: sortField),
                             ],
                           );
                         },
                       ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: filteredLeads.isEmpty
-                  ? Card(
-                      child: Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.manage_search,
-                                size: 48,
-                                color: Colors.grey.shade500,
-                              ),
-                              const SizedBox(height: 12),
-                              const Text(
-                                'No matching leads',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Chip(
+                                  avatar: const Icon(
+                                    Icons.filter_list,
+                                    size: 18,
+                                  ),
+                                  label: Text(
+                                    '$activeFilterCount active filters',
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 6),
-                              const Text(
-                                'Adjust the search or pipeline filter.',
-                                style: TextStyle(color: Color(0xFF6B7280)),
-                              ),
-                            ],
+                                Text(
+                                  '${filteredLeads.length} of ${sortedLeads.length} leads shown',
+                                  style: const TextStyle(
+                                    color: Color(0xFF6B7280),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
+                          TextButton.icon(
+                            onPressed: activeFilterCount == 0
+                                ? null
+                                : resetFilters,
+                            icon: const Icon(Icons.restart_alt),
+                            label: const Text('Reset'),
+                          ),
+                          IconButton(
+                            tooltip: showAdvancedFilters
+                                ? 'Hide advanced filters'
+                                : 'Show advanced filters',
+                            onPressed: () {
+                              setState(() {
+                                showAdvancedFilters = !showAdvancedFilters;
+                              });
+                            },
+                            icon: Icon(
+                              showAdvancedFilters
+                                  ? Icons.expand_less
+                                  : Icons.tune,
+                            ),
+                          ),
+                        ],
                       ),
-                    )
-                  : ListView.separated(
-                      itemCount: filteredLeads.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final lead = filteredLeads[index];
-
-                        return _LeadListRow(
-                          lead: lead,
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => LeadDetailsScreen(
-                                  lead: lead,
-                                  onUpdateLeadStatus: (leadId, status) async {
-                                    await widget.onUpdateLeadStatus(
-                                      leadId,
-                                      status,
-                                    );
-
-                                    if (mounted) {
-                                      setState(() {});
-                                    }
+                      if (showAdvancedFilters) ...[
+                        const Divider(height: 22),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isWide = constraints.maxWidth >= 900;
+                            final sourceField = DropdownButtonFormField<String>(
+                              initialValue: sources.contains(sourceFilter)
+                                  ? sourceFilter
+                                  : 'All',
+                              decoration: const InputDecoration(
+                                labelText: 'Lead source',
+                              ),
+                              items: sources
+                                  .map(
+                                    (source) => DropdownMenuItem(
+                                      value: source,
+                                      child: Text(source),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  sourceFilter = value ?? 'All';
+                                });
+                              },
+                            );
+                            final revisitField =
+                                DropdownButtonFormField<String>(
+                                  initialValue: revisitFilter,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Revisit status',
+                                  ),
+                                  items:
+                                      const [
+                                            'All',
+                                            'Needs revisit',
+                                            'Scheduled',
+                                            'Due today',
+                                            'Overdue',
+                                            'No reminder',
+                                          ]
+                                          .map(
+                                            (filter) => DropdownMenuItem(
+                                              value: filter,
+                                              child: Text(filter),
+                                            ),
+                                          )
+                                          .toList(),
+                                  onChanged: (value) {
+                                    setState(() {
+                                      revisitFilter = value ?? 'All';
+                                    });
                                   },
-                                  onUpdateLeadSource: (leadId, source) async {
-                                    await widget.onUpdateLeadSource(
-                                      leadId,
-                                      source,
-                                    );
-
-                                    if (mounted) {
-                                      setState(() {});
-                                    }
-                                  },
-                                  onUpdateLeadScoreData:
-                                      (leadId, scoreData) async {
-                                        await widget.onUpdateLeadScoreData(
-                                          leadId,
-                                          scoreData,
-                                        );
-
-                                        if (mounted) {
-                                          setState(() {});
-                                        }
-                                      },
-                                  onUpdateLeadParcelData:
-                                      (leadId, parcelData) async {
-                                        await widget.onUpdateLeadParcelData(
-                                          leadId,
-                                          parcelData,
-                                        );
-
-                                        if (mounted) {
-                                          setState(() {});
-                                        }
-                                      },
-                                  onUpdateLeadReminderData:
-                                      (leadId, reminderData) async {
-                                        await widget.onUpdateLeadReminderData(
-                                          leadId,
-                                          reminderData,
-                                        );
-
-                                        if (mounted) {
-                                          setState(() {});
-                                        }
-                                      },
-                                  onUpdateLeadOfferData:
-                                      (leadId, offerData) async {
-                                        await widget.onUpdateLeadOfferData(
-                                          leadId,
-                                          offerData,
-                                        );
-
-                                        if (mounted) {
-                                          setState(() {});
-                                        }
-                                      },
+                                );
+                            final signalField = DropdownButtonFormField<String>(
+                              initialValue: propertySignalFilter,
+                              decoration: const InputDecoration(
+                                labelText: 'Property signal',
+                              ),
+                              items:
+                                  const [
+                                        'All',
+                                        'Out-of-state owner',
+                                        'Has owner name',
+                                        'Has mailing address',
+                                        'Has ARV/MAO',
+                                        'Has location',
+                                        'Hot score 70+',
+                                      ]
+                                      .map(
+                                        (filter) => DropdownMenuItem(
+                                          value: filter,
+                                          child: Text(filter),
+                                        ),
+                                      )
+                                      .toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  propertySignalFilter = value ?? 'All';
+                                });
+                              },
+                            );
+                            final scoreFilter = Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: const Color(0xFFD1D5DB),
                                 ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Score ${minScoreFilter.round()}-${maxScoreFilter.round()}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  RangeSlider(
+                                    min: 0,
+                                    max: 100,
+                                    divisions: 20,
+                                    labels: RangeLabels(
+                                      minScoreFilter.round().toString(),
+                                      maxScoreFilter.round().toString(),
+                                    ),
+                                    values: RangeValues(
+                                      minScoreFilter,
+                                      maxScoreFilter,
+                                    ),
+                                    onChanged: (values) {
+                                      setState(() {
+                                        minScoreFilter = values.start;
+                                        maxScoreFilter = values.end;
+                                      });
+                                    },
+                                  ),
+                                ],
                               ),
                             );
+
+                            if (!isWide) {
+                              return Column(
+                                children: [
+                                  sourceField,
+                                  const SizedBox(height: 10),
+                                  revisitField,
+                                  const SizedBox(height: 10),
+                                  signalField,
+                                  const SizedBox(height: 10),
+                                  scoreFilter,
+                                ],
+                              );
+                            }
+
+                            return Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(child: sourceField),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: revisitField),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: signalField),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                scoreFilter,
+                              ],
+                            );
                           },
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (isMobile)
+                leadResultsList(filteredLeads, scroll: false)
+              else
+                Expanded(child: leadResultsList(filteredLeads, scroll: true)),
+            ],
+          );
+
+          if (isMobile) {
+            return SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                child: content,
+              ),
+            );
+          }
+
+          return Padding(padding: const EdgeInsets.all(20), child: content);
+        },
       ),
     );
   }
