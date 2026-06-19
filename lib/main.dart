@@ -2613,8 +2613,8 @@ class _AreasTab extends StatelessWidget {
                         icon: const Icon(Icons.map),
                         label: Text(
                           driveState.isBuildingMarketMap
-                              ? 'Building Market Map...'
-                              : 'Build Market Map',
+                              ? 'Analyzing area...'
+                              : 'Analyze Area',
                         ),
                         onPressed: driveState.isBuildingMarketMap
                             ? null
@@ -2699,7 +2699,7 @@ class _AreasTab extends StatelessWidget {
                         const SizedBox(height: 8),
                         if (driveState.marketProperties.isEmpty)
                           const Text(
-                            'Build the Market Map to ingest parcels for this area.',
+                            'Analyze this area to load its homes and targets.',
                           )
                         else if (filteredTargets.isEmpty)
                           const Text('No targets match these filters.')
@@ -5892,7 +5892,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ? 'Default mission'
               : '$selectedBudget min available';
           final previewTitle = noMarketMapForArea
-              ? 'Build Market Map to unlock time estimates.'
+              ? 'Analyze the area to unlock time estimates.'
               : noTimeFit
               ? 'No streets fit this time window.'
               : noUncoveredStreets
@@ -5901,7 +5901,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ? 'No available mission streets.'
               : '${previewStreets.length} streets - ~$previewMinutes min';
           final previewHelper = noMarketMapForArea
-              ? 'Market Map data is needed before the time planner can rank streets here.'
+              ? 'Area analysis is needed before the time planner can rank streets here.'
               : noTimeFit
               ? 'Increase your time or start a default mission.'
               : calibrationMissionCount >= 3
@@ -6173,7 +6173,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                   Navigator.pop(sheetContext);
                                   widget.onOpenAreas();
                                 },
-                                child: const Text('Build Market Map ->'),
+                                child: const Text('Analyze Area ->'),
                               ),
                             ],
                           ],
@@ -6662,7 +6662,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       setState(() {
         isBuildingMarketMap = false;
-        marketMapMessage = 'Market Map built: ${rows.length} parcels saved.';
+        marketMapMessage = 'Area analyzed: ${rows.length} homes loaded.';
       });
 
       focusMapWorkspace(
@@ -6676,11 +6676,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       setState(() {
         isBuildingMarketMap = false;
-        marketMapMessage = 'Could not build Market Map.';
+        marketMapMessage = 'Could not analyze area.';
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not build Market Map.')),
+        const SnackBar(content: Text('Could not analyze area.')),
       );
     }
   }
@@ -9987,8 +9987,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                         icon: const Icon(Icons.map),
                                         label: Text(
                                           isBuildingMarketMap
-                                              ? 'Building Market Map...'
-                                              : 'Build Market Map',
+                                              ? 'Analyzing area...'
+                                              : 'Analyze Area',
                                         ),
                                         onPressed: isBuildingMarketMap
                                             ? null
@@ -10705,7 +10705,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                     const SizedBox(height: 8),
                                     if (marketProperties.isEmpty)
                                       const Text(
-                                        'Build the Market Map to ingest parcels for this area.',
+                                        'Analyze this area to load its homes and targets.',
                                       )
                                     else if (filteredMarketProperties.isEmpty)
                                       const Text(
