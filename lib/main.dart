@@ -43,6 +43,8 @@ final supabase = Supabase.instance.client;
 
 const String defaultSessionMinutesPrefsKey = 'default_session_minutes';
 const String timeMissionsEnabledPrefsKey = 'time_missions_enabled';
+const String calibrationFactorPrefsKey = 'calibration_factor';
+const String calibrationMissionCountPrefsKey = 'calibration_mission_count';
 const String leadPhotosBucket = 'lead-photos';
 const String coverageCity = 'Owasso';
 const String primaryTulsaParcelLayerUrl =
@@ -990,6 +992,8 @@ class Mission {
 
   bool get isActive => status == 'active';
   bool get isPaused => status == 'paused';
+  bool get isScheduled => status == 'scheduled';
+  bool get isSkipped => status == 'skipped';
   bool get isOpen => isActive || isPaused;
 }
 
@@ -1322,6 +1326,51 @@ double estimateStreetMinutes(CityStreet street) {
   }
 
   return (miles / kScoutSpeedMph * 60) + kRepositioningMinutes;
+}
+
+DateTime dateOnly(DateTime date) => DateTime(date.year, date.month, date.day);
+
+String isoDateOnly(DateTime date) {
+  final normalized = dateOnly(date);
+  final month = normalized.month.toString().padLeft(2, '0');
+  final day = normalized.day.toString().padLeft(2, '0');
+
+  return '${normalized.year}-$month-$day';
+}
+
+bool isSameCalendarDate(DateTime? a, DateTime b) {
+  if (a == null) return false;
+
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+String shortWeekdayLabel(DateTime date) {
+  const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  return labels[date.weekday - 1];
+}
+
+String shortMonthLabel(DateTime date) {
+  const labels = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  return labels[date.month - 1];
+}
+
+String shortPlannerDateLabel(DateTime date) {
+  return '${shortWeekdayLabel(date)} ${shortMonthLabel(date)} ${date.day}';
 }
 
 double drivingPointMiles(List<DrivingPoint> drivingPoints) {
@@ -1756,6 +1805,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
           onUpdateLeadParcelData: updateLeadParcelData,
           onUpdateLeadReminderData: updateLeadReminderData,
           onUpdateLeadOfferData: updateLeadOfferData,
+          onRefreshLeads: loadLeads,
         ),
       ),
     );
@@ -2006,6 +2056,7 @@ class MarketCoverageRootScreen extends StatefulWidget {
   onUpdateLeadReminderData;
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
+  final Future<void> Function() onRefreshLeads;
 
   const MarketCoverageRootScreen({
     super.key,
@@ -2021,6 +2072,7 @@ class MarketCoverageRootScreen extends StatefulWidget {
     required this.onUpdateLeadParcelData,
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
+    required this.onRefreshLeads,
   });
 
   @override
@@ -2035,6 +2087,12 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
   void openDriveTab() {
     setState(() {
       selectedTabIndex = 0;
+    });
+  }
+
+  void openAreasTab() {
+    setState(() {
+      selectedTabIndex = 2;
     });
   }
 
@@ -2078,6 +2136,8 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onUpdateLeadParcelData: widget.onUpdateLeadParcelData,
         onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
         onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
+        onRefreshLeads: widget.onRefreshLeads,
+        onOpenAreas: openAreasTab,
       ),
       LeadListScreen(
         leads: widget.leads,
@@ -2697,6 +2757,8 @@ class DashboardScreen extends StatelessWidget {
                                               onUpdateLeadReminderData,
                                           onUpdateLeadOfferData:
                                               onUpdateLeadOfferData,
+                                          onRefreshLeads: () async {},
+                                          onOpenAreas: () {},
                                         ),
                                       ),
                                     );
@@ -2905,6 +2967,8 @@ class DashboardScreen extends StatelessWidget {
                                                   onUpdateLeadReminderData,
                                               onUpdateLeadOfferData:
                                                   onUpdateLeadOfferData,
+                                              onRefreshLeads: () async {},
+                                              onOpenAreas: () {},
                                             ),
                                           ),
                                         );
@@ -3168,6 +3232,8 @@ class DrivingScreen extends StatefulWidget {
   onUpdateLeadReminderData;
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
+  final Future<void> Function() onRefreshLeads;
+  final VoidCallback onOpenAreas;
 
   const DrivingScreen({
     super.key,
@@ -3181,6 +3247,8 @@ class DrivingScreen extends StatefulWidget {
     required this.onUpdateLeadParcelData,
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
+    required this.onRefreshLeads,
+    required this.onOpenAreas,
   });
 
   @override
@@ -3240,6 +3308,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Map<String, double> driveAreaRemainingOpportunity = {};
   Mission? activeMission;
   List<Mission> completedMissions = [];
+  List<Mission> scheduledMissions = [];
   Map<String, List<Lead>> missionLeadsById = {};
   bool isLoadingMissions = false;
   bool isSavingMission = false;
@@ -3248,6 +3317,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool customMissionTimeInHours = false;
   int? defaultSessionMinutes;
   bool timeMissionsEnabled = true;
+  double calibrationFactor = 1.0;
+  int calibrationMissionCount = 0;
 
   // Lead map filters (display-only; does not affect data or other layers).
   bool showLeadsOnMap = true;
@@ -3290,6 +3361,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
     setState(() {
       defaultSessionMinutes = prefs.getInt(defaultSessionMinutesPrefsKey);
       timeMissionsEnabled = prefs.getBool(timeMissionsEnabledPrefsKey) ?? true;
+      calibrationFactor = prefs.getDouble(calibrationFactorPrefsKey) ?? 1.0;
+      calibrationMissionCount =
+          prefs.getInt(calibrationMissionCountPrefsKey) ?? 0;
     });
   }
 
@@ -3311,6 +3385,21 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     setState(() {
       timeMissionsEnabled = value;
+    });
+  }
+
+  Future<void> saveCalibration({
+    required double factor,
+    required int count,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(calibrationFactorPrefsKey, factor);
+    await prefs.setInt(calibrationMissionCountPrefsKey, count);
+    if (!mounted) return;
+
+    setState(() {
+      calibrationFactor = factor;
+      calibrationMissionCount = count;
     });
   }
 
@@ -3635,6 +3724,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       setState(() {
         activeMission = null;
         completedMissions = [];
+        scheduledMissions = [];
         missionLeadsById = {};
         isLoadingMissions = false;
       });
@@ -3665,6 +3755,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
         activeMission = openMission;
         completedMissions = missions
             .where((mission) => mission.status == 'completed')
+            .toList(growable: false);
+        scheduledMissions = missions
+            .where((mission) => mission.isScheduled)
             .toList(growable: false);
         isLoadingMissions = false;
       });
@@ -3729,6 +3822,40 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
   }
 
+  Future<void> updateCalibrationFromCompletedMissions() async {
+    final area = activeDriveArea;
+    if (area == null) return;
+
+    try {
+      final data = await supabase
+          .from('missions')
+          .select('estimated_minutes,actual_minutes')
+          .eq('account_id', widget.activeAccountId)
+          .eq('drive_area_id', area.id)
+          .eq('status', 'completed');
+      final ratios = <double>[];
+
+      for (final row in data) {
+        final estimated = (row['estimated_minutes'] as num?)?.toDouble() ?? 0;
+        final actual = (row['actual_minutes'] as num?)?.toDouble() ?? 0;
+        if (estimated <= 0 || actual <= 0) continue;
+
+        final ratio = actual / estimated;
+        if (ratio < 0.4 || ratio > 3.0) continue;
+
+        ratios.add(ratio);
+      }
+
+      final factor = ratios.length < 3
+          ? 1.0
+          : (ratios.reduce((a, b) => a + b) / ratios.length).clamp(0.5, 2.0);
+
+      await saveCalibration(factor: factor.toDouble(), count: ratios.length);
+    } catch (_) {
+      // Calibration is helpful but non-critical; keep the current factor.
+    }
+  }
+
   String? missionIdForPoint(LatLng? point) {
     final mission = activeMission;
     final areaPolygon = activeDriveArea?.polygon ?? const <LatLng>[];
@@ -3740,12 +3867,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
     return mission.id;
   }
 
+  double calibratedStreetMinutes(CityStreet street) {
+    return estimateStreetMinutes(street) * calibrationFactor;
+  }
+
   int estimatedMinutesForMissionStreets(List<StreetOpportunity> streets) {
     return streets
         .fold<double>(
           0,
           (total, opportunity) =>
-              total + estimateStreetMinutes(opportunity.street),
+              total + calibratedStreetMinutes(opportunity.street),
         )
         .ceil();
   }
@@ -3754,7 +3885,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     return streets
         .fold<double>(
           0,
-          (total, street) => total + estimateStreetMinutes(street),
+          (total, street) => total + calibratedStreetMinutes(street),
         )
         .ceil();
   }
@@ -3774,7 +3905,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     var estimatedMinutes = 0.0;
 
     for (final opportunity in candidates) {
-      final streetMinutes = estimateStreetMinutes(opportunity.street);
+      final streetMinutes = calibratedStreetMinutes(opportunity.street);
       final wouldFit =
           selected.isEmpty ||
           estimatedMinutes + streetMinutes <= timeBudgetMinutes;
@@ -3786,6 +3917,79 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
 
     return selected;
+  }
+
+  Map<String, dynamic> missionRowForStreets(
+    List<StreetOpportunity> missionStreets, {
+    required String status,
+    int? timeBudgetMinutes,
+    DateTime? scheduledDate,
+    String? weeklyPlanId,
+  }) {
+    final row = <String, dynamic>{
+      'account_id': widget.activeAccountId,
+      'created_by': supabase.auth.currentUser?.id,
+      'drive_area_id': activeDriveArea?.id,
+      'status': status,
+      'target_street_ids': missionStreets
+          .map((opportunity) => opportunity.street.id)
+          .toList(growable: false),
+      'street_count': missionStreets.length,
+      'opportunity_at_start': missionStreets.fold<double>(
+        0,
+        (total, opportunity) => total + opportunity.score,
+      ),
+    };
+
+    if (timeBudgetMinutes != null) {
+      row['time_budget_minutes'] = timeBudgetMinutes;
+      row['estimated_minutes'] = estimatedMinutesForMissionStreets(
+        missionStreets,
+      );
+    }
+    if (scheduledDate != null) {
+      row['scheduled_date'] = isoDateOnly(scheduledDate);
+    }
+    if (weeklyPlanId != null) {
+      row['weekly_plan_id'] = weeklyPlanId;
+    }
+
+    return row;
+  }
+
+  List<({DateTime date, List<StreetOpportunity> streets, int minutes})>
+  weeklyPlanMissionPreviews(
+    List<StreetOpportunity> streetOpportunities,
+    List<DateTime> selectedDates,
+    int sessionMinutes,
+  ) {
+    final alreadyPlannedStreetIds = <String>{};
+    final previews =
+        <({DateTime date, List<StreetOpportunity> streets, int minutes})>[];
+
+    for (final date in selectedDates) {
+      final availableOpportunities = streetOpportunities
+          .where(
+            (opportunity) =>
+                !alreadyPlannedStreetIds.contains(opportunity.street.id),
+          )
+          .toList(growable: false);
+      final streets = selectMissionStreetsForBudget(
+        availableOpportunities,
+        sessionMinutes,
+      );
+
+      alreadyPlannedStreetIds.addAll(
+        streets.map((opportunity) => opportunity.street.id),
+      );
+      previews.add((
+        date: date,
+        streets: streets,
+        minutes: estimatedMinutesForMissionStreets(streets),
+      ));
+    }
+
+    return previews;
   }
 
   int? parsedCustomMissionMinutes() {
@@ -3835,27 +4039,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
 
     try {
-      final estimatedMinutes = estimatedMinutesForMissionStreets(
+      final row = missionRowForStreets(
         missionStreets,
+        status: 'active',
+        timeBudgetMinutes: timeBudgetMinutes,
       );
-      final row = {
-        'account_id': widget.activeAccountId,
-        'created_by': supabase.auth.currentUser?.id,
-        'drive_area_id': area.id,
-        'status': 'active',
-        'target_street_ids': missionStreets
-            .map((opportunity) => opportunity.street.id)
-            .toList(growable: false),
-        'street_count': missionStreets.length,
-        'opportunity_at_start': missionStreets.fold<double>(
-          0,
-          (total, opportunity) => total + opportunity.score,
-        ),
-      };
-      if (timeBudgetMinutes != null) {
-        row['time_budget_minutes'] = timeBudgetMinutes;
-        row['estimated_minutes'] = estimatedMinutes;
-      }
 
       await supabase.from('missions').insert(row);
 
@@ -3882,6 +4070,174 @@ class _DrivingScreenState extends State<DrivingScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Could not start mission.')));
+    }
+  }
+
+  Future<bool> createWeeklyPlan({
+    required List<DateTime> selectedDates,
+    required int sessionMinutes,
+    required List<
+      ({DateTime date, List<StreetOpportunity> streets, int minutes})
+    >
+    previews,
+  }) async {
+    final area = activeDriveArea;
+    if (area == null || isSavingMission) return false;
+
+    final missionPreviews = previews
+        .where((preview) => preview.streets.isNotEmpty)
+        .toList(growable: false);
+    if (missionPreviews.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No streets available for this plan.')),
+      );
+      return false;
+    }
+
+    setState(() {
+      isSavingMission = true;
+    });
+
+    try {
+      final totalEstimatedMinutes = missionPreviews.fold<int>(
+        0,
+        (total, preview) => total + preview.minutes,
+      );
+      final weeklyPlan = await supabase
+          .from('weekly_plans')
+          .insert({
+            'drive_area_id': area.id,
+            'total_minutes': totalEstimatedMinutes,
+            'available_days': selectedDates
+                .map(
+                  (date) => {
+                    'date': isoDateOnly(date),
+                    'weekday': shortWeekdayLabel(date),
+                  },
+                )
+                .toList(growable: false),
+            'minutes_per_session': sessionMinutes,
+            'sessions_planned': missionPreviews.length,
+            'week_start': isoDateOnly(DateTime.now()),
+            'status': 'active',
+          })
+          .select('id')
+          .single();
+      final weeklyPlanId = weeklyPlan['id'].toString();
+      final missionRows = missionPreviews
+          .map(
+            (preview) => missionRowForStreets(
+              preview.streets,
+              status: 'scheduled',
+              timeBudgetMinutes: sessionMinutes,
+              scheduledDate: preview.date,
+              weeklyPlanId: weeklyPlanId,
+            ),
+          )
+          .toList(growable: false);
+
+      await supabase.from('missions').insert(missionRows);
+      await loadMissions();
+
+      if (!mounted) return false;
+
+      setState(() {
+        isSavingMission = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Weekly driving plan created.')),
+      );
+      return true;
+    } catch (_) {
+      if (!mounted) return false;
+
+      setState(() {
+        isSavingMission = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not create weekly plan.')),
+      );
+      return false;
+    }
+  }
+
+  Future<void> startScheduledMission(Mission mission) async {
+    if (isSavingMission) return;
+
+    final sessionId = 'mission-${DateTime.now().millisecondsSinceEpoch}';
+
+    setState(() {
+      isSavingMission = true;
+      currentDriveSessionId = sessionId;
+    });
+
+    try {
+      await supabase
+          .from('missions')
+          .update({
+            'status': 'active',
+            'started_at': DateTime.now().toUtc().toIso8601String(),
+            'drive_session_id': sessionId,
+          })
+          .eq('account_id', widget.activeAccountId)
+          .eq('id', mission.id);
+
+      await loadMissions();
+      await startTracking(sessionIdOverride: sessionId);
+
+      if (!mounted) return;
+
+      setState(() {
+        isSavingMission = false;
+      });
+
+      final firstStreet = mission.targetStreetIds.firstOrNull;
+      final firstOpportunity = firstStreet == null
+          ? null
+          : streetOpportunitiesFor(
+                  activeDriveArea == null
+                      ? const <CityStreet>[]
+                      : streetsInsideArea(activeDriveArea!),
+                  marketProperties,
+                )
+                .where((opportunity) => opportunity.street.id == firstStreet)
+                .firstOrNull;
+      if (firstOpportunity != null) {
+        focusStreetWorkspace(
+          'mission',
+          firstOpportunity.street,
+          message: 'Mission started. Map focused on your first street.',
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        isSavingMission = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not start planned mission.')),
+      );
+    }
+  }
+
+  Future<void> skipScheduledMission(Mission mission) async {
+    try {
+      await supabase
+          .from('missions')
+          .update({'status': 'skipped'})
+          .eq('account_id', widget.activeAccountId)
+          .eq('id', mission.id);
+      await loadMissions();
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not skip planned mission.')),
+      );
     }
   }
 
@@ -3980,6 +4336,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
 
+      await updateCalibrationFromCompletedMissions();
+
       final attributedLeads = leadsForMission(mission);
       final remainingAreaMinutes = activeDriveArea == null
           ? 0
@@ -4044,40 +4402,833 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
-  void openQuickCaptureSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Quick Capture',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Fast lead actions while you are driving.',
-                style: TextStyle(color: Color(0xFF6B7280)),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                icon: const Icon(Icons.add_home_work),
-                label: const Text('Add Lead At My Location'),
-                onPressed: () {
-                  Navigator.pop(context);
-                  openAddLeadFromLocation();
-                },
-              ),
-            ],
-          ),
+  String quickCaptureCondition({
+    required bool roofDamage,
+    required bool brokenWindows,
+    required bool trashInYard,
+    required bool vacantAppearance,
+    required bool exteriorWear,
+    required bool tallGrass,
+  }) {
+    if (roofDamage) return 'Roof Damage';
+    if (brokenWindows) return 'Broken Windows';
+    if (trashInYard) return 'Trash';
+    if (vacantAppearance) return 'Vacant';
+    if (exteriorWear) return 'Bad Shape';
+    if (tallGrass) return 'Tall Grass';
+
+    return 'Distressed Property';
+  }
+
+  Future<Lead?> saveQuickCaptureParcelLead({
+    required ParcelProperty parcel,
+    required LeadScoreData scoreData,
+    required String condition,
+    required String notes,
+  }) async {
+    final leadLocation = parcel.centroid;
+    final missionId = missionIdForPoint(leadLocation);
+    final row = {
+      'user_id': supabase.auth.currentUser?.id,
+      'account_id': widget.activeAccountId,
+      'created_by': supabase.auth.currentUser?.id,
+      'address': parcel.displayAddress,
+      'condition': condition,
+      'notes': notes.isEmpty ? parcel.leadNotes : notes,
+      'status': 'New Lead',
+      'source': 'Driving For Dollars',
+      ...scoreData.toMap(),
+      'latitude': leadLocation?.latitude,
+      'longitude': leadLocation?.longitude,
+      'owner_name': parcel.ownerName ?? '',
+      'mailing_address': parcel.mailingAddress ?? '',
+      'out_of_state_owner': parcel.outOfStateOwner,
+      'assessed_value': parcel.assessedValue,
+      'property_type': parcel.propertyType ?? '',
+      'lot_size': parcel.lotSizeDisplay,
+      'year_built': parcel.yearBuilt,
+      'last_sale_date': parcel.saleDate,
+      'last_sale_price': parcel.salePrice,
+      'deed_type': parcel.deedType,
+      'document_date': parcel.documentDate,
+      'reception_no': parcel.receptionNo,
+      if (parcel.targetScore != null) 'target_score': parcel.targetScore,
+    };
+    if (missionId != null) row['mission_id'] = missionId;
+
+    try {
+      await supabase.from('leads').insert(row);
+    } catch (_) {
+      row.remove('target_score');
+      try {
+        await supabase.from('leads').insert(row);
+      } catch (_) {
+        row.remove('mission_id');
+        await supabase.from('leads').insert(row);
+      }
+    }
+
+    await loadDrivingLeads();
+    await widget.onRefreshLeads();
+    final ledgerMissions = [...completedMissions];
+    if (activeMission != null) {
+      ledgerMissions.insert(0, activeMission!);
+    }
+    await loadMissionLeadLedger(ledgerMissions);
+
+    return leadForParcel(parcel);
+  }
+
+  void openManualLeadFromPoint(LatLng point) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddLeadScreen(
+          onAddLead:
+              (
+                address,
+                condition,
+                notes,
+                source,
+                scoreData,
+                latitude,
+                longitude, [
+                missionId,
+              ]) async {
+                await widget.onAddLead(
+                  address,
+                  condition,
+                  notes,
+                  source,
+                  scoreData,
+                  latitude,
+                  longitude,
+                  missionId,
+                );
+                await loadDrivingLeads();
+                final ledgerMissions = [...completedMissions];
+                if (activeMission != null) {
+                  ledgerMissions.insert(0, activeMission!);
+                }
+                await loadMissionLeadLedger(ledgerMissions);
+              },
+          latitude: point.latitude,
+          longitude: point.longitude,
+          missionId: missionIdForPoint(point),
         ),
       ),
     );
+  }
+
+  void openQuickCaptureSheet() {
+    final lookupPoint = myLocation ?? currentMapCenter;
+    final noteController = TextEditingController();
+    var fetchStarted = false;
+    var isLoading = true;
+    var isSaving = false;
+    var parcelLoadFailed = false;
+    ParcelProperty? quickParcel;
+    Lead? existingLead;
+    var tallGrass = false;
+    var vacantAppearance = false;
+    var roofDamage = false;
+    var trashInYard = false;
+    var brokenWindows = false;
+    var exteriorWear = false;
+
+    LeadScoreData currentScoreData() {
+      final baseScore = calculateSmartLeadScore(
+        vacantAppearance: vacantAppearance,
+        roofDamage: roofDamage,
+        trashInYard: trashInYard,
+        brokenWindows: brokenWindows,
+        tallGrass: tallGrass,
+      );
+      final score = (baseScore + (exteriorWear ? 8 : 0)).clamp(0, 100);
+
+      return LeadScoreData(
+        brokenWindows: brokenWindows,
+        roofDamage: roofDamage,
+        tallGrass: tallGrass,
+        trashInYard: trashInYard,
+        exteriorWear: exteriorWear,
+        vacantAppearance: vacantAppearance,
+        score: score,
+        scoreOverride: false,
+      );
+    }
+
+    Widget conditionChip({
+      required String label,
+      required bool selected,
+      required VoidCallback onTap,
+    }) {
+      final child = FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(label, textAlign: TextAlign.center),
+      );
+
+      return SizedBox(
+        height: 56,
+        child: selected
+            ? FilledButton(onPressed: onTap, child: child)
+            : OutlinedButton(onPressed: onTap, child: child),
+      );
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          if (!fetchStarted) {
+            fetchStarted = true;
+            Future<void>(() async {
+              ParcelProperty? foundParcel;
+
+              try {
+                foundParcel = await fetchParcelNearPoint(
+                  lookupPoint,
+                ).timeout(const Duration(seconds: 5));
+              } catch (_) {
+                foundParcel = null;
+              }
+
+              if (!mounted || !sheetContext.mounted) return;
+
+              setSheetState(() {
+                quickParcel = foundParcel;
+                existingLead = foundParcel == null
+                    ? null
+                    : leadForParcel(foundParcel);
+                parcelLoadFailed = foundParcel == null;
+                isLoading = false;
+              });
+            });
+          }
+
+          final scoreData = currentScoreData();
+
+          Future<void> saveQuickCapture({required bool openPhotos}) async {
+            final parcel = quickParcel;
+            if (parcel == null || isSaving) return;
+
+            setSheetState(() {
+              isSaving = true;
+            });
+
+            final condition = quickCaptureCondition(
+              roofDamage: roofDamage,
+              brokenWindows: brokenWindows,
+              trashInYard: trashInYard,
+              vacantAppearance: vacantAppearance,
+              exteriorWear: exteriorWear,
+              tallGrass: tallGrass,
+            );
+
+            try {
+              final savedLead = await saveQuickCaptureParcelLead(
+                parcel: parcel,
+                scoreData: currentScoreData(),
+                condition: condition,
+                notes: noteController.text.trim(),
+              );
+
+              if (!mounted || !sheetContext.mounted) return;
+
+              Navigator.pop(sheetContext);
+              if (openPhotos && savedLead != null) {
+                openLeadDetails(savedLead);
+                return;
+              }
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 2),
+                  showCloseIcon: true,
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 112),
+                  content: Text('Lead saved - ${parcel.displayAddress}.'),
+                  action: savedLead == null
+                      ? null
+                      : SnackBarAction(
+                          label: 'View ->',
+                          onPressed: () => openLeadDetails(savedLead),
+                        ),
+                ),
+              );
+            } catch (_) {
+              if (!mounted || !sheetContext.mounted) return;
+
+              setSheetState(() {
+                isSaving = false;
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Couldn't save lead. Try again.")),
+              );
+            }
+          }
+
+          return SafeArea(
+            child: FractionallySizedBox(
+              heightFactor: 0.68,
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 18,
+                  right: 18,
+                  bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: isLoading
+                    ? const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 14),
+                            Text('Finding nearby property...'),
+                          ],
+                        ),
+                      )
+                    : parcelLoadFailed
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Icon(
+                            Icons.location_on,
+                            size: 42,
+                            color: Color(0xFF6B7280),
+                          ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'No property found nearby.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          FilledButton.icon(
+                            icon: const Icon(Icons.edit_location_alt),
+                            label: const Text('Save with manual address ->'),
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              openManualLeadFromPoint(lookupPoint);
+                            },
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(sheetContext),
+                            child: const Text('Cancel'),
+                          ),
+                        ],
+                      )
+                    : SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    quickParcel?.displayAddress.isNotEmpty ??
+                                            false
+                                        ? quickParcel!.displayAddress
+                                        : 'Unknown Property',
+                                    style: const TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                leadScoreBadge(scoreData.score, fontSize: 16),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    quickParcel?.ownerName ?? 'Owner not set',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (quickParcel?.outOfStateOwner ?? false)
+                                  const Chip(
+                                    visualDensity: VisualDensity.compact,
+                                    backgroundColor: Color(0xFFFFF3CD),
+                                    label: Text('⚠ OOS'),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Built ${quickParcel?.yearBuilt?.toString() ?? 'Not set'} · Assessed ${formatMoney(quickParcel?.assessedValue)}',
+                              style: const TextStyle(
+                                color: Color(0xFF6B7280),
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            if (existingLead != null) ...[
+                              Row(
+                                children: [
+                                  leadStageBadge(existingLead!.status),
+                                  const SizedBox(width: 10),
+                                  const Text(
+                                    'Already a lead',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              FilledButton.icon(
+                                icon: const Icon(Icons.open_in_new),
+                                label: const Text('View existing lead ->'),
+                                onPressed: () {
+                                  final lead = existingLead!;
+                                  Navigator.pop(sheetContext);
+                                  openLeadDetails(lead);
+                                },
+                              ),
+                            ] else ...[
+                              const Text(
+                                'What did you see?',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              GridView.count(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                crossAxisCount: 3,
+                                mainAxisSpacing: 8,
+                                crossAxisSpacing: 8,
+                                childAspectRatio: 1.55,
+                                children: [
+                                  conditionChip(
+                                    label: '🌿 Tall Grass',
+                                    selected: tallGrass,
+                                    onTap: () => setSheetState(
+                                      () => tallGrass = !tallGrass,
+                                    ),
+                                  ),
+                                  conditionChip(
+                                    label: '🏚 Vacant',
+                                    selected: vacantAppearance,
+                                    onTap: () => setSheetState(
+                                      () =>
+                                          vacantAppearance = !vacantAppearance,
+                                    ),
+                                  ),
+                                  conditionChip(
+                                    label: '🏗 Roof Damage',
+                                    selected: roofDamage,
+                                    onTap: () => setSheetState(
+                                      () => roofDamage = !roofDamage,
+                                    ),
+                                  ),
+                                  conditionChip(
+                                    label: '🗑 Trash',
+                                    selected: trashInYard,
+                                    onTap: () => setSheetState(
+                                      () => trashInYard = !trashInYard,
+                                    ),
+                                  ),
+                                  conditionChip(
+                                    label: '🪟 Broken Windows',
+                                    selected: brokenWindows,
+                                    onTap: () => setSheetState(
+                                      () => brokenWindows = !brokenWindows,
+                                    ),
+                                  ),
+                                  conditionChip(
+                                    label: '💀 Bad Shape',
+                                    selected: exteriorWear,
+                                    onTap: () => setSheetState(
+                                      () => exteriorWear = !exteriorWear,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: noteController,
+                                minLines: 1,
+                                maxLines: 1,
+                                decoration: const InputDecoration(
+                                  hintText: 'Quick note (optional)',
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              FilledButton.icon(
+                                icon: const Icon(Icons.check),
+                                label: Text(
+                                  isSaving ? 'Saving...' : 'Save Lead →',
+                                ),
+                                onPressed: isSaving
+                                    ? null
+                                    : () async {
+                                        final parcel = quickParcel;
+                                        if (parcel == null) return;
+
+                                        setSheetState(() {
+                                          isSaving = true;
+                                        });
+
+                                        final condition = quickCaptureCondition(
+                                          roofDamage: roofDamage,
+                                          brokenWindows: brokenWindows,
+                                          trashInYard: trashInYard,
+                                          vacantAppearance: vacantAppearance,
+                                          exteriorWear: exteriorWear,
+                                          tallGrass: tallGrass,
+                                        );
+
+                                        try {
+                                          final savedLead =
+                                              await saveQuickCaptureParcelLead(
+                                                parcel: parcel,
+                                                scoreData: currentScoreData(),
+                                                condition: condition,
+                                                notes: noteController.text
+                                                    .trim(),
+                                              );
+
+                                          if (!mounted ||
+                                              !sheetContext.mounted) {
+                                            return;
+                                          }
+
+                                          Navigator.pop(sheetContext);
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              behavior:
+                                                  SnackBarBehavior.floating,
+                                              duration: const Duration(
+                                                seconds: 2,
+                                              ),
+                                              showCloseIcon: true,
+                                              margin: const EdgeInsets.fromLTRB(
+                                                12,
+                                                0,
+                                                12,
+                                                112,
+                                              ),
+                                              content: Text(
+                                                'Lead saved — ${parcel.displayAddress}.',
+                                              ),
+                                              action: savedLead == null
+                                                  ? null
+                                                  : SnackBarAction(
+                                                      label: 'View →',
+                                                      onPressed: () =>
+                                                          openLeadDetails(
+                                                            savedLead,
+                                                          ),
+                                                    ),
+                                            ),
+                                          );
+                                        } catch (_) {
+                                          if (!mounted ||
+                                              !sheetContext.mounted) {
+                                            return;
+                                          }
+
+                                          setSheetState(() {
+                                            isSaving = false;
+                                          });
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                "Couldn't save lead. Try again.",
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                      },
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.photo_camera),
+                                label: Text(
+                                  isSaving ? 'Saving...' : 'Save + Photos ->',
+                                ),
+                                onPressed: isSaving
+                                    ? null
+                                    : () => saveQuickCapture(openPhotos: true),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+              ),
+            ),
+          );
+        },
+      ),
+    ).whenComplete(noteController.dispose);
+  }
+
+  void openWeeklyPlannerSheet(List<StreetOpportunity> streetOpportunities) {
+    final today = dateOnly(DateTime.now());
+    final plannerDates = List.generate(
+      7,
+      (index) => today.add(Duration(days: index)),
+    );
+    final selectedDayKeys = <String>{};
+    var step = 0;
+    var sessionMinutes = defaultSessionMinutes ?? 30;
+    var isCustom = false;
+    final customController = TextEditingController(
+      text: sessionMinutes.toString(),
+    );
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final selectedDates = plannerDates
+              .where((date) => selectedDayKeys.contains(isoDateOnly(date)))
+              .toList(growable: false);
+          final previews = weeklyPlanMissionPreviews(
+            streetOpportunities,
+            selectedDates,
+            sessionMinutes,
+          );
+          final totalMinutes = previews.fold<int>(
+            0,
+            (total, preview) => total + preview.minutes,
+          );
+          final areaStreets = activeDriveArea == null
+              ? const <CityStreet>[]
+              : streetsInsideArea(activeDriveArea!);
+          final uncoveredAreaMinutes = estimatedMinutesForStreets(
+            areaStreets.where(
+              (street) => !coveredStreetIds.contains(street.id),
+            ),
+          );
+          final sessionsToFinish = sessionMinutes <= 0
+              ? 0
+              : (uncoveredAreaMinutes / sessionMinutes).ceil();
+
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 18,
+                right: 18,
+                bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Plan my week',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Which days this week?',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: plannerDates.map((date) {
+                        final key = isoDateOnly(date);
+                        final selected = selectedDayKeys.contains(key);
+
+                        return FilterChip(
+                          label: Text(shortWeekdayLabel(date)),
+                          selected: selected,
+                          onSelected: (value) {
+                            setSheetState(() {
+                              if (value) {
+                                selectedDayKeys.add(key);
+                              } else {
+                                selectedDayKeys.remove(key);
+                              }
+                              step = selectedDayKeys.isEmpty
+                                  ? 0
+                                  : math.max(step, 1);
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    if (selectedDayKeys.isEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Pick at least one day to continue.',
+                        style: TextStyle(color: Color(0xFF6B7280)),
+                      ),
+                    ],
+                    if (step >= 1) ...[
+                      const SizedBox(height: 18),
+                      const Text(
+                        'How long each session?',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ChoiceChip(
+                            label: const Text('30 min'),
+                            selected: sessionMinutes == 30 && !isCustom,
+                            onSelected: (_) {
+                              setSheetState(() {
+                                sessionMinutes = 30;
+                                isCustom = false;
+                                step = 2;
+                              });
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text('45 min'),
+                            selected: sessionMinutes == 45 && !isCustom,
+                            onSelected: (_) {
+                              setSheetState(() {
+                                sessionMinutes = 45;
+                                isCustom = false;
+                                step = 2;
+                              });
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text('1 hour'),
+                            selected: sessionMinutes == 60 && !isCustom,
+                            onSelected: (_) {
+                              setSheetState(() {
+                                sessionMinutes = 60;
+                                isCustom = false;
+                                step = 2;
+                              });
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text('Custom'),
+                            selected: isCustom,
+                            onSelected: (_) {
+                              setSheetState(() {
+                                isCustom = true;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      if (isCustom) ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: customController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Minutes',
+                            suffixText: 'min',
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        FilledButton(
+                          onPressed: () {
+                            final customMinutes = int.tryParse(
+                              customController.text.trim(),
+                            );
+                            if (customMinutes == null || customMinutes <= 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Enter a valid session length.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+
+                            setSheetState(() {
+                              sessionMinutes = customMinutes;
+                              step = 2;
+                            });
+                          },
+                          child: const Text('Use custom time'),
+                        ),
+                      ],
+                    ],
+                    if (step >= 2) ...[
+                      const SizedBox(height: 18),
+                      const Text(
+                        'Plan preview',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      if (previews.isEmpty)
+                        const Text('No days selected.')
+                      else
+                        ...previews.map(
+                          (preview) => ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(shortPlannerDateLabel(preview.date)),
+                            subtitle: Text(
+                              '${preview.streets.length} streets - ~${preview.minutes} min',
+                            ),
+                          ),
+                        ),
+                      const Divider(),
+                      Text(
+                        '$totalMinutes total planned minutes - about $sessionsToFinish sessions to finish this area',
+                        style: const TextStyle(color: Color(0xFF6B7280)),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        icon: const Icon(Icons.arrow_forward),
+                        label: const Text('Create This Plan ->'),
+                        onPressed: isSavingMission
+                            ? null
+                            : () async {
+                                final created = await createWeeklyPlan(
+                                  selectedDates: selectedDates,
+                                  sessionMinutes: sessionMinutes,
+                                  previews: previews,
+                                );
+                                if (created && sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              },
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ).whenComplete(customController.dispose);
   }
 
   void openPlanTodayDriveSheet(List<StreetOpportunity> streetOpportunities) {
@@ -4119,6 +5270,30 @@ class _DrivingScreenState extends State<DrivingScreen> {
           final previewMinutes = estimatedMinutesForMissionStreets(
             previewStreets,
           );
+          final areaStreets = activeDriveArea == null
+              ? const <CityStreet>[]
+              : streetsInsideArea(activeDriveArea!);
+          final areaCoveredStreetCount = areaStreets
+              .where((street) => coveredStreetIds.contains(street.id))
+              .length;
+          final areaUncoveredStreets = areaStreets
+              .where((street) => !coveredStreetIds.contains(street.id))
+              .toList(growable: false);
+          final areaCoveragePercent = areaStreets.isEmpty
+              ? 0.0
+              : (areaCoveredStreetCount / areaStreets.length) * 100;
+          final missionRemainingCoveragePercent = areaUncoveredStreets.isEmpty
+              ? 0.0
+              : (previewStreets.length / areaUncoveredStreets.length) * 100;
+          final areaRemainingMinutes = estimatedMinutesForStreets(
+            areaUncoveredStreets,
+          );
+          final sessionBudgetForEstimate =
+              selectedBudget ?? defaultSessionMinutes ?? 30;
+          final sessionsToFinish = sessionBudgetForEstimate <= 0
+              ? 0
+              : (areaRemainingMinutes / sessionBudgetForEstimate).ceil();
+          final hasAreaStreetData = areaStreets.isNotEmpty;
 
           return SafeArea(
             child: Padding(
@@ -4295,53 +5470,93 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       child: const Text('Continue'),
                     ),
                   ] else ...[
-                    Text(
-                      activeDriveArea?.name ?? 'Mission',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),
-                        child: Text(
-                          previewStreets.isEmpty
-                              ? 'No available mission streets for this time.'
-                              : '${previewStreets.length} streets - ~$previewMinutes min',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    activeDriveArea?.name ?? 'Mission',
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '${areaCoveragePercent.toStringAsFixed(0)}%',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2563EB),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            LinearProgressIndicator(
+                              value: areaCoveragePercent / 100,
+                              minHeight: 4,
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              previewStreets.isEmpty
+                                  ? 'No available mission streets for this time.'
+                                  : '${previewStreets.length} streets - ~$previewMinutes min',
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              calibrationMissionCount >= 3
+                                  ? 'Based on your driving history'
+                                  : 'Estimated at 10 mph scouting speed',
+                              style: const TextStyle(
+                                color: Color(0xFF6B7280),
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            if (hasAreaStreetData) ...[
+                              Text(
+                                'This mission covers ${missionRemainingCoveragePercent.toStringAsFixed(0)}% of remaining area.',
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '~$sessionsToFinish more sessions to finish this area.',
+                                style: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                ),
+                              ),
+                            ] else
+                              TextButton(
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                onPressed: () {
+                                  Navigator.pop(sheetContext);
+                                  widget.onOpenAreas();
+                                },
+                                child: const Text(
+                                  'Build Market Map to unlock time estimates ->',
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
-                    if (timeMissionsEnabled &&
-                        defaultSessionMinutes != null) ...[
-                      TextButton(
-                        style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          foregroundColor: const Color(0xFF6B7280),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        onPressed: () {
-                          setSheetState(() {
-                            rememberAsDefault = false;
-                            isCustom = false;
-                            step = 0;
-                          });
-                        },
-                        child: Text(
-                          'Change time (currently: $selectedBudget min) ↓',
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 12),
                     FilledButton.icon(
                       icon: const Icon(Icons.arrow_forward),
-                      label: const Text('Start Driving →'),
+                      label: const Text('Start Driving ->'),
                       onPressed:
                           previewStreets.isEmpty ||
                               isSavingMission ||
@@ -4360,6 +5575,35 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                     : null,
                               );
                             },
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (timeMissionsEnabled)
+                          TextButton(
+                            onPressed: () {
+                              setSheetState(() {
+                                rememberAsDefault = false;
+                                isCustom = false;
+                                step = 0;
+                              });
+                            },
+                            child: const Text('Change time'),
+                          ),
+                        if (timeMissionsEnabled)
+                          const Text(
+                            '-',
+                            style: TextStyle(color: Color(0xFF6B7280)),
+                          ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(sheetContext);
+                            openWeeklyPlannerSheet(streetOpportunities);
+                          },
+                          child: const Text('Plan my week'),
+                        ),
+                      ],
                     ),
                   ],
                 ],
@@ -6763,6 +8007,27 @@ class _DrivingScreenState extends State<DrivingScreen> {
         ? 'Unnamed street'
         : nextMissionStreet!.street.streetName;
     final showLegacyDriveControls = isDrawAreaMode && DateTime.now().year < 0;
+    final today = dateOnly(DateTime.now());
+    final todayScheduledMission = activeMission == null
+        ? scheduledMissions
+              .where(
+                (mission) => isSameCalendarDate(mission.scheduledDate, today),
+              )
+              .firstOrNull
+        : null;
+    final todayScheduledOpportunities = todayScheduledMission == null
+        ? const <StreetOpportunity>[]
+        : todayScheduledMission.targetStreetIds
+              .map(
+                (streetId) => streetOpportunities
+                    .where((opportunity) => opportunity.street.id == streetId)
+                    .firstOrNull,
+              )
+              .whereType<StreetOpportunity>()
+              .toList(growable: false);
+    final todayScheduledEstimatedMinutes = todayScheduledOpportunities.isEmpty
+        ? todayScheduledMission?.estimatedMinutes ?? 0
+        : estimatedMinutesForMissionStreets(todayScheduledOpportunities);
 
     return Scaffold(
       body: Stack(
@@ -8989,7 +10254,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
               child: SafeArea(
                 top: false,
                 child: Container(
-                  height: 92,
+                  height: todayScheduledMission == null ? 92 : 182,
                   padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
                   decoration: const BoxDecoration(
                     color: Colors.white,
@@ -9004,12 +10269,79 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       ),
                     ],
                   ),
-                  child: FilledButton.icon(
-                    icon: const Icon(Icons.arrow_forward),
-                    label: const Text("Plan Today's Drive"),
-                    onPressed: () =>
-                        openPlanTodayDriveSheet(streetOpportunities),
-                  ),
+                  child: todayScheduledMission == null
+                      ? FilledButton.icon(
+                          icon: const Icon(Icons.arrow_forward),
+                          label: const Text("Plan Today's Drive"),
+                          onPressed: () =>
+                              openPlanTodayDriveSheet(streetOpportunities),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    "Today's Planned Mission",
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  shortPlannerDateLabel(today),
+                                  style: const TextStyle(
+                                    color: Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${activeDriveArea?.name ?? 'Drive Area'} - ${todayScheduledMission.streetCount} streets - ~$todayScheduledEstimatedMinutes min',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Color(0xFF374151)),
+                            ),
+                            const Spacer(),
+                            FilledButton.icon(
+                              icon: const Icon(Icons.arrow_forward),
+                              label: const Text('Start Driving ->'),
+                              onPressed: isSavingMission
+                                  ? null
+                                  : () => startScheduledMission(
+                                      todayScheduledMission,
+                                    ),
+                            ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                TextButton(
+                                  onPressed: () => skipScheduledMission(
+                                    todayScheduledMission,
+                                  ),
+                                  child: const Text('Skip today'),
+                                ),
+                                const Text(
+                                  '-',
+                                  style: TextStyle(color: Color(0xFF6B7280)),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Adjust coming soon'),
+                                      ),
+                                    );
+                                  },
+                                  child: const Text('Adjust'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                 ),
               ),
             )
@@ -9083,7 +10415,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     ),
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Next: $nextStreetName - ${nextMissionStreet == null ? 0 : estimateStreetMinutes(nextMissionStreet.street).ceil()} min',
+                      'Next: $nextStreetName - ${nextMissionStreet == null ? 0 : calibratedStreetMinutes(nextMissionStreet.street).ceil()} min',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.bold),
@@ -9122,6 +10454,22 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ),
             ),
           ],
+          if (activeMission == null)
+            Positioned(
+              right: 16,
+              bottom: todayScheduledMission == null ? 108 : 198,
+              child: SafeArea(
+                top: false,
+                child: FloatingActionButton(
+                  heroTag: 'drive-quick-capture-idle',
+                  backgroundColor: const Color(0xFFF97316),
+                  foregroundColor: Colors.white,
+                  tooltip: 'Quick Capture',
+                  onPressed: openQuickCaptureSheet,
+                  child: const Icon(Icons.bolt),
+                ),
+              ),
+            ),
         ],
       ),
     );
