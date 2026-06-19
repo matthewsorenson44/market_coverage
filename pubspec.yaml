@@ -41,6 +41,7 @@ dependencies:
   image_picker: ^1.1.2
   http: ^1.6.0
   shared_preferences: ^2.5.3
+  connectivity_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:

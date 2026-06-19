@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -45,6 +46,8 @@ const String defaultSessionMinutesPrefsKey = 'default_session_minutes';
 const String timeMissionsEnabledPrefsKey = 'time_missions_enabled';
 const String calibrationFactorPrefsKey = 'calibration_factor';
 const String calibrationMissionCountPrefsKey = 'calibration_mission_count';
+const String pendingLeadsQueuePrefsKey = 'pending_leads_queue';
+const String activeMissionIdPrefsKey = 'active_mission_id';
 const String leadPhotosBucket = 'lead-photos';
 const String coverageCity = 'Owasso';
 const String primaryTulsaParcelLayerUrl =
@@ -73,6 +76,8 @@ const int missionStreetCount = 12;
 const double streetCoverageMatchMiles = 0.035;
 const double kScoutSpeedMph = 10.0;
 const double kRepositioningMinutes = 1.0;
+const Duration leadInsertTimeout = Duration(seconds: 8);
+const Duration duplicateLeadCheckTimeout = Duration(seconds: 2);
 const int targetScoreVersion = 1;
 const double opportunityStreetMatchMiles = 0.04;
 const Map<String, double> targetScoreWeights = {
@@ -84,6 +89,125 @@ const Map<String, double> targetScoreWeights = {
   'long_held': 12,
   'older_build': 8,
 };
+
+final ValueNotifier<int> pendingLeadsQueueCountNotifier = ValueNotifier<int>(0);
+
+class LeadSaveResult {
+  final bool savedOnline;
+  final bool queuedLocally;
+
+  const LeadSaveResult({
+    required this.savedOnline,
+    required this.queuedLocally,
+  });
+}
+
+class DuplicateLeadCandidate {
+  final String id;
+  final String address;
+
+  const DuplicateLeadCandidate({required this.id, required this.address});
+}
+
+class QuickCaptureSaveResult {
+  final Lead? lead;
+  final bool queuedLocally;
+
+  const QuickCaptureSaveResult({
+    required this.lead,
+    required this.queuedLocally,
+  });
+}
+
+Map<String, dynamic> jsonSafeLeadRow(Map<String, dynamic> row) {
+  return row.map((key, value) {
+    if (value is DateTime) {
+      return MapEntry(key, value.toUtc().toIso8601String());
+    }
+
+    return MapEntry(key, value);
+  });
+}
+
+Future<List<Map<String, dynamic>>> pendingLeadRows() async {
+  final prefs = await SharedPreferences.getInstance();
+  final encoded = prefs.getString(pendingLeadsQueuePrefsKey);
+  if (encoded == null || encoded.trim().isEmpty) return [];
+
+  try {
+    final decoded = jsonDecode(encoded);
+    if (decoded is! List) return [];
+
+    return decoded
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  } catch (_) {
+    return [];
+  }
+}
+
+Future<void> savePendingLeadRows(List<Map<String, dynamic>> rows) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(
+    pendingLeadsQueuePrefsKey,
+    jsonEncode(rows.map(jsonSafeLeadRow).toList(growable: false)),
+  );
+  pendingLeadsQueueCountNotifier.value = rows.length;
+}
+
+Future<int> refreshPendingLeadsQueueCount() async {
+  final rows = await pendingLeadRows();
+  pendingLeadsQueueCountNotifier.value = rows.length;
+
+  return rows.length;
+}
+
+Future<void> appendPendingLeadRow(Map<String, dynamic> row) async {
+  final rows = await pendingLeadRows();
+  rows.add(jsonSafeLeadRow(row));
+  await savePendingLeadRows(rows);
+}
+
+Future<LeadSaveResult> insertLeadWithOfflineQueue(
+  Map<String, dynamic> row,
+) async {
+  try {
+    await supabase
+        .from('leads')
+        .insert(jsonSafeLeadRow(row))
+        .timeout(leadInsertTimeout);
+
+    return const LeadSaveResult(savedOnline: true, queuedLocally: false);
+  } catch (_) {
+    await appendPendingLeadRow(row);
+
+    return const LeadSaveResult(savedOnline: false, queuedLocally: true);
+  }
+}
+
+Future<void> flushPendingLeadsQueue() async {
+  final rows = await pendingLeadRows();
+  if (rows.isEmpty) {
+    pendingLeadsQueueCountNotifier.value = 0;
+    return;
+  }
+
+  final remainingRows = <Map<String, dynamic>>[];
+
+  for (final row in rows) {
+    try {
+      await supabase
+          .from('leads')
+          .insert(jsonSafeLeadRow(row))
+          .timeout(leadInsertTimeout);
+    } catch (_) {
+      remainingRows.add(row);
+    }
+  }
+
+  await savePendingLeadRows(remainingRows);
+}
 
 class LeadScoreData {
   final bool brokenWindows;
@@ -1415,6 +1539,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
   String? activeAccountId;
   String? accountBootstrapError;
   StreamSubscription<AuthState>? authSubscription;
+  StreamSubscription<List<ConnectivityResult>>? connectivitySubscription;
 
   @override
   void initState() {
@@ -1426,6 +1551,20 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     if (supabase.auth.currentSession != null) {
       bootstrapAccountAndLoad();
     }
+
+    refreshPendingLeadsQueueCount();
+    connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      results,
+    ) {
+      final hasConnection = results.any(
+        (result) => result != ConnectivityResult.none,
+      );
+      if (hasConnection) {
+        flushPendingLeadsQueue().then((_) {
+          if (mounted) loadLeads();
+        });
+      }
+    });
 
     authSubscription = supabase.auth.onAuthStateChange.listen((data) {
       switch (data.event) {
@@ -1453,6 +1592,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
   @override
   void dispose() {
     authSubscription?.cancel();
+    connectivitySubscription?.cancel();
     super.dispose();
   }
 
@@ -1490,6 +1630,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         activeAccountId = accountId;
       });
 
+      await loadLeads();
+      await flushPendingLeadsQueue();
       await loadLeads();
     } catch (_) {
       if (!mounted) return;
@@ -1569,14 +1711,10 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     };
     if (missionId != null) row['mission_id'] = missionId;
 
-    try {
-      await supabase.from('leads').insert(row);
-    } catch (_) {
-      row.remove('mission_id');
-      await supabase.from('leads').insert(row);
+    final result = await insertLeadWithOfflineQueue(row);
+    if (result.savedOnline) {
+      await loadLeads();
     }
-
-    await loadLeads();
   }
 
   Future<void> addParcelLead(
@@ -1616,19 +1754,10 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     };
     if (missionId != null) row['mission_id'] = missionId;
 
-    try {
-      await supabase.from('leads').insert(row);
-    } catch (_) {
-      row.remove('target_score');
-      try {
-        await supabase.from('leads').insert(row);
-      } catch (_) {
-        row.remove('mission_id');
-        await supabase.from('leads').insert(row);
-      }
+    final result = await insertLeadWithOfflineQueue(row);
+    if (result.savedOnline) {
+      await loadLeads();
     }
-
-    await loadLeads();
   }
 
   Future<void> updateLeadStatus(String leadId, String status) async {
@@ -2141,6 +2270,7 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
       ),
       LeadListScreen(
         leads: widget.leads,
+        pendingSyncCountListenable: pendingLeadsQueueCountNotifier,
         onUpdateLeadStatus: widget.onUpdateLeadStatus,
         onUpdateLeadSource: widget.onUpdateLeadSource,
         onUpdateLeadScoreData: widget.onUpdateLeadScoreData,
@@ -2798,6 +2928,8 @@ class DashboardScreen extends StatelessWidget {
                                       MaterialPageRoute(
                                         builder: (context) => LeadListScreen(
                                           leads: leads,
+                                          pendingSyncCountListenable:
+                                              pendingLeadsQueueCountNotifier,
                                           onUpdateLeadStatus:
                                               onUpdateLeadStatus,
                                           onUpdateLeadSource:
@@ -3263,6 +3395,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   double currentZoom = 13;
   String selectedCoverageCity = coverageCity;
   LatLng? myLocation;
+  Position? lastKnownPosition;
   bool isFindingLocation = false;
   bool isTracking = false;
   bool isLoadingCoverage = true;
@@ -3312,6 +3445,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Map<String, List<Lead>> missionLeadsById = {};
   bool isLoadingMissions = false;
   bool isSavingMission = false;
+  bool hasShownActiveMissionResume = false;
   int? selectedMissionTimeBudgetMinutes = 30;
   final customMissionTimeController = TextEditingController();
   bool customMissionTimeInHours = false;
@@ -3762,6 +3896,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
         isLoadingMissions = false;
       });
 
+      await reconcilePersistedActiveMission(openMission);
+
       final ledgerMissions = [
         ...missions.where((mission) => mission.status == 'completed'),
       ];
@@ -3779,6 +3915,57 @@ class _DrivingScreenState extends State<DrivingScreen> {
         context,
       ).showSnackBar(const SnackBar(content: Text('Could not load missions.')));
     }
+  }
+
+  Future<void> persistActiveMissionId(String missionId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(activeMissionIdPrefsKey, missionId);
+  }
+
+  Future<void> clearPersistedActiveMissionId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(activeMissionIdPrefsKey);
+  }
+
+  Future<void> reconcilePersistedActiveMission(Mission? openMission) async {
+    final prefs = await SharedPreferences.getInstance();
+    final persistedMissionId = prefs.getString(activeMissionIdPrefsKey);
+    if (persistedMissionId == null || persistedMissionId.isEmpty) {
+      if (openMission != null && openMission.isActive) {
+        await persistActiveMissionId(openMission.id);
+      }
+      return;
+    }
+
+    if (openMission == null || openMission.id != persistedMissionId) {
+      try {
+        final data = await supabase
+            .from('missions')
+            .select('status')
+            .eq('account_id', widget.activeAccountId)
+            .eq('id', persistedMissionId)
+            .maybeSingle();
+        if (data == null || data['status'] != 'active') {
+          await clearPersistedActiveMissionId();
+        }
+      } catch (_) {
+        // Keep the id; the next startup/connectivity restore can verify it.
+      }
+      return;
+    }
+
+    if (!openMission.isActive) {
+      await clearPersistedActiveMissionId();
+      return;
+    }
+
+    if (!mounted || hasShownActiveMissionResume) return;
+
+    hasShownActiveMissionResume = true;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Resumed your active mission.')),
+    );
   }
 
   Future<void> loadMissionLeadLedger(List<Mission> missions) async {
@@ -4289,6 +4476,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .update({'status': 'paused'})
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
+      await clearPersistedActiveMissionId();
       await loadMissions();
     } catch (_) {
       if (!mounted) return;
@@ -4335,6 +4523,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .update(missionUpdate)
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
+      await clearPersistedActiveMissionId();
 
       await updateCalibrationFromCompletedMissions();
 
@@ -4420,7 +4609,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     return 'Distressed Property';
   }
 
-  Future<Lead?> saveQuickCaptureParcelLead({
+  Future<QuickCaptureSaveResult> saveQuickCaptureParcelLead({
     required ParcelProperty parcel,
     required LeadScoreData scoreData,
     required String condition,
@@ -4456,27 +4645,115 @@ class _DrivingScreenState extends State<DrivingScreen> {
     };
     if (missionId != null) row['mission_id'] = missionId;
 
-    try {
-      await supabase.from('leads').insert(row);
-    } catch (_) {
-      row.remove('target_score');
-      try {
-        await supabase.from('leads').insert(row);
-      } catch (_) {
-        row.remove('mission_id');
-        await supabase.from('leads').insert(row);
+    final result = await insertLeadWithOfflineQueue(row);
+
+    if (result.savedOnline) {
+      await loadDrivingLeads();
+      await widget.onRefreshLeads();
+      final ledgerMissions = [...completedMissions];
+      if (activeMission != null) {
+        ledgerMissions.insert(0, activeMission!);
       }
+      await loadMissionLeadLedger(ledgerMissions);
     }
 
-    await loadDrivingLeads();
-    await widget.onRefreshLeads();
-    final ledgerMissions = [...completedMissions];
-    if (activeMission != null) {
-      ledgerMissions.insert(0, activeMission!);
-    }
-    await loadMissionLeadLedger(ledgerMissions);
+    return QuickCaptureSaveResult(
+      lead: result.savedOnline ? leadForParcel(parcel) : null,
+      queuedLocally: result.queuedLocally,
+    );
+  }
 
-    return leadForParcel(parcel);
+  Future<DuplicateLeadCandidate?> findDuplicateLeadNear(LatLng? point) async {
+    if (point == null) return null;
+
+    try {
+      final data = await supabase
+          .from('leads')
+          .select('id,address')
+          .eq('account_id', widget.activeAccountId)
+          .gte('latitude', point.latitude - 0.0003)
+          .lte('latitude', point.latitude + 0.0003)
+          .gte('longitude', point.longitude - 0.0003)
+          .lte('longitude', point.longitude + 0.0003)
+          .limit(1)
+          .timeout(duplicateLeadCheckTimeout);
+      if (data.isEmpty) return null;
+
+      final row = data.first;
+      final id = row['id']?.toString();
+      if (id == null || id.isEmpty) return null;
+
+      return DuplicateLeadCandidate(
+        id: id,
+        address: row['address']?.toString() ?? 'saved lead',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Lead?> loadLeadById(String leadId) async {
+    final localLead = drivingLeads
+        .where((lead) => lead.id == leadId)
+        .firstOrNull;
+    if (localLead != null) return localLead;
+
+    try {
+      final data = await supabase
+          .from('leads')
+          .select()
+          .eq('account_id', widget.activeAccountId)
+          .eq('id', leadId)
+          .maybeSingle()
+          .timeout(duplicateLeadCheckTimeout);
+      if (data == null) return null;
+
+      return Lead.fromMap(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> confirmQuickCaptureDuplicate({
+    required ParcelProperty parcel,
+    required BuildContext sheetContext,
+  }) async {
+    final duplicate = await findDuplicateLeadNear(parcel.centroid);
+    if (duplicate == null || !mounted || !sheetContext.mounted) return true;
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('This may already be a lead'),
+        content: Text(
+          'This property may already be saved as a lead (${duplicate.address}). Save again or view the existing one?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'view'),
+            child: const Text('View Existing Lead'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, 'save'),
+            child: const Text('Save Anyway'),
+          ),
+        ],
+      ),
+    );
+
+    if (action == 'save') return true;
+    if (action == 'view') {
+      final lead = await loadLeadById(duplicate.id);
+      if (!mounted || !sheetContext.mounted) return false;
+
+      Navigator.pop(sheetContext);
+      if (lead != null) {
+        openLeadDetails(lead);
+      }
+      return false;
+    }
+
+    return false;
   }
 
   void openManualLeadFromPoint(LatLng point) {
@@ -4521,6 +4798,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   void openQuickCaptureSheet() {
+    final usedGpsForQuickCapture = myLocation != null;
+    final quickCaptureAccuracyMeters = lastKnownPosition?.accuracy;
     final lookupPoint = myLocation ?? currentMapCenter;
     final noteController = TextEditingController();
     var fetchStarted = false;
@@ -4609,10 +4888,26 @@ class _DrivingScreenState extends State<DrivingScreen> {
           }
 
           final scoreData = currentScoreData();
+          final gpsWarningText = !usedGpsForQuickCapture
+              ? 'No GPS - using map center. Verify address.'
+              : quickCaptureAccuracyMeters != null &&
+                    quickCaptureAccuracyMeters > 30 &&
+                    quickCaptureAccuracyMeters <= 80
+              ? 'Weak GPS - nearby property may be off by a house or two. Confirm address.'
+              : null;
+          final gpsWarningColor = !usedGpsForQuickCapture
+              ? const Color(0xFFB91C1C)
+              : const Color(0xFFB45309);
 
           Future<void> saveQuickCapture({required bool openPhotos}) async {
             final parcel = quickParcel;
             if (parcel == null || isSaving) return;
+
+            final proceed = await confirmQuickCaptureDuplicate(
+              parcel: parcel,
+              sheetContext: sheetContext,
+            );
+            if (!proceed || !mounted || !sheetContext.mounted) return;
 
             setSheetState(() {
               isSaving = true;
@@ -4628,12 +4923,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
             );
 
             try {
-              final savedLead = await saveQuickCaptureParcelLead(
+              final saveResult = await saveQuickCaptureParcelLead(
                 parcel: parcel,
                 scoreData: currentScoreData(),
                 condition: condition,
                 notes: noteController.text.trim(),
               );
+              final savedLead = saveResult.lead;
 
               if (!mounted || !sheetContext.mounted) return;
 
@@ -4649,8 +4945,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
                   duration: const Duration(seconds: 2),
                   showCloseIcon: true,
                   margin: const EdgeInsets.fromLTRB(12, 0, 12, 112),
-                  content: Text('Lead saved - ${parcel.displayAddress}.'),
-                  action: savedLead == null
+                  content: Text(
+                    saveResult.queuedLocally
+                        ? 'Lead saved locally - will sync when connected.'
+                        : 'Lead saved - ${parcel.displayAddress}.',
+                  ),
+                  action: savedLead == null || saveResult.queuedLocally
                       ? null
                       : SnackBarAction(
                           label: 'View ->',
@@ -4773,6 +5073,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                 fontSize: 13,
                               ),
                             ),
+                            if (gpsWarningText != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                gpsWarningText,
+                                style: TextStyle(
+                                  color: gpsWarningColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 16),
                             if (existingLead != null) ...[
                               Row(
@@ -4881,6 +5192,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                         final parcel = quickParcel;
                                         if (parcel == null) return;
 
+                                        final proceed =
+                                            await confirmQuickCaptureDuplicate(
+                                              parcel: parcel,
+                                              sheetContext: sheetContext,
+                                            );
+                                        if (!proceed ||
+                                            !mounted ||
+                                            !sheetContext.mounted) {
+                                          return;
+                                        }
+
                                         setSheetState(() {
                                           isSaving = true;
                                         });
@@ -4895,7 +5217,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                         );
 
                                         try {
-                                          final savedLead =
+                                          final saveResult =
                                               await saveQuickCaptureParcelLead(
                                                 parcel: parcel,
                                                 scoreData: currentScoreData(),
@@ -4903,6 +5225,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                 notes: noteController.text
                                                     .trim(),
                                               );
+                                          final savedLead = saveResult.lead;
 
                                           if (!mounted ||
                                               !sheetContext.mounted) {
@@ -4927,9 +5250,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                 112,
                                               ),
                                               content: Text(
-                                                'Lead saved — ${parcel.displayAddress}.',
+                                                saveResult.queuedLocally
+                                                    ? 'Lead saved locally - will sync when connected.'
+                                                    : 'Lead saved - ${parcel.displayAddress}.',
                                               ),
-                                              action: savedLead == null
+                                              action:
+                                                  savedLead == null ||
+                                                      saveResult.queuedLocally
                                                   ? null
                                                   : SnackBarAction(
                                                       label: 'View →',
@@ -7330,11 +7657,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                     );
 
                                     try {
+                                      final pendingBefore =
+                                          await refreshPendingLeadsQueueCount();
                                       await widget.onAddParcelLead(
                                         parcel,
                                         scoreData,
                                         missionIdForPoint(parcel.centroid),
                                       );
+                                      final pendingAfter =
+                                          await refreshPendingLeadsQueueCount();
 
                                       await loadDrivingLeads();
                                       final ledgerMissions = [
@@ -7358,8 +7689,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       ScaffoldMessenger.of(
                                         context,
                                       ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Parcel lead added.'),
+                                        SnackBar(
+                                          content: Text(
+                                            pendingAfter > pendingBefore
+                                                ? 'Lead saved locally - will sync when connected.'
+                                                : 'Parcel lead added.',
+                                          ),
                                         ),
                                       );
                                     } catch (_) {
@@ -7465,6 +7800,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     setState(() {
       myLocation = newLocation;
+      lastKnownPosition = position;
       currentMapCenter = newLocation;
       isFindingLocation = false;
       locationMessage = 'Location found.';
@@ -7501,6 +7837,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
           setState(() {
             myLocation = point;
+            lastKnownPosition = position;
             routePoints.add(point);
             locationMessage = 'Tracking route... Points: ${routePoints.length}';
           });
@@ -10977,6 +11314,8 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
       isSaving = true;
     });
 
+    final pendingBefore = await refreshPendingLeadsQueueCount();
+
     await widget.onAddLead(
       addressController.text,
       condition,
@@ -10988,9 +11327,19 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
       widget.missionId,
     );
 
-    if (mounted) {
-      Navigator.pop(context);
+    if (!mounted) return;
+
+    final pendingAfter = await refreshPendingLeadsQueueCount();
+    if (!mounted) return;
+
+    if (pendingAfter > pendingBefore) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Lead saved locally - will sync when connected.'),
+        ),
+      );
     }
+    Navigator.pop(context);
   }
 
   @override
@@ -11240,6 +11589,7 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
 
 class LeadListScreen extends StatefulWidget {
   final List<Lead> leads;
+  final ValueListenable<int> pendingSyncCountListenable;
   final Future<void> Function(String leadId, String status) onUpdateLeadStatus;
   final Future<void> Function(String leadId, String source) onUpdateLeadSource;
   final Future<void> Function(String leadId, LeadScoreData scoreData)
@@ -11254,6 +11604,7 @@ class LeadListScreen extends StatefulWidget {
   const LeadListScreen({
     super.key,
     required this.leads,
+    required this.pendingSyncCountListenable,
     required this.onUpdateLeadStatus,
     required this.onUpdateLeadSource,
     required this.onUpdateLeadScoreData,
@@ -11472,6 +11823,97 @@ class _LeadListScreenState extends State<LeadListScreen> {
               ],
             ),
             const SizedBox(height: 16),
+            ValueListenableBuilder<int>(
+              valueListenable: widget.pendingSyncCountListenable,
+              builder: (context, pendingCount, _) {
+                if (pendingCount == 0) return const SizedBox.shrink();
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFF97316)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.sync_problem,
+                                size: 18,
+                                color: Color(0xFFC2410C),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '$pendingCount lead${pendingCount == 1 ? '' : 's'} pending sync',
+                                style: const TextStyle(
+                                  color: Color(0xFF9A3412),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                          FutureBuilder<List<Map<String, dynamic>>>(
+                            future: pendingLeadRows(),
+                            builder: (context, snapshot) {
+                              final rows =
+                                  snapshot.data ??
+                                  const <Map<String, dynamic>>[];
+                              if (rows.isEmpty) return const SizedBox.shrink();
+
+                              final previewRows = rows.take(3).toList();
+
+                              return Padding(
+                                padding: const EdgeInsets.only(
+                                  top: 6,
+                                  left: 26,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    ...previewRows.map(
+                                      (row) => Text(
+                                        row['address']?.toString().isNotEmpty ==
+                                                true
+                                            ? row['address'].toString()
+                                            : 'Unsynced lead',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Color(0xFF9A3412),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                    if (rows.length > previewRows.length)
+                                      Text(
+                                        '+${rows.length - previewRows.length} more',
+                                        style: const TextStyle(
+                                          color: Color(0xFF9A3412),
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
             LayoutBuilder(
               builder: (context, constraints) {
                 final columns = constraints.maxWidth > 900 ? 4 : 2;
