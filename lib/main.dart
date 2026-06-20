@@ -14,6 +14,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'src/area_stats.dart';
 import 'src/coverage.dart';
 import 'src/formatting.dart';
 import 'src/geo.dart';
@@ -23,6 +24,7 @@ import 'src/scoring.dart';
 // Re-export the extracted modules so existing imports of
 // `package:market_coverage/main.dart` (app code and tests) keep working.
 export 'src/coverage.dart';
+export 'src/area_stats.dart';
 export 'src/formatting.dart';
 export 'src/geo.dart';
 export 'src/lead_export.dart';
@@ -2420,40 +2422,75 @@ class _AreasTab extends StatelessWidget {
     required this.onRefresh,
   });
 
+  _DrivingScreenState? get driveState => driveScreenKey.currentState;
+
+  Future<void> openAreaDetail(BuildContext context, DriveArea area) async {
+    final state = driveState;
+    if (state == null) return;
+
+    await state.setActiveDriveArea(area);
+    final center = state.polygonCenter(area.polygon);
+    if (center != null) {
+      state.focusMapWorkspace(mode: 'targets', point: center, minZoom: 15);
+    }
+    onRefresh();
+
+    if (!context.mounted) return;
+
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _AreaDetailScreen(
+          driveState: state,
+          initialArea: area,
+          onOpenDrive: onOpenDrive,
+        ),
+      ),
+    );
+    onRefresh();
+  }
+
+  Future<void> startMissionForArea(BuildContext context, DriveArea area) async {
+    final state = driveState;
+    if (state == null) return;
+
+    await state.setActiveDriveArea(area);
+    onRefresh();
+    onOpenDrive();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final activeArea = state.activeDriveArea ?? area;
+      final streets = state.streetsInsideArea(activeArea);
+      final opportunities = state.streetOpportunitiesFor(
+        streets,
+        state.marketProperties,
+      );
+      state.openPlanTodayDriveSheet(opportunities);
+    });
+  }
+
+  Future<void> setActive(BuildContext context, DriveArea area) async {
+    final state = driveState;
+    if (state == null) return;
+
+    await state.setActiveDriveArea(area);
+    final center = state.polygonCenter(area.polygon);
+    if (center != null) {
+      state.focusMapWorkspace(
+        mode: 'targets',
+        point: center,
+        minZoom: 15,
+        message: 'Active area set: ${area.name}.',
+      );
+    }
+    onRefresh();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final driveState = driveScreenKey.currentState;
-    final areas = driveState?.driveAreas ?? const <DriveArea>[];
-    final activeArea = driveState?.activeDriveArea;
-    final activeAreaStreets = activeArea == null || driveState == null
-        ? const <CityStreet>[]
-        : driveState.streetsInsideArea(activeArea);
-    final activeAreaCovered = activeAreaStreets
-        .where((street) => driveState!.coveredStreetIds.contains(street.id))
-        .length;
-    final activeAreaCoverage = activeAreaStreets.isEmpty
-        ? 0.0
-        : (activeAreaCovered / activeAreaStreets.length) * 100;
-    final activeAreaUncovered = activeAreaStreets
-        .where((street) => !driveState!.coveredStreetIds.contains(street.id))
-        .toList(growable: false);
-    final activeAreaLeads = activeArea == null || driveState == null
-        ? 0
-        : driveState.drivingLeads.where((lead) {
-            if (lead.latitude == null || lead.longitude == null) return false;
-            return pointInRing(
-              LatLng(lead.latitude!, lead.longitude!),
-              activeArea.polygon,
-            );
-          }).length;
-    final filteredTargets = driveState == null
-        ? const <MarketProperty>[]
-        : driveState.marketProperties
-              .where(driveState.marketPropertyPassesTargetFilters)
-              .toList(growable: false);
-    if (driveState != null) {
-      filteredTargets.sort((a, b) => b.targetScore.compareTo(a.targetScore));
-    }
+    final state = driveState;
+    final areas = state?.driveAreas ?? const <DriveArea>[];
+    final activeArea = state?.activeDriveArea;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Areas')),
@@ -2461,156 +2498,872 @@ class _AreasTab extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            if (state == null || state.isLoadingDriveAreas)
+              const _AreasLoadingCard()
+            else
+              _ActiveAreaBanner(
+                area: activeArea,
+                stats: activeArea == null
+                    ? null
+                    : _areaStatsForDriveArea(state, activeArea),
+                onStartMission: activeArea == null
+                    ? null
+                    : () => startMissionForArea(context, activeArea),
+                onOpenArea: activeArea == null
+                    ? null
+                    : () => openAreaDetail(context, activeArea),
+              ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Your Areas',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Text(
+                  '${areas.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (state == null || state.isLoadingDriveAreas)
+              const SizedBox.shrink()
+            else if (areas.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(18),
+                  child: Text('No saved areas yet. Create one to begin.'),
+                ),
+              )
+            else
+              ...areas.map((area) {
+                final stats = _areaStatsForDriveArea(state, area);
+                final isActive = activeArea?.id == area.id;
+                final lastMission = _lastCompletedMissionForArea(state, area);
+
+                return _AreaListCard(
+                  area: area,
+                  stats: stats,
+                  isActive: isActive,
+                  lastMissionLabel: lastMissionLabel(lastMission),
+                  onOpenArea: () => openAreaDetail(context, area),
+                  onStartMission: () => startMissionForArea(context, area),
+                  onSetActive: isActive ? null : () => setActive(context, area),
+                );
+              }),
+            const SizedBox(height: 20),
             FilledButton.icon(
               icon: const Icon(Icons.add_location_alt),
               label: const Text('Create New Area'),
               onPressed: onCreateNewArea,
             ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.history),
-              label: const Text('View Mission History'),
-              onPressed: () {
-                Scrollable.ensureVisible(context);
-              },
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Drive Areas',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            if (driveState == null || driveState.isLoadingDriveAreas)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('Loading saved drive areas...'),
-                ),
-              )
-            else if (areas.isEmpty)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('No saved drive areas yet.'),
-                ),
-              )
-            else
-              ...areas.map((area) {
-                final isActive = activeArea?.id == area.id;
-                final streets = driveState.streetsInsideArea(area);
-                final covered = streets
-                    .where(
-                      (street) =>
-                          driveState.coveredStreetIds.contains(street.id),
-                    )
-                    .length;
-                final coverage = streets.isEmpty
-                    ? 0.0
-                    : (covered / streets.length) * 100;
-                final leads = driveState.drivingLeads.where((lead) {
-                  if (lead.latitude == null || lead.longitude == null) {
-                    return false;
-                  }
-                  return pointInRing(
-                    LatLng(lead.latitude!, lead.longitude!),
-                    area.polygon,
-                  );
-                }).length;
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    leading: Icon(
-                      isActive ? Icons.flag : Icons.map_outlined,
-                      color: isActive
-                          ? const Color(0xFF2563EB)
-                          : const Color(0xFF6B7280),
-                    ),
-                    title: Text(area.name),
-                    subtitle: Text(
-                      '${area.city} | ${coverage.toStringAsFixed(0)}% covered | $leads leads | ${area.status}',
-                    ),
-                    trailing: isActive
-                        ? const Chip(label: Text('Active'))
-                        : const Icon(Icons.chevron_right),
-                    onTap: () async {
-                      await driveState.setActiveDriveArea(area);
-                      onRefresh();
-                    },
-                  ),
-                );
-              }),
-            if (driveState != null && activeArea != null) ...[
-              const SizedBox(height: 12),
+class _AreasLoadingCard extends StatelessWidget {
+  const _AreasLoadingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Card(
+      child: Padding(
+        padding: EdgeInsets.all(18),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Text('Loading areas...'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActiveAreaBanner extends StatelessWidget {
+  final DriveArea? area;
+  final AreaStats? stats;
+  final VoidCallback? onStartMission;
+  final VoidCallback? onOpenArea;
+
+  const _ActiveAreaBanner({
+    required this.area,
+    required this.stats,
+    required this.onStartMission,
+    required this.onOpenArea,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final area = this.area;
+    final stats = this.stats;
+
+    if (area == null || stats == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               const Text(
-                'Area Stats',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                'Pick or create an area to get started',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 12),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
+              const SizedBox(height: 8),
+              const Text(
+                'Areas are where research, targets, and mission history live.',
+                style: TextStyle(color: Color(0xFF6B7280)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      color: const Color(0xFF111827),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              area.name,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${area.city} · ${stats.coveragePercent.toStringAsFixed(0)}% covered · '
+              '${stats.leadsInArea} leads · ${stats.hotLeads} hot',
+              style: const TextStyle(color: Color(0xFFD1D5DB)),
+            ),
+            const SizedBox(height: 12),
+            LinearProgressIndicator(
+              value: (stats.coveragePercent / 100).clamp(0, 1),
+              minHeight: 5,
+              color: const Color(0xFF22C55E),
+              backgroundColor: const Color(0xFF374151),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  icon: const Icon(Icons.flag),
+                  label: const Text('Start Mission'),
+                  onPressed: onStartMission,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open Area'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0xFF9CA3AF)),
+                  ),
+                  onPressed: onOpenArea,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AreaListCard extends StatelessWidget {
+  final DriveArea area;
+  final AreaStats stats;
+  final bool isActive;
+  final String lastMissionLabel;
+  final VoidCallback onOpenArea;
+  final VoidCallback onStartMission;
+  final VoidCallback? onSetActive;
+
+  const _AreaListCard({
+    required this.area,
+    required this.stats,
+    required this.isActive,
+    required this.lastMissionLabel,
+    required this.onOpenArea,
+    required this.onStartMission,
+    required this.onSetActive,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _DriveStatTile(
-                        label: 'Coverage',
-                        value: '${activeAreaCoverage.toStringAsFixed(0)}%',
-                        icon: Icons.timeline,
-                        color: const Color(0xFF2563EB),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              area.name,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (isActive) ...[
+                            const SizedBox(width: 8),
+                            const Chip(
+                              label: Text('Active'),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
+                        ],
                       ),
-                      _DriveStatTile(
-                        label: 'Covered',
-                        value: activeAreaCovered.toString(),
-                        icon: Icons.check_circle,
-                        color: const Color(0xFF059669),
-                      ),
-                      _DriveStatTile(
-                        label: 'Remaining',
-                        value: activeAreaUncovered.length.toString(),
-                        icon: Icons.route,
-                        color: const Color(0xFFF59E0B),
-                      ),
-                      _DriveStatTile(
-                        label: 'Leads',
-                        value: activeAreaLeads.toString(),
-                        icon: Icons.person_pin_circle,
-                        color: const Color(0xFFDC2626),
+                      const SizedBox(height: 2),
+                      Text(
+                        area.city,
+                        style: const TextStyle(color: Color(0xFF6B7280)),
                       ),
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        activeArea.name,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+                Text(
+                  '${stats.coveragePercent.toStringAsFixed(0)}%',
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2563EB),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            LinearProgressIndicator(
+              value: (stats.coveragePercent / 100).clamp(0, 1),
+              minHeight: 4,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '${stats.leadsInArea} leads · ${stats.hotLeads} hot leads',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Last mission: $lastMissionLabel',
+              style: const TextStyle(color: Color(0xFF6B7280)),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: onOpenArea,
+                  child: const Text('Open Area'),
+                ),
+                FilledButton(
+                  onPressed: onStartMission,
+                  child: const Text('Start Mission'),
+                ),
+                if (onSetActive != null)
+                  TextButton(
+                    onPressed: onSetActive,
+                    child: const Text('Set Active'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+AreaStats _areaStatsForDriveArea(
+  _DrivingScreenState driveState,
+  DriveArea area,
+) {
+  final streets = driveState.streetsInsideArea(area);
+  final properties = _marketPropertiesForArea(driveState, area);
+
+  return computeAreaStats(
+    polygon: area.polygon,
+    streets: streets
+        .map((street) => AreaStatsStreet(id: street.id, path: street.path))
+        .toList(growable: false),
+    coveredStreetIds: driveState.coveredStreetIds,
+    leads: driveState.drivingLeads
+        .map(
+          (lead) => AreaStatsLead(
+            point: lead.latitude == null || lead.longitude == null
+                ? null
+                : LatLng(lead.latitude!, lead.longitude!),
+            score: lead.score,
+          ),
+        )
+        .toList(growable: false),
+    targetCount: properties.where(_isTargetMarketProperty).length,
+  );
+}
+
+List<MarketProperty> _marketPropertiesForArea(
+  _DrivingScreenState driveState,
+  DriveArea area,
+) {
+  return driveState.marketProperties
+      .where((property) => property.driveAreaId == area.id)
+      .toList(growable: false);
+}
+
+bool _isTargetMarketProperty(MarketProperty property) {
+  return property.targetScore > 0 ||
+      property.outOfState ||
+      property.absentee ||
+      property.portfolioCount >= 3 ||
+      property.lowImprovementRatio ||
+      _marketPropertySignal(property, 'long_held') ||
+      _marketPropertySignal(property, 'older_build');
+}
+
+bool _marketPropertySignal(MarketProperty property, String key) {
+  final value = property.signals[key];
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+
+  return value?.toString().toLowerCase() == 'true';
+}
+
+bool _hasMarketPropertySignal(Iterable<MarketProperty> properties, String key) {
+  return properties.any((property) => property.signals.containsKey(key));
+}
+
+Mission? _lastCompletedMissionForArea(
+  _DrivingScreenState driveState,
+  DriveArea area,
+) {
+  return driveState.completedMissions
+      .where((mission) => mission.driveAreaId == area.id)
+      .firstOrNull;
+}
+
+String lastMissionLabel(Mission? mission) {
+  final completedAt = mission?.completedAt?.toLocal();
+  if (completedAt == null) return 'No missions yet';
+
+  final now = DateTime.now();
+  final days = now.difference(completedAt).inDays;
+  if (days <= 0) return 'Today';
+  if (days == 1) return 'Yesterday';
+
+  return '$days days ago';
+}
+
+String _compactMiles(double miles) {
+  return miles.toStringAsFixed(miles >= 10 ? 0 : 1);
+}
+
+String _missionDateLabel(DateTime? date) {
+  final local = date?.toLocal();
+  if (local == null) return 'Completed mission';
+
+  return '${local.month}/${local.day}/${local.year}';
+}
+
+class _AreaDetailScreen extends StatefulWidget {
+  final _DrivingScreenState driveState;
+  final DriveArea initialArea;
+  final VoidCallback onOpenDrive;
+
+  const _AreaDetailScreen({
+    required this.driveState,
+    required this.initialArea,
+    required this.onOpenDrive,
+  });
+
+  @override
+  State<_AreaDetailScreen> createState() => _AreaDetailScreenState();
+}
+
+class _AreaDetailScreenState extends State<_AreaDetailScreen> {
+  bool targetsOnly = false;
+  bool filterOutOfState = false;
+  bool filterAbsentee = false;
+  bool filterPortfolio = false;
+  bool filterLowImprovement = false;
+  bool filterLongHeld = false;
+  bool filterOlderBuild = false;
+
+  _DrivingScreenState get driveState => widget.driveState;
+
+  DriveArea get area {
+    return driveState.driveAreas
+            .where((item) => item.id == widget.initialArea.id)
+            .firstOrNull ??
+        widget.initialArea;
+  }
+
+  Future<void> startMission() async {
+    await driveState.setActiveDriveArea(area);
+    if (!mounted) return;
+
+    widget.onOpenDrive();
+    Navigator.pop(context);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final streets = driveState.streetsInsideArea(
+        driveState.activeDriveArea ?? area,
+      );
+      final opportunities = driveState.streetOpportunitiesFor(
+        streets,
+        driveState.marketProperties,
+      );
+      driveState.openPlanTodayDriveSheet(opportunities);
+    });
+  }
+
+  Future<void> analyzeArea() async {
+    await driveState.setActiveDriveArea(area);
+    await driveState.buildMarketMap();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> markComplete() async {
+    await driveState.setActiveDriveArea(area);
+    await driveState.markActiveDriveAreaComplete();
+    if (mounted) setState(() {});
+  }
+
+  List<MarketProperty> filteredProperties(List<MarketProperty> properties) {
+    final filtered = properties
+        .where((property) {
+          if (targetsOnly && !_isTargetMarketProperty(property)) return false;
+          if (filterOutOfState && !property.outOfState) return false;
+          if (filterAbsentee && !property.absentee) return false;
+          if (filterPortfolio && property.portfolioCount < 3) return false;
+          if (filterLowImprovement && !property.lowImprovementRatio) {
+            return false;
+          }
+          if (filterLongHeld && !_marketPropertySignal(property, 'long_held')) {
+            return false;
+          }
+          if (filterOlderBuild &&
+              !_marketPropertySignal(property, 'older_build')) {
+            return false;
+          }
+
+          return true;
+        })
+        .toList(growable: false);
+
+    filtered.sort((a, b) => b.targetScore.compareTo(a.targetScore));
+    return filtered;
+  }
+
+  Widget signalChip({
+    required String label,
+    required bool selected,
+    required ValueChanged<bool> onSelected,
+  }) {
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: onSelected,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeArea = driveState.activeDriveArea;
+    final isActive = activeArea?.id == area.id;
+    final stats = _areaStatsForDriveArea(driveState, area);
+    final streets = driveState.streetsInsideArea(area);
+    final uncoveredStreets = streets
+        .where((street) => !driveState.coveredStreetIds.contains(street.id))
+        .toList(growable: false);
+    final properties = _marketPropertiesForArea(driveState, area);
+    final targetCount = properties.where(_isTargetMarketProperty).length;
+    final opportunityScore =
+        driveState.driveAreaRemainingOpportunity[area.id] ??
+        driveState
+            .streetOpportunitiesFor(streets, properties)
+            .fold<double>(0, (total, item) => total + item.score);
+    final shownProperties = filteredProperties(properties);
+    final hasLongHeld = _hasMarketPropertySignal(properties, 'long_held');
+    final hasOlderBuild = _hasMarketPropertySignal(properties, 'older_build');
+    final completedMissions = driveState.completedMissions
+        .where((mission) => mission.driveAreaId == area.id)
+        .toList(growable: false);
+
+    return Scaffold(
+      appBar: AppBar(title: Text(area.name)),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            area.name,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            area.city,
+                            style: const TextStyle(color: Color(0xFF6B7280)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      children: [
+                        Switch(
+                          value: isActive,
+                          onChanged: (value) async {
+                            await driveState.setActiveDriveArea(
+                              value ? area : null,
+                            );
+                            if (mounted) setState(() {});
+                          },
                         ),
+                        Text(isActive ? 'Active' : 'Inactive'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Coverage',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(height: 8),
-                      Text('City: ${activeArea.city}'),
-                      const SizedBox(height: 12),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Show only active area'),
-                        value: driveState.showOnlyActiveArea,
-                        onChanged: (value) {
-                          driveState.setShowOnlyActiveArea(value);
-                          onRefresh();
-                        },
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: LinearProgressIndicator(
+                            value: (stats.coveragePercent / 100).clamp(0, 1),
+                            minHeight: 7,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          '${stats.coveragePercent.toStringAsFixed(0)}%',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _DriveStatTile(
+                          label: 'Covered',
+                          value: stats.streetsCovered.toString(),
+                          icon: Icons.check_circle,
+                          color: const Color(0xFF059669),
+                        ),
+                        _DriveStatTile(
+                          label: 'Remaining',
+                          value: stats.streetsRemaining.toString(),
+                          icon: Icons.route,
+                          color: const Color(0xFFF59E0B),
+                        ),
+                        _DriveStatTile(
+                          label: 'Miles left',
+                          value: _compactMiles(stats.milesRemaining),
+                          icon: Icons.timeline,
+                          color: const Color(0xFF2563EB),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Pipeline',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(height: 8),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _DriveStatTile(
+                          label: 'Leads',
+                          value: stats.leadsInArea.toString(),
+                          icon: Icons.person_pin_circle,
+                          color: const Color(0xFFDC2626),
+                        ),
+                        _DriveStatTile(
+                          label: 'Hot leads',
+                          value: stats.hotLeads.toString(),
+                          icon: Icons.local_fire_department,
+                          color: const Color(0xFFF97316),
+                        ),
+                        _DriveStatTile(
+                          label: 'Targets',
+                          value: targetCount.toString(),
+                          icon: Icons.adjust,
+                          color: const Color(0xFF7C3AED),
+                        ),
+                        _DriveStatTile(
+                          label: 'Opp score',
+                          value: opportunityScore.toStringAsFixed(0),
+                          icon: Icons.bolt,
+                          color: const Color(0xFF2563EB),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Targets',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${shownProperties.length} of ${properties.length} homes',
+                          style: const TextStyle(color: Color(0xFF6B7280)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: false, label: Text('All homes')),
+                        ButtonSegment(value: true, label: Text('Targets only')),
+                      ],
+                      selected: {targetsOnly},
+                      onSelectionChanged: (selection) {
+                        setState(() => targetsOnly = selection.first);
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        signalChip(
+                          label: 'Out of state',
+                          selected: filterOutOfState,
+                          onSelected: (value) =>
+                              setState(() => filterOutOfState = value),
+                        ),
+                        signalChip(
+                          label: 'Absentee',
+                          selected: filterAbsentee,
+                          onSelected: (value) =>
+                              setState(() => filterAbsentee = value),
+                        ),
+                        signalChip(
+                          label: 'Portfolio 3+',
+                          selected: filterPortfolio,
+                          onSelected: (value) =>
+                              setState(() => filterPortfolio = value),
+                        ),
+                        signalChip(
+                          label: 'Low improvement',
+                          selected: filterLowImprovement,
+                          onSelected: (value) =>
+                              setState(() => filterLowImprovement = value),
+                        ),
+                        if (hasLongHeld)
+                          signalChip(
+                            label: 'Long held',
+                            selected: filterLongHeld,
+                            onSelected: (value) =>
+                                setState(() => filterLongHeld = value),
+                          ),
+                        if (hasOlderBuild)
+                          signalChip(
+                            label: 'Older build',
+                            selected: filterOlderBuild,
+                            onSelected: (value) =>
+                                setState(() => filterOlderBuild = value),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    if (driveState.isLoadingMarketProperties)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 18),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else if (properties.isEmpty)
+                      const Text('Analyze Area to load homes and targets.')
+                    else if (shownProperties.isEmpty)
+                      const Text('No homes match these filters.')
+                    else
+                      ...shownProperties.take(50).map((property) {
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            property.parcel.displayAddress,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            _targetSignalSummary(property),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: driveState.targetScoreBadge(
+                            property.targetScore,
+                            onTap: () =>
+                                driveState.showTargetScoreBreakdown(property),
+                          ),
+                          onTap: () =>
+                              driveState.openParcelPreview(property.parcel),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Missions',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (completedMissions.isEmpty)
+                      const Text('No completed missions yet.')
+                    else
+                      ...completedMissions.map((mission) {
+                        final leads = driveState.leadsForMission(mission);
+                        final miles = driveState.milesForMission(mission);
+                        final covered = driveState.coveredStreetCountForMission(
+                          mission,
+                        );
+
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(_missionDateLabel(mission.completedAt)),
+                          subtitle: Text(
+                            '$covered streets · ${leads.length} leads · '
+                            '${miles.toStringAsFixed(2)} mi',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => driveState.openMissionResults(
+                            mission: mission,
+                            areaName: area.name,
+                            leads: leads,
+                            streetsCovered: covered,
+                            opportunityCaptured:
+                                mission.opportunityCaptured ?? 0,
+                            milesDriven: miles,
+                            actualMinutes: mission.actualMinutes,
+                            areaRemainingEstimatedMinutes: driveState
+                                .estimatedMinutesForStreets(uncoveredStreets),
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton.icon(
+                      icon: const Icon(Icons.flag),
+                      label: const Text('Start Mission'),
+                      onPressed: startMission,
+                    ),
+                    const SizedBox(height: 8),
+                    if (properties.isEmpty)
                       OutlinedButton.icon(
-                        icon: const Icon(Icons.map),
+                        icon: const Icon(Icons.analytics),
                         label: Text(
                           driveState.isBuildingMarketMap
                               ? 'Analyzing area...'
@@ -2618,179 +3371,62 @@ class _AreasTab extends StatelessWidget {
                         ),
                         onPressed: driveState.isBuildingMarketMap
                             ? null
-                            : driveState.buildMarketMap,
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton(
-                        onPressed: driveState.markActiveDriveAreaComplete,
-                        child: const Text('Mark area complete'),
-                      ),
-                      if (driveState.marketMapMessage.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Text(driveState.marketMapMessage),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Targets',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (driveState.isLoadingMarketProperties)
-                        const Text('Loading targets...')
-                      else ...[
-                        Text(
-                          '${filteredTargets.length} of ${driveState.marketProperties.length} properties shown',
+                            : analyzeArea,
+                      )
+                    else
+                      TextButton.icon(
+                        icon: const Icon(Icons.refresh),
+                        label: Text(
+                          driveState.isBuildingMarketMap
+                              ? 'Analyzing area...'
+                              : 'Re-analyze Area',
                         ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          children: [
-                            FilterChip(
-                              label: const Text('Out of state'),
-                              selected: driveState.targetFilterOutOfState,
-                              onSelected: (value) {
-                                driveState.setTargetFilter(
-                                  'out_of_state',
-                                  value,
-                                );
-                                onRefresh();
-                              },
-                            ),
-                            FilterChip(
-                              label: const Text('Absentee'),
-                              selected: driveState.targetFilterAbsentee,
-                              onSelected: (value) {
-                                driveState.setTargetFilter('absentee', value);
-                                onRefresh();
-                              },
-                            ),
-                            FilterChip(
-                              label: const Text('Portfolio 3+'),
-                              selected: driveState.targetFilterPortfolio,
-                              onSelected: (value) {
-                                driveState.setTargetFilter('portfolio', value);
-                                onRefresh();
-                              },
-                            ),
-                            FilterChip(
-                              label: const Text('Low improvement'),
-                              selected: driveState.targetFilterLowImprovement,
-                              onSelected: (value) {
-                                driveState.setTargetFilter(
-                                  'low_improvement',
-                                  value,
-                                );
-                                onRefresh();
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        if (driveState.marketProperties.isEmpty)
-                          const Text(
-                            'Analyze this area to load its homes and targets.',
-                          )
-                        else if (filteredTargets.isEmpty)
-                          const Text('No targets match these filters.')
-                        else
-                          ...filteredTargets
-                              .take(25)
-                              .map(
-                                (property) => ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: Text(
-                                    property.parcel.displayAddress,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  subtitle: Text(
-                                    [
-                                      if (property.parcel.ownerName != null)
-                                        property.parcel.ownerName!,
-                                      [
-                                        if (property.outOfState) 'out of state',
-                                        if (property.absentee) 'absentee',
-                                        if (property.portfolioCount >= 3)
-                                          'portfolio ${property.portfolioCount}',
-                                        if (property.lowImprovementRatio)
-                                          'low improvement',
-                                      ].join(', '),
-                                    ].where((text) => text.isNotEmpty).join(' | '),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  trailing: driveState.targetScoreBadge(
-                                    property.targetScore,
-                                    onTap: () => driveState
-                                        .showTargetScoreBreakdown(property),
-                                  ),
-                                  onTap: () => driveState.openParcelPreview(
-                                    property.parcel,
-                                  ),
-                                ),
-                              ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              if (driveState.completedMissions.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Completed Missions',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 12),
-                ...driveState.completedMissions.map((mission) {
-                  final completedDate = mission.completedAt?.toLocal();
-                  final historyLeads = driveState.leadsForMission(mission);
-                  final historyMiles = driveState.milesForMission(mission);
-                  final historyCovered = driveState
-                      .coveredStreetCountForMission(mission);
-                  return Card(
-                    child: ListTile(
-                      title: Text(
-                        completedDate == null
-                            ? 'Completed mission'
-                            : 'Completed ${completedDate.month}/${completedDate.day}/${completedDate.year}',
+                        onPressed: driveState.isBuildingMarketMap
+                            ? null
+                            : analyzeArea,
                       ),
-                      subtitle: Text(
-                        '$historyCovered/${mission.streetCount} streets | '
-                        '${historyLeads.length} leads | '
-                        '${historyMiles.toStringAsFixed(2)} mi',
-                      ),
-                      onTap: () => driveState.openMissionResults(
-                        mission: mission,
-                        areaName: activeArea.name,
-                        leads: historyLeads,
-                        streetsCovered: historyCovered,
-                        opportunityCaptured: mission.opportunityCaptured ?? 0,
-                        milesDriven: historyMiles,
-                        actualMinutes: mission.actualMinutes,
-                        areaRemainingEstimatedMinutes: driveState
-                            .estimatedMinutesForStreets(activeAreaUncovered),
-                      ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: markComplete,
+                      child: const Text('Mark Complete'),
                     ),
-                  );
-                }),
-              ],
-            ],
+                    if (driveState.marketMapMessage.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        driveState.marketMapMessage,
+                        style: const TextStyle(color: Color(0xFF6B7280)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+String _targetSignalSummary(MarketProperty property) {
+  final signals = <String>[
+    if (property.outOfState) 'out of state',
+    if (property.absentee) 'absentee',
+    if (property.portfolioCount >= 3) 'portfolio ${property.portfolioCount}',
+    if (property.lowImprovementRatio) 'low improvement',
+    if (_marketPropertySignal(property, 'long_held')) 'long held',
+    if (_marketPropertySignal(property, 'older_build')) 'older build',
+  ];
+
+  final owner = property.parcel.ownerName;
+  final ownerLabel = owner == null || owner.trim().isEmpty
+      ? null
+      : owner.trim();
+
+  final rows = <String>[];
+  if (ownerLabel != null) rows.add(ownerLabel);
+  if (signals.isNotEmpty) rows.add(signals.join(', '));
+  return rows.join(' - ');
 }
 
 class _BusinessTab extends StatelessWidget {
@@ -6679,9 +7315,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
         marketMapMessage = 'Could not analyze area.';
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not analyze area.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not analyze area.')));
     }
   }
 
@@ -7127,11 +7763,63 @@ class _DrivingScreenState extends State<DrivingScreen> {
     ).whenComplete(controller.dispose);
   }
 
+  Future<String?> promptForDrawnAreaAction() {
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Analyze this area?',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  "We'll load the streets, homes, parcels, your saved leads, and target opportunities inside this area.",
+                  style: TextStyle(color: Color(0xFF6B7280)),
+                ),
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  icon: const Icon(Icons.analytics),
+                  label: const Text('Analyze'),
+                  onPressed: () => Navigator.pop(sheetContext, 'analyze'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.edit_location_alt),
+                  label: const Text('Adjust'),
+                  onPressed: () => Navigator.pop(sheetContext, 'adjust'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(sheetContext, 'cancel'),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> saveDrawingArea() async {
     if (drawingAreaPoints.length < 3 || isSavingDriveArea) return;
 
     final name = await promptForDriveAreaName();
     if (name == null || name.isEmpty) return;
+
+    final action = await promptForDrawnAreaAction();
+    if (action == null || action == 'adjust') return;
+    if (action == 'cancel') {
+      cancelDrawAreaMode();
+      return;
+    }
 
     setState(() {
       isSavingDriveArea = true;
@@ -7143,15 +7831,20 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .update({'is_active': false})
           .eq('account_id', widget.activeAccountId)
           .eq('is_active', true);
-      await supabase.from('drive_areas').insert({
-        'account_id': widget.activeAccountId,
-        'created_by': supabase.auth.currentUser?.id,
-        'name': name,
-        'city': selectedCoverageCity,
-        'polygon': driveAreaPolygonToJson(drawingAreaPoints),
-        'status': 'in_progress',
-        'is_active': true,
-      });
+      final inserted = await supabase
+          .from('drive_areas')
+          .insert({
+            'account_id': widget.activeAccountId,
+            'created_by': supabase.auth.currentUser?.id,
+            'name': name,
+            'city': selectedCoverageCity,
+            'polygon': driveAreaPolygonToJson(drawingAreaPoints),
+            'status': 'in_progress',
+            'is_active': true,
+          })
+          .select()
+          .single();
+      final newArea = DriveArea.fromMap(inserted);
 
       if (!mounted) return;
 
@@ -7162,6 +7855,19 @@ class _DrivingScreenState extends State<DrivingScreen> {
       });
 
       await loadDriveAreas();
+      await buildMarketMap();
+      if (!mounted) return;
+
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _AreaDetailScreen(
+            driveState: this,
+            initialArea: newArea,
+            onOpenDrive: () {},
+          ),
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
 
