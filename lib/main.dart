@@ -13100,20 +13100,49 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 height: 56,
                 padding: const EdgeInsets.symmetric(horizontal: 18),
                 color: const Color(0xE6111827),
-                alignment: Alignment.centerLeft,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: handleFieldTestTitleTap,
-                  child: Text(
-                    activeDriveArea?.name ?? 'Market Coverage',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: handleFieldTestTitleTap,
+                        child: Text(
+                          activeDriveArea?.name ?? 'Market Coverage',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Tooltip(
+                      message: isTracking
+                          ? 'Stop tracking before changing markets'
+                          : 'Search markets',
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.search, size: 18),
+                        label: Text(
+                          selectedCoverageCity,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: const Color(0xFF9CA3AF),
+                          side: BorderSide(
+                            color: isTracking
+                                ? const Color(0xFF4B5563)
+                                : const Color(0xFF9CA3AF),
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed: isTracking ? null : openMarketPicker,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
