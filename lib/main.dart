@@ -53,8 +53,10 @@ const String calibrationFactorPrefsKey = 'calibration_factor';
 const String calibrationMissionCountPrefsKey = 'calibration_mission_count';
 const String pendingLeadsQueuePrefsKey = 'pending_leads_queue';
 const String activeMissionIdPrefsKey = 'active_mission_id';
+const String activeCoverageCityPrefsKey = 'active_coverage_city';
+const String recentMarketCitiesPrefsKey = 'recent_market_cities';
 const String leadPhotosBucket = 'lead-photos';
-const String coverageCity = 'Owasso';
+const String defaultCoverageCity = 'Owasso';
 const String primaryTulsaParcelLayerUrl =
     'https://map11.incog.org/arcgis11wa/rest/services/Parcels_TulsaCo/FeatureServer/0/query';
 const String fallbackTulsaParcelLayerUrl =
@@ -62,16 +64,6 @@ const String fallbackTulsaParcelLayerUrl =
 const List<String> tulsaParcelLayerUrls = [
   primaryTulsaParcelLayerUrl,
   fallbackTulsaParcelLayerUrl,
-];
-const List<String> supportedCoverageCities = [
-  'Owasso',
-  'Tulsa',
-  'Broken Arrow',
-  'Bixby',
-  'Jenks',
-  'Sand Springs',
-  'Collinsville',
-  'Skiatook',
 ];
 const int visibleParcelZoom = 17;
 const int houseNumberLabelZoom = 18;
@@ -915,6 +907,98 @@ class CityStreet {
       streetName: map['street_name']?.toString() ?? '',
       path: parseStreetPath(map['path']),
     );
+  }
+}
+
+class CityReadiness {
+  final String cityName;
+  final String displayName;
+  final String stateName;
+  final String stateCode;
+  final int? rankInState;
+  final int? population;
+  final double? latitude;
+  final double? longitude;
+  final String marketStatus;
+  final int streetCount;
+  final int propertyCount;
+  final int targetCount;
+  final int leadCount;
+  final int driveAreaCount;
+  final int coveredStreetCount;
+  final bool parcelServiceVerified;
+  final String streetImportStatus;
+  final bool marketMapBuilt;
+  final double ownerInfoPercent;
+
+  const CityReadiness({
+    required this.cityName,
+    required this.displayName,
+    required this.stateName,
+    required this.stateCode,
+    required this.rankInState,
+    required this.population,
+    required this.latitude,
+    required this.longitude,
+    required this.marketStatus,
+    required this.streetCount,
+    required this.propertyCount,
+    required this.targetCount,
+    required this.leadCount,
+    required this.driveAreaCount,
+    required this.coveredStreetCount,
+    required this.parcelServiceVerified,
+    required this.streetImportStatus,
+    required this.marketMapBuilt,
+    required this.ownerInfoPercent,
+  });
+
+  double get readinessScore {
+    final streetLayerScore = streetCount < 1
+        ? 0.0
+        : streetCount < 500
+        ? 50.0
+        : 100.0;
+    final parcelServiceScore = parcelServiceVerified ? 100.0 : 0.0;
+    final marketMapScore = propertyCount < 1 ? 0.0 : 100.0;
+    final coverageScore = streetCount < 1 ? 0.0 : 100.0;
+
+    return streetLayerScore * 0.35 +
+        parcelServiceScore * 0.25 +
+        marketMapScore * 0.20 +
+        ownerInfoPercent.clamp(0, 100) * 0.10 +
+        coverageScore * 0.10;
+  }
+
+  String get statusLabel {
+    if (streetCount > 0 && propertyCount > 0) return 'Ready';
+    if (streetCount > 0 || propertyCount > 0) return 'Partial';
+    if (marketStatus == 'planned') return 'Planned';
+    return 'Missing Data';
+  }
+
+  Color get statusColor {
+    switch (statusLabel) {
+      case 'Ready':
+        return Colors.green;
+      case 'Partial':
+        return Colors.amber;
+      case 'Missing Data':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  bool get isDrivable {
+    return statusLabel == 'Ready';
+  }
+
+  String get suggestedNextStep {
+    if (streetCount < 1) return 'Import streets';
+    if (propertyCount < 1) return 'Import properties';
+    if (targetCount < 1) return 'Build Market Map';
+    return 'Ready to drive';
   }
 }
 
@@ -2469,6 +2553,16 @@ class _AreasTab extends StatelessWidget {
     });
   }
 
+  Future<void> analyzeArea(DriveArea area) async {
+    final state = driveState;
+    if (state == null || state.isBuildingMarketMap) return;
+
+    await state.setActiveDriveArea(area);
+    onRefresh();
+    await state.buildMarketMap();
+    onRefresh();
+  }
+
   Future<void> setActive(BuildContext context, DriveArea area) async {
     final state = driveState;
     if (state == null) return;
@@ -2486,6 +2580,42 @@ class _AreasTab extends StatelessWidget {
     onRefresh();
   }
 
+  void openCityDetail(BuildContext context, CityReadiness city) {
+    final state = driveState;
+    if (state == null) return;
+
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _CityDetailScreen(
+          city: city,
+          activeCity: state.selectedCoverageCity,
+          onSetActiveCity: () async {
+            await state.changeCoverageCity(city.cityName);
+            onRefresh();
+          },
+        ),
+      ),
+    );
+  }
+
+  void openCityList(BuildContext context) {
+    final state = driveState;
+    if (state == null) return;
+
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _CityListScreen(
+          cities: state.cityReadiness,
+          activeCity: state.selectedCoverageCity,
+          recentMarkets: state.recentMarketCities,
+          onOpenCity: (city) => openCityDetail(context, city),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = driveState;
@@ -2498,6 +2628,24 @@ class _AreasTab extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.add_location_alt),
+                label: const Text('Create Area'),
+                onPressed: onCreateNewArea,
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (state != null)
+              _MarketsOverviewSection(
+                cities: state.cityReadiness,
+                activeCity: state.selectedCoverageCity,
+                isLoading: state.isLoadingCityReadiness,
+                onViewAll: () => openCityList(context),
+                onOpenCity: (city) => openCityDetail(context, city),
+              ),
+            const SizedBox(height: 16),
             if (state == null || state.isLoadingDriveAreas)
               const _AreasLoadingCard()
             else
@@ -2506,9 +2654,13 @@ class _AreasTab extends StatelessWidget {
                 stats: activeArea == null
                     ? null
                     : _areaStatsForDriveArea(state, activeArea),
+                isAnalyzing: state.isBuildingMarketMap,
                 onStartMission: activeArea == null
                     ? null
                     : () => startMissionForArea(context, activeArea),
+                onAnalyzeArea: activeArea == null
+                    ? null
+                    : () => analyzeArea(activeArea),
                 onOpenArea: activeArea == null
                     ? null
                     : () => openAreaDetail(context, activeArea),
@@ -2538,7 +2690,9 @@ class _AreasTab extends StatelessWidget {
               const Card(
                 child: Padding(
                   padding: EdgeInsets.all(18),
-                  child: Text('No saved areas yet. Create one to begin.'),
+                  child: Text(
+                    'No saved areas yet. Create an area from the map, then analyze it to load homes and start missions.',
+                  ),
                 ),
               )
             else
@@ -2552,17 +2706,13 @@ class _AreasTab extends StatelessWidget {
                   stats: stats,
                   isActive: isActive,
                   lastMissionLabel: lastMissionLabel(lastMission),
+                  isAnalyzing: state.isBuildingMarketMap && isActive,
                   onOpenArea: () => openAreaDetail(context, area),
+                  onAnalyzeArea: () => analyzeArea(area),
                   onStartMission: () => startMissionForArea(context, area),
                   onSetActive: isActive ? null : () => setActive(context, area),
                 );
               }),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              icon: const Icon(Icons.add_location_alt),
-              label: const Text('Create New Area'),
-              onPressed: onCreateNewArea,
-            ),
           ],
         ),
       ),
@@ -2597,13 +2747,17 @@ class _AreasLoadingCard extends StatelessWidget {
 class _ActiveAreaBanner extends StatelessWidget {
   final DriveArea? area;
   final AreaStats? stats;
+  final bool isAnalyzing;
   final VoidCallback? onStartMission;
+  final VoidCallback? onAnalyzeArea;
   final VoidCallback? onOpenArea;
 
   const _ActiveAreaBanner({
     required this.area,
     required this.stats,
+    required this.isAnalyzing,
     required this.onStartMission,
+    required this.onAnalyzeArea,
     required this.onOpenArea,
   });
 
@@ -2620,12 +2774,12 @@ class _ActiveAreaBanner extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Pick or create an area to get started',
+                'No active area selected',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               const Text(
-                'Areas are where research, targets, and mission history live.',
+                'Set an area active to analyze homes, start missions, and track coverage from one place.',
                 style: TextStyle(color: Color(0xFF6B7280)),
               ),
             ],
@@ -2641,6 +2795,15 @@ class _ActiveAreaBanner extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const Text(
+              'Active Area',
+              style: TextStyle(
+                color: Color(0xFF9CA3AF),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
             Text(
               area.name,
               style: const TextStyle(
@@ -2662,6 +2825,50 @@ class _ActiveAreaBanner extends StatelessWidget {
               color: const Color(0xFF22C55E),
               backgroundColor: const Color(0xFF374151),
             ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _AreaMetricPill(
+                  label: 'Total streets',
+                  value: '${stats.streetsCovered + stats.streetsRemaining}',
+                  dark: true,
+                ),
+                _AreaMetricPill(
+                  label: 'Covered',
+                  value: stats.streetsCovered.toString(),
+                  dark: true,
+                ),
+                _AreaMetricPill(
+                  label: 'Remaining',
+                  value: stats.streetsRemaining.toString(),
+                  dark: true,
+                ),
+                _AreaMetricPill(
+                  label: 'Total miles',
+                  value: _compactMilesLabel(stats.totalMiles),
+                  dark: true,
+                ),
+                _AreaMetricPill(
+                  label: 'Miles left',
+                  value: _compactMilesLabel(stats.milesRemaining),
+                  dark: true,
+                ),
+              ],
+            ),
+            if (stats.streetsCovered + stats.streetsRemaining == 0) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'No street data is loaded inside this area yet, so mileage cannot be calculated.',
+                style: TextStyle(color: Color(0xFFD1D5DB), fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 10),
+            const Text(
+              'Analyze Area loads parcel and home records so targets and mission time estimates can be ranked. It does not mark streets covered.',
+              style: TextStyle(color: Color(0xFFD1D5DB), fontSize: 12),
+            ),
             const SizedBox(height: 14),
             Wrap(
               spacing: 10,
@@ -2671,6 +2878,15 @@ class _ActiveAreaBanner extends StatelessWidget {
                   icon: const Icon(Icons.flag),
                   label: const Text('Start Mission'),
                   onPressed: onStartMission,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.analytics),
+                  label: Text(isAnalyzing ? 'Analyzing...' : 'Analyze Area'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0xFF9CA3AF)),
+                  ),
+                  onPressed: isAnalyzing ? null : onAnalyzeArea,
                 ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.open_in_new),
@@ -2695,7 +2911,9 @@ class _AreaListCard extends StatelessWidget {
   final AreaStats stats;
   final bool isActive;
   final String lastMissionLabel;
+  final bool isAnalyzing;
   final VoidCallback onOpenArea;
+  final VoidCallback onAnalyzeArea;
   final VoidCallback onStartMission;
   final VoidCallback? onSetActive;
 
@@ -2704,7 +2922,9 @@ class _AreaListCard extends StatelessWidget {
     required this.stats,
     required this.isActive,
     required this.lastMissionLabel,
+    required this.isAnalyzing,
     required this.onOpenArea,
+    required this.onAnalyzeArea,
     required this.onStartMission,
     required this.onSetActive,
   });
@@ -2770,6 +2990,40 @@ class _AreaListCard extends StatelessWidget {
               minHeight: 4,
             ),
             const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _AreaMetricPill(
+                  label: 'Total streets',
+                  value: '${stats.streetsCovered + stats.streetsRemaining}',
+                ),
+                _AreaMetricPill(
+                  label: 'Covered',
+                  value: stats.streetsCovered.toString(),
+                ),
+                _AreaMetricPill(
+                  label: 'Remaining',
+                  value: stats.streetsRemaining.toString(),
+                ),
+                _AreaMetricPill(
+                  label: 'Total miles',
+                  value: _compactMilesLabel(stats.totalMiles),
+                ),
+                _AreaMetricPill(
+                  label: 'Miles left',
+                  value: _compactMilesLabel(stats.milesRemaining),
+                ),
+              ],
+            ),
+            if (stats.streetsCovered + stats.streetsRemaining == 0) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'No street data loaded inside this area yet.',
+                style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 10),
             Text(
               '${stats.leadsInArea} leads · ${stats.hotLeads} hot leads',
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -2788,6 +3042,10 @@ class _AreaListCard extends StatelessWidget {
                   onPressed: onOpenArea,
                   child: const Text('Open Area'),
                 ),
+                OutlinedButton(
+                  onPressed: isAnalyzing ? null : onAnalyzeArea,
+                  child: Text(isAnalyzing ? 'Analyzing...' : 'Analyze Area'),
+                ),
                 FilledButton(
                   onPressed: onStartMission,
                   child: const Text('Start Mission'),
@@ -2802,6 +3060,826 @@ class _AreaListCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AreaMetricPill extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool dark;
+
+  const _AreaMetricPill({
+    required this.label,
+    required this.value,
+    this.dark = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = dark ? Colors.white : const Color(0xFF111827);
+    final secondary = dark ? const Color(0xFFD1D5DB) : const Color(0xFF6B7280);
+    final background = dark ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6);
+
+    return Container(
+      constraints: const BoxConstraints(minWidth: 112),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: dark ? const Color(0xFF374151) : const Color(0xFFE5E7EB),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              color: foreground,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: secondary,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MarketsOverviewSection extends StatelessWidget {
+  final List<CityReadiness> cities;
+  final String activeCity;
+  final bool isLoading;
+  final VoidCallback onViewAll;
+  final ValueChanged<CityReadiness> onOpenCity;
+
+  const _MarketsOverviewSection({
+    required this.cities,
+    required this.activeCity,
+    required this.isLoading,
+    required this.onViewAll,
+    required this.onOpenCity,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final activeMarket = cities
+        .where((city) => city.cityName == activeCity)
+        .firstOrNull;
+    final readyCount = cities
+        .where((city) => city.statusLabel == 'Ready')
+        .length;
+    final partialCount = cities
+        .where((city) => city.statusLabel == 'Partial')
+        .length;
+    final plannedCount = cities
+        .where((city) => city.statusLabel == 'Planned')
+        .length;
+    final missingCount = cities
+        .where((city) => city.statusLabel == 'Missing Data')
+        .length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Market Coverage',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+            ),
+            TextButton(onPressed: onViewAll, child: const Text('View all')),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (isLoading && cities.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 12),
+                  Text('Loading market readiness...'),
+                ],
+              ),
+            ),
+          )
+        else if (cities.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No market city config found yet.'),
+            ),
+          )
+        else
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                activeMarket == null
+                    ? 'Active market: $activeCity'
+                    : 'Active market: ${activeMarket.displayName}',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _MarketCountChip(label: 'Ready', count: readyCount),
+                  _MarketCountChip(label: 'Partial', count: partialCount),
+                  _MarketCountChip(label: 'Planned', count: plannedCount),
+                  _MarketCountChip(label: 'Missing Data', count: missingCount),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Planned markets are catalog entries only. They become Partial or Ready only after street/property data exists.',
+                style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: cities
+                      .take(20)
+                      .map((city) {
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ActionChip(
+                            avatar: _StatusDot(color: city.statusColor),
+                            label: Text(
+                              '${city.displayName} · ${city.statusLabel}',
+                            ),
+                            onPressed: () => onOpenCity(city),
+                          ),
+                        );
+                      })
+                      .toList(growable: false),
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _MarketCountChip extends StatelessWidget {
+  final String label;
+  final int count;
+
+  const _MarketCountChip({required this.label, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(label: Text('$label: $count'));
+  }
+}
+
+class _CityListScreen extends StatefulWidget {
+  final List<CityReadiness> cities;
+  final String activeCity;
+  final List<String> recentMarkets;
+  final ValueChanged<CityReadiness> onOpenCity;
+
+  const _CityListScreen({
+    required this.cities,
+    required this.activeCity,
+    required this.recentMarkets,
+    required this.onOpenCity,
+  });
+
+  @override
+  State<_CityListScreen> createState() => _CityListScreenState();
+}
+
+class _CityListScreenState extends State<_CityListScreen> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedQuery = query.trim().toLowerCase();
+    final filteredCities = widget.cities
+        .where((city) {
+          if (normalizedQuery.isEmpty) return true;
+
+          return city.cityName.toLowerCase().contains(normalizedQuery) ||
+              city.displayName.toLowerCase().contains(normalizedQuery) ||
+              city.stateName.toLowerCase().contains(normalizedQuery) ||
+              city.stateCode.toLowerCase().contains(normalizedQuery);
+        })
+        .toList(growable: false);
+    final activeMarket = widget.cities
+        .where((city) => city.cityName == widget.activeCity)
+        .firstOrNull;
+    final recentMarkets = widget.recentMarkets
+        .map(
+          (cityName) => widget.cities
+              .where((city) => city.cityName == cityName)
+              .firstOrNull,
+        )
+        .whereType<CityReadiness>()
+        .toList(growable: false);
+    final stateCodes =
+        filteredCities
+            .map(
+              (city) =>
+                  city.stateCode.isEmpty ? city.stateName : city.stateCode,
+            )
+            .toSet()
+            .toList()
+          ..sort();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Market Coverage')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            TextField(
+              decoration: const InputDecoration(
+                labelText: 'Search city or state',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) => setState(() => query = value),
+            ),
+            const SizedBox(height: 16),
+            if (activeMarket != null) ...[
+              const Text(
+                'Active Market',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              _MarketCard(
+                city: activeMarket,
+                isActive: true,
+                onTap: () => widget.onOpenCity(activeMarket),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (recentMarkets.isNotEmpty) ...[
+              const Text(
+                'Recent Markets',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: recentMarkets
+                    .map((city) {
+                      return ActionChip(
+                        avatar: _StatusDot(color: city.statusColor),
+                        label: Text(city.displayName),
+                        onPressed: () => widget.onOpenCity(city),
+                      );
+                    })
+                    .toList(growable: false),
+              ),
+              const SizedBox(height: 16),
+            ],
+            ...stateCodes.expand((stateCode) {
+              final stateCities =
+                  filteredCities
+                      .where(
+                        (city) =>
+                            (city.stateCode.isEmpty
+                                ? city.stateName
+                                : city.stateCode) ==
+                            stateCode,
+                      )
+                      .toList(growable: false)
+                    ..sort((a, b) {
+                      final rankCompare = (a.rankInState ?? 999).compareTo(
+                        b.rankInState ?? 999,
+                      );
+                      if (rankCompare != 0) return rankCompare;
+                      return a.cityName.compareTo(b.cityName);
+                    });
+
+              return [
+                Text(
+                  stateCode,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...stateCities.map(
+                  (city) => _MarketCard(
+                    city: city,
+                    isActive: city.cityName == widget.activeCity,
+                    onTap: () => widget.onOpenCity(city),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ];
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketCard extends StatelessWidget {
+  final CityReadiness city;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _MarketCard({
+    required this.city,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: _StatusDot(color: city.statusColor),
+        title: Row(
+          children: [
+            Expanded(child: Text(city.displayName)),
+            _ReadinessChip(city: city),
+          ],
+        ),
+        subtitle: Text(
+          '${city.streetCount} streets - ${city.propertyCount} properties - ${city.targetCount} targets\n'
+          '${city.leadCount} leads - ${city.driveAreaCount} areas - ${city.suggestedNextStep}'
+          '${isActive ? ' - Active market' : ''}',
+        ),
+        isThreeLine: true,
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _MarketPickerScreen extends StatefulWidget {
+  final List<CityReadiness> cities;
+  final String activeCity;
+  final List<String> recentMarkets;
+
+  const _MarketPickerScreen({
+    required this.cities,
+    required this.activeCity,
+    required this.recentMarkets,
+  });
+
+  @override
+  State<_MarketPickerScreen> createState() => _MarketPickerScreenState();
+}
+
+class _MarketPickerScreenState extends State<_MarketPickerScreen> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedQuery = query.trim().toLowerCase();
+    final filteredCities = widget.cities
+        .where((city) {
+          if (normalizedQuery.isEmpty) return true;
+
+          return city.cityName.toLowerCase().contains(normalizedQuery) ||
+              city.displayName.toLowerCase().contains(normalizedQuery) ||
+              city.stateName.toLowerCase().contains(normalizedQuery) ||
+              city.stateCode.toLowerCase().contains(normalizedQuery);
+        })
+        .toList(growable: false);
+    final activeMarket = widget.cities
+        .where((city) => city.cityName == widget.activeCity)
+        .firstOrNull;
+    final recentMarkets = widget.recentMarkets
+        .map(
+          (cityName) => widget.cities
+              .where((city) => city.cityName == cityName)
+              .firstOrNull,
+        )
+        .whereType<CityReadiness>()
+        .toList(growable: false);
+    final stateCodes =
+        filteredCities
+            .map(
+              (city) =>
+                  city.stateCode.isEmpty ? city.stateName : city.stateCode,
+            )
+            .toSet()
+            .toList()
+          ..sort();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Choose Market')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            TextField(
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Search city or state',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) => setState(() => query = value),
+            ),
+            const SizedBox(height: 16),
+            if (activeMarket != null) ...[
+              const Text(
+                'Active Market',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              _MarketCard(
+                city: activeMarket,
+                isActive: true,
+                onTap: () => Navigator.pop(context, activeMarket),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (recentMarkets.isNotEmpty) ...[
+              const Text(
+                'Recent Markets',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: recentMarkets
+                    .map((city) {
+                      return ActionChip(
+                        avatar: _StatusDot(color: city.statusColor),
+                        label: Text(city.displayName),
+                        onPressed: () => Navigator.pop(context, city),
+                      );
+                    })
+                    .toList(growable: false),
+              ),
+              const SizedBox(height: 16),
+            ],
+            ...stateCodes.expand((stateCode) {
+              final stateCities =
+                  filteredCities
+                      .where(
+                        (city) =>
+                            (city.stateCode.isEmpty
+                                ? city.stateName
+                                : city.stateCode) ==
+                            stateCode,
+                      )
+                      .toList(growable: false)
+                    ..sort((a, b) {
+                      final rankCompare = (a.rankInState ?? 999).compareTo(
+                        b.rankInState ?? 999,
+                      );
+                      if (rankCompare != 0) return rankCompare;
+                      return a.cityName.compareTo(b.cityName);
+                    });
+
+              return [
+                Text(
+                  stateCode,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...stateCities.map(
+                  (city) => _MarketCard(
+                    city: city,
+                    isActive: city.cityName == widget.activeCity,
+                    onTap: () => Navigator.pop(context, city),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ];
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReadinessChip extends StatelessWidget {
+  final CityReadiness city;
+
+  const _ReadinessChip({required this.city});
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      avatar: _StatusDot(color: city.statusColor),
+      label: Text(city.statusLabel),
+    );
+  }
+}
+
+class _CityDetailScreen extends StatelessWidget {
+  final CityReadiness city;
+  final String activeCity;
+  final Future<void> Function() onSetActiveCity;
+
+  const _CityDetailScreen({
+    required this.city,
+    required this.activeCity,
+    required this.onSetActiveCity,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(city.displayName)),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      city.readinessScore.toStringAsFixed(0),
+                      style: TextStyle(
+                        color: city.statusColor,
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      city.statusLabel,
+                      style: TextStyle(
+                        color: city.statusColor,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      city.cityName == activeCity
+                          ? 'Active coverage city'
+                          : 'Market status: ${city.marketStatus}',
+                      style: const TextStyle(color: Color(0xFF6B7280)),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _AreaMetricPill(
+                          label: 'Next step',
+                          value: city.suggestedNextStep,
+                        ),
+                        _AreaMetricPill(
+                          label: 'Drive areas',
+                          value: city.driveAreaCount.toString(),
+                        ),
+                        _AreaMetricPill(
+                          label: 'Leads',
+                          value: city.leadCount.toString(),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Data Layers',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _DataLayerRow(
+                      status: city.streetCount >= 500
+                          ? _LayerStatus.ready
+                          : city.streetCount > 0
+                          ? _LayerStatus.partial
+                          : _LayerStatus.missing,
+                      label: 'Street centerlines',
+                      detail: '${city.streetCount} streets',
+                    ),
+                    _DataLayerRow(
+                      status: city.parcelServiceVerified
+                          ? _LayerStatus.ready
+                          : _LayerStatus.missing,
+                      label: 'Parcel service',
+                      detail: city.parcelServiceVerified
+                          ? 'Verified'
+                          : 'NOT VERIFIED',
+                    ),
+                    _DataLayerRow(
+                      status: city.marketMapBuilt
+                          ? _LayerStatus.ready
+                          : _LayerStatus.missing,
+                      label: 'Market map',
+                      detail: city.marketMapBuilt
+                          ? '${city.propertyCount} properties, ${city.targetCount} targets'
+                          : 'NOT BUILT',
+                    ),
+                    _DataLayerRow(
+                      status: city.ownerInfoPercent >= 80
+                          ? _LayerStatus.ready
+                          : city.ownerInfoPercent > 0
+                          ? _LayerStatus.partial
+                          : _LayerStatus.missing,
+                      label: 'Owner info',
+                      detail:
+                          '${city.ownerInfoPercent.toStringAsFixed(0)}% filled',
+                    ),
+                    _DataLayerRow(
+                      status: city.coveredStreetCount > 0
+                          ? _LayerStatus.ready
+                          : city.streetCount > 0
+                          ? _LayerStatus.partial
+                          : _LayerStatus.missing,
+                      label: 'Coverage tracking',
+                      detail: '${city.coveredStreetCount} covered streets',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Driving Readiness',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _CapabilityRow(label: 'Missions', enabled: city.isDrivable),
+                    _CapabilityRow(
+                      label: 'Property Preview',
+                      enabled: city.parcelServiceVerified,
+                    ),
+                    _CapabilityRow(
+                      label: 'Quick Capture',
+                      enabled: city.streetCount > 0,
+                    ),
+                    _CapabilityRow(
+                      label: 'Market Map targets',
+                      enabled: city.marketMapBuilt,
+                    ),
+                    _CapabilityRow(
+                      label: 'Coverage tracking',
+                      enabled: city.streetCount > 0,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (city.statusLabel != 'Ready')
+              Card(
+                color: const Color(0xFFF3F4F6),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    '${city.displayName} is ${city.statusLabel}. You can set it active, but Drive will show missing streets/properties until data is imported.',
+                  ),
+                ),
+              ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              icon: const Icon(Icons.check_circle),
+              label: Text(
+                city.cityName == activeCity
+                    ? 'Active City'
+                    : 'Set as Active City',
+              ),
+              onPressed: city.cityName == activeCity
+                  ? null
+                  : () async {
+                      await onSetActiveCity();
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Active city set to ${city.displayName}',
+                          ),
+                        ),
+                      );
+                      Navigator.pop(context);
+                    },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _LayerStatus { ready, partial, missing }
+
+class _DataLayerRow extends StatelessWidget {
+  final _LayerStatus status;
+  final String label;
+  final String detail;
+
+  const _DataLayerRow({
+    required this.status,
+    required this.label,
+    required this.detail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = switch (status) {
+      _LayerStatus.ready => Icons.check_circle,
+      _LayerStatus.partial => Icons.remove_circle,
+      _LayerStatus.missing => Icons.cancel,
+    };
+    final color = switch (status) {
+      _LayerStatus.ready => Colors.green,
+      _LayerStatus.partial => Colors.amber,
+      _LayerStatus.missing => Colors.red,
+    };
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: color),
+      title: Text(label),
+      subtitle: Text(detail),
+    );
+  }
+}
+
+class _CapabilityRow extends StatelessWidget {
+  final String label;
+  final bool enabled;
+
+  const _CapabilityRow({required this.label, required this.enabled});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        enabled ? Icons.check_circle : Icons.cancel,
+        color: enabled ? Colors.green : Colors.grey,
+      ),
+      title: Text(label),
+    );
+  }
+}
+
+class _StatusDot extends StatelessWidget {
+  final Color color;
+
+  const _StatusDot({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }
@@ -2887,6 +3965,10 @@ String lastMissionLabel(Mission? mission) {
 
 String _compactMiles(double miles) {
   return miles.toStringAsFixed(miles >= 10 ? 0 : 1);
+}
+
+String _compactMilesLabel(double miles) {
+  return '${_compactMiles(miles)} mi';
 }
 
 String _missionDateLabel(DateTime? date) {
@@ -3108,6 +4190,13 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
                       runSpacing: 10,
                       children: [
                         _DriveStatTile(
+                          label: 'Total streets',
+                          value:
+                              '${stats.streetsCovered + stats.streetsRemaining}',
+                          icon: Icons.map,
+                          color: const Color(0xFF4F46E5),
+                        ),
+                        _DriveStatTile(
                           label: 'Covered',
                           value: stats.streetsCovered.toString(),
                           icon: Icons.check_circle,
@@ -3121,12 +4210,29 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
                         ),
                         _DriveStatTile(
                           label: 'Miles left',
-                          value: _compactMiles(stats.milesRemaining),
+                          value: _compactMilesLabel(stats.milesRemaining),
                           icon: Icons.timeline,
                           color: const Color(0xFF2563EB),
                         ),
+                        _DriveStatTile(
+                          label: 'Total miles',
+                          value: _compactMilesLabel(stats.totalMiles),
+                          icon: Icons.straighten,
+                          color: const Color(0xFF0891B2),
+                        ),
                       ],
                     ),
+                    if (stats.streetsCovered + stats.streetsRemaining == 0)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 10),
+                        child: Text(
+                          'No street data is loaded inside this area yet, so total miles and miles left are 0 mi.',
+                          style: TextStyle(
+                            color: Color(0xFF6B7280),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -3267,7 +4373,9 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
                         child: Center(child: CircularProgressIndicator()),
                       )
                     else if (properties.isEmpty)
-                      const Text('Analyze Area to load homes and targets.')
+                      const Text(
+                        'Analyze Area loads parcel and home records inside this boundary. That powers target filters, opportunity score, and mission time estimates.',
+                      )
                     else if (shownProperties.isEmpty)
                       const Text('No homes match these filters.')
                     else
@@ -4126,7 +5234,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   LatLng currentMapCenter = const LatLng(36.2695, -95.8547);
   double currentZoom = 13;
-  String selectedCoverageCity = coverageCity;
+  String selectedCoverageCity = defaultCoverageCity;
   LatLng? myLocation;
   Position? lastKnownPosition;
   bool isFindingLocation = false;
@@ -4160,6 +5268,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool isLoadingDriveAreas = true;
   bool isSavingDriveArea = false;
   bool showOnlyActiveArea = false;
+  bool showSavedAreasWhileDrawing = false;
+  List<CityReadiness> cityReadiness = [];
+  DateTime? cityReadinessLoadedAt;
+  bool isLoadingCityReadiness = false;
+  List<String> recentMarketCities = [];
   List<MarketProperty> marketProperties = [];
   bool isLoadingMarketProperties = false;
   bool isBuildingMarketMap = false;
@@ -4200,9 +5313,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   void initState() {
     super.initState();
     drivingLeads = widget.leads;
-    loadSavedDrivingPoints();
-    loadStreetCoverage();
-    loadDriveAreas();
+    loadStartupData();
     loadMissionPlannerPreferences();
   }
 
@@ -4295,6 +5406,28 @@ class _DrivingScreenState extends State<DrivingScreen> {
       builder: (dialogContext) =>
           const Dialog.fullscreen(child: FieldTestLogScreen()),
     );
+  }
+
+  Future<void> loadStartupData() async {
+    await loadActiveCoverageCityPreference();
+    unawaited(loadSavedDrivingPoints());
+    unawaited(loadStreetCoverage());
+    unawaited(loadDriveAreas());
+    unawaited(loadCityReadiness());
+  }
+
+  Future<void> loadActiveCoverageCityPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final activeCity = prefs.getString(activeCoverageCityPrefsKey);
+    final recentCities = prefs.getStringList(recentMarketCitiesPrefsKey) ?? [];
+    if (!mounted) return;
+
+    setState(() {
+      if (activeCity != null && activeCity.isNotEmpty) {
+        selectedCoverageCity = activeCity;
+      }
+      recentMarketCities = recentCities;
+    });
   }
 
   Future<void> loadDrivingLeads() async {
@@ -4405,6 +5538,159 @@ class _DrivingScreenState extends State<DrivingScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not load street coverage.')),
       );
+    }
+  }
+
+  Future<List<CityReadiness>> loadCityReadiness({
+    bool forceRefresh = false,
+  }) async {
+    final loadedAt = cityReadinessLoadedAt;
+    if (!forceRefresh &&
+        loadedAt != null &&
+        DateTime.now().difference(loadedAt) < const Duration(minutes: 5)) {
+      return cityReadiness;
+    }
+
+    if (mounted) {
+      setState(() {
+        isLoadingCityReadiness = true;
+      });
+    }
+
+    try {
+      final cityRows = await supabase
+          .from('market_cities')
+          .select()
+          .order('state_code')
+          .order('rank_in_state');
+      final readiness = <CityReadiness>[];
+
+      for (final row in cityRows) {
+        int? parseInt(dynamic value) {
+          if (value is int) return value;
+          if (value is num) return value.toInt();
+          return int.tryParse(value?.toString() ?? '');
+        }
+
+        double? parseDouble(dynamic value) {
+          if (value is double) return value;
+          if (value is num) return value.toDouble();
+          return double.tryParse(value?.toString() ?? '');
+        }
+
+        final cityName =
+            row['city']?.toString() ?? row['city_name']?.toString() ?? '';
+        if (cityName.isEmpty) continue;
+        final stateName = row['state']?.toString() ?? '';
+        final stateCode = row['state_code']?.toString() ?? stateName;
+        final marketStatus =
+            row['market_status']?.toString() ??
+            row['rollout_status']?.toString() ??
+            'planned';
+        if (marketStatus == 'disabled') continue;
+
+        final streetRows = await supabase
+            .from('city_streets')
+            .select('id')
+            .eq('city', cityName);
+        final coverageRows = await supabase
+            .from('street_coverage')
+            .select('street_id')
+            .eq('account_id', widget.activeAccountId)
+            .eq('city', cityName);
+        final areaRows = await supabase
+            .from('drive_areas')
+            .select('id,polygon')
+            .eq('account_id', widget.activeAccountId)
+            .eq('city', cityName);
+        final areaIds = areaRows
+            .map<String>((area) => area['id'].toString())
+            .toList(growable: false);
+        final propertyRows = areaIds.isEmpty
+            ? const <Map<String, dynamic>>[]
+            : await supabase
+                  .from('properties')
+                  .select('id,owner_name,target_score')
+                  .eq('account_id', widget.activeAccountId)
+                  .inFilter('drive_area_id', areaIds);
+        final ownerInfoCount = propertyRows.where((property) {
+          final ownerName = property['owner_name']?.toString().trim() ?? '';
+          return ownerName.isNotEmpty;
+        }).length;
+        final propertyCount = propertyRows.length;
+        final targetCount = propertyRows.where((property) {
+          final score = parseDouble(property['target_score']) ?? 0;
+          return score > 0;
+        }).length;
+        final cityPolygons = areaRows
+            .map<List<LatLng>>((area) => parseDriveAreaPolygon(area['polygon']))
+            .where((polygon) => polygon.length >= 3)
+            .toList(growable: false);
+        final leadCount = cityPolygons.isEmpty
+            ? 0
+            : drivingLeads.where((lead) {
+                if (lead.latitude == null || lead.longitude == null) {
+                  return false;
+                }
+
+                final point = LatLng(lead.latitude!, lead.longitude!);
+                return cityPolygons.any(
+                  (polygon) => pointInRing(point, polygon),
+                );
+              }).length;
+        final ownerInfoPercent = propertyCount == 0
+            ? 0.0
+            : (ownerInfoCount / propertyCount) * 100;
+        final displayName =
+            row['display_name']?.toString().trim().isNotEmpty == true
+            ? row['display_name'].toString()
+            : stateCode.isEmpty
+            ? cityName
+            : '$cityName, $stateCode';
+
+        readiness.add(
+          CityReadiness(
+            cityName: cityName,
+            displayName: displayName,
+            stateName: stateName,
+            stateCode: stateCode,
+            rankInState: parseInt(row['rank_in_state']),
+            population: parseInt(row['population']),
+            latitude: parseDouble(row['latitude']),
+            longitude: parseDouble(row['longitude']),
+            marketStatus: marketStatus,
+            streetCount: streetRows.length,
+            propertyCount: propertyCount,
+            targetCount: targetCount,
+            leadCount: leadCount,
+            driveAreaCount: areaRows.length,
+            coveredStreetCount: coverageRows.length,
+            parcelServiceVerified: row['parcel_service_verified'] == true,
+            streetImportStatus:
+                row['street_import_status']?.toString() ?? 'none',
+            marketMapBuilt: propertyCount > 0,
+            ownerInfoPercent: ownerInfoPercent,
+          ),
+        );
+      }
+
+      if (!mounted) return readiness;
+
+      setState(() {
+        cityReadiness = readiness;
+        cityReadinessLoadedAt = DateTime.now();
+        isLoadingCityReadiness = false;
+      });
+
+      return readiness;
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          isLoadingCityReadiness = false;
+        });
+      }
+
+      return cityReadiness;
     }
   }
 
@@ -6485,23 +7771,29 @@ class _DrivingScreenState extends State<DrivingScreen> {
               : (areaRemainingMinutes / sessionBudgetForEstimate).ceil();
           final hasAreaStreetData = areaStreets.isNotEmpty;
           final hasUncoveredAreaStreets = areaUncoveredStreets.isNotEmpty;
-          final hasMarketMapData = marketProperties.isNotEmpty;
+          final areaMarketProperties = activeDriveArea == null
+              ? const <MarketProperty>[]
+              : _marketPropertiesForArea(this, activeDriveArea!);
+          final currentStreetOpportunities = activeDriveArea == null
+              ? streetOpportunities
+              : streetOpportunitiesFor(areaStreets, areaMarketProperties);
+          final hasMarketMapData = areaMarketProperties.isNotEmpty;
           final includeUnscoredMissionStreets =
               hasMarketMapData && hasAreaStreetData;
           final previewStreets = timeMissionsEnabled && selectedBudget != null
               ? selectMissionStreetsForBudget(
-                  streetOpportunities,
+                  currentStreetOpportunities,
                   selectedBudget!,
                   includeUnscored: includeUnscoredMissionStreets,
                 )
               : defaultMissionStreets(
-                  streetOpportunities,
+                  currentStreetOpportunities,
                   includeUnscored: includeUnscoredMissionStreets,
                 );
           final forcedBestAvailableStreets =
               timeMissionsEnabled && selectedBudget != null
               ? selectMissionStreetsForBudget(
-                  streetOpportunities,
+                  currentStreetOpportunities,
                   selectedBudget!,
                   includeUnscored: includeUnscoredMissionStreets,
                   forceAtLeastOne: true,
@@ -6798,18 +8090,22 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             ],
                             if (!hasAreaStreetData || noMarketMapForArea) ...[
                               const SizedBox(height: 8),
-                              TextButton(
-                                style: TextButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: Size.zero,
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
+                              FilledButton.icon(
+                                icon: const Icon(Icons.analytics),
+                                label: Text(
+                                  isBuildingMarketMap
+                                      ? 'Analyzing area...'
+                                      : 'Analyze Area & Continue',
                                 ),
-                                onPressed: () {
-                                  Navigator.pop(sheetContext);
-                                  widget.onOpenAreas();
-                                },
-                                child: const Text('Analyze Area ->'),
+                                onPressed:
+                                    isBuildingMarketMap ||
+                                        activeDriveArea == null
+                                    ? null
+                                    : () async {
+                                        await buildMarketMap();
+                                        if (!sheetContext.mounted) return;
+                                        setSheetState(() {});
+                                      },
                               ),
                             ],
                           ],
@@ -6836,7 +8132,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             : () async {
                                 Navigator.pop(sheetContext);
                                 await generateMission(
-                                  streetOpportunities,
+                                  currentStreetOpportunities,
                                   includeUnscored:
                                       includeUnscoredMissionStreets,
                                 );
@@ -6857,7 +8153,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       selectedBudget;
                                 });
                                 await generateMission(
-                                  streetOpportunities,
+                                  currentStreetOpportunities,
                                   timeBudgetMinutes: selectedBudget,
                                   includeUnscored:
                                       includeUnscoredMissionStreets,
@@ -6881,7 +8177,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       selectedBudget;
                                 });
                                 await generateMission(
-                                  streetOpportunities,
+                                  currentStreetOpportunities,
                                   timeBudgetMinutes: timeMissionsEnabled
                                       ? selectedBudget
                                       : null,
@@ -6913,7 +8209,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           TextButton(
                             onPressed: () {
                               Navigator.pop(sheetContext);
-                              openWeeklyPlannerSheet(streetOpportunities);
+                              openWeeklyPlannerSheet(
+                                currentStreetOpportunities,
+                              );
                             },
                             child: const Text('Plan my week'),
                           ),
@@ -7415,6 +8713,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   void enterDrawAreaMode() {
     setState(() {
       isDrawAreaMode = true;
+      showSavedAreasWhileDrawing = false;
       selectedParcel = null;
       mapMode = 'drive';
     });
@@ -7970,14 +9269,52 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   Future<void> changeCoverageCity(String city) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(activeCoverageCityPrefsKey, city);
+    final updatedRecentMarkets = [
+      city,
+      ...recentMarketCities.where((recentCity) => recentCity != city),
+    ].take(8).toList(growable: false);
+    await prefs.setStringList(recentMarketCitiesPrefsKey, updatedRecentMarkets);
+
     setState(() {
       selectedCoverageCity = city;
+      recentMarketCities = updatedRecentMarkets;
       cityStreets = [];
       coveredStreetIds = {};
       totalCityStreetCount = 0;
     });
 
     await loadStreetCoverage();
+    await loadCityReadiness(forceRefresh: true);
+  }
+
+  Future<void> openMarketPicker() async {
+    final markets = cityReadiness.isEmpty
+        ? await loadCityReadiness(forceRefresh: true)
+        : cityReadiness;
+    if (!mounted) return;
+
+    final selectedMarket = await Navigator.push<CityReadiness>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _MarketPickerScreen(
+          cities: markets,
+          activeCity: selectedCoverageCity,
+          recentMarkets: recentMarketCities,
+        ),
+      ),
+    );
+    if (selectedMarket == null || !mounted) return;
+
+    await changeCoverageCity(selectedMarket.cityName);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Active market set to ${selectedMarket.displayName}'),
+      ),
+    );
   }
 
   void scheduleVisibleStreetLoad() {
@@ -9680,7 +11017,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           )
                           .toList(),
                     ),
-                  if (activeAreaPolygon.length >= 3)
+                  if (activeAreaPolygon.length >= 3 &&
+                      (!isDrawAreaMode || showSavedAreasWhileDrawing))
                     PolygonLayer(
                       polygons: [
                         Polygon(
@@ -10000,6 +11338,20 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 12),
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text('Show saved areas'),
+                                    subtitle: const Text(
+                                      'Turn this on if you want old boundaries visible while drawing.',
+                                    ),
+                                    value: showSavedAreasWhileDrawing,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        showSavedAreasWhileDrawing = value;
+                                      });
+                                    },
+                                  ),
+                                  const SizedBox(height: 8),
                                   Row(
                                     children: [
                                       Expanded(
@@ -10302,7 +11654,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       )
                                       .toList(),
                                 ),
-                              if (activeAreaPolygon.length >= 3)
+                              if (activeAreaPolygon.length >= 3 &&
+                                  (!isDrawAreaMode ||
+                                      showSavedAreasWhileDrawing))
                                 PolygonLayer(
                                   polygons: [
                                     Polygon(
@@ -11152,6 +12506,22 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                 ),
                                               ),
                                               const SizedBox(height: 8),
+                                              SwitchListTile(
+                                                contentPadding: EdgeInsets.zero,
+                                                dense: true,
+                                                title: const Text(
+                                                  'Show saved areas',
+                                                ),
+                                                value:
+                                                    showSavedAreasWhileDrawing,
+                                                onChanged: (value) {
+                                                  setState(() {
+                                                    showSavedAreasWhileDrawing =
+                                                        value;
+                                                  });
+                                                },
+                                              ),
+                                              const SizedBox(height: 8),
                                               Row(
                                                 children: [
                                                   Expanded(
@@ -11678,30 +13048,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 14),
-                                    DropdownButtonFormField<String>(
-                                      initialValue: selectedCoverageCity,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Coverage city',
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(Icons.public),
+                                        onPressed: isTracking
+                                            ? null
+                                            : openMarketPicker,
+                                        label: Text(
+                                          'Market: $selectedCoverageCity',
+                                        ),
                                       ),
-                                      items: supportedCoverageCities
-                                          .map(
-                                            (city) => DropdownMenuItem(
-                                              value: city,
-                                              child: Text(city),
-                                            ),
-                                          )
-                                          .toList(),
-                                      onChanged: isTracking
-                                          ? null
-                                          : (city) {
-                                              if (city == null ||
-                                                  city ==
-                                                      selectedCoverageCity) {
-                                                return;
-                                              }
-
-                                              changeCoverageCity(city);
-                                            },
                                     ),
                                   ],
                                 ),
