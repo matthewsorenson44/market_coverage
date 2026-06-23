@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-const cityName = 'Owasso';
 const overpassEndpoints = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
@@ -29,14 +28,16 @@ const excludedServices = {
 };
 
 Future<void> main(List<String> args) async {
+  final cityName = args.isNotEmpty ? args[0] : 'Owasso';
+  final stateCode = args.length > 1 ? args[1] : 'OK';
   final dryRun = args.contains('--dry-run');
   final keepSampleRows = args.contains('--keep-sample');
   final credentials = readSupabaseCredentials();
 
   stdout.writeln('Fetching $cityName streets from OpenStreetMap...');
 
-  final elements = await fetchOverpassElements();
-  final streets = buildStreetRows(elements);
+  final elements = await fetchOverpassElements(cityName);
+  final streets = buildStreetRows(elements, cityName);
 
   stdout.writeln('Found ${streets.length} named drivable street segments.');
 
@@ -64,6 +65,9 @@ Future<void> main(List<String> args) async {
   await upsertStreetRows(credentials, streets);
 
   stdout.writeln('Imported ${streets.length} $cityName street segments.');
+  stdout.writeln(
+    "Import complete. Now run in Supabase SQL Editor: select recompute_market_readiness('$cityName', '$stateCode');",
+  );
 }
 
 ({String url, String anonKey}) readSupabaseCredentials() {
@@ -84,12 +88,14 @@ Future<void> main(List<String> args) async {
   return (url: urlMatch.group(1)!, anonKey: anonKeyMatch.group(1)!);
 }
 
-Future<List<Map<String, dynamic>>> fetchOverpassElements() async {
+Future<List<Map<String, dynamic>>> fetchOverpassElements(
+  String cityName,
+) async {
   Object? lastError;
 
   for (final endpoint in overpassEndpoints) {
     try {
-      final elements = await fetchFromOverpass(endpoint);
+      final elements = await fetchFromOverpass(endpoint, cityName);
 
       if (elements.isNotEmpty) return elements;
     } catch (error) {
@@ -101,7 +107,10 @@ Future<List<Map<String, dynamic>>> fetchOverpassElements() async {
   throw StateError('Could not fetch streets from Overpass. $lastError');
 }
 
-Future<List<Map<String, dynamic>>> fetchFromOverpass(String endpoint) async {
+Future<List<Map<String, dynamic>>> fetchFromOverpass(
+  String endpoint,
+  String cityName,
+) async {
   final client = HttpClient();
   final request = await client.postUrl(Uri.parse(endpoint));
 
@@ -114,7 +123,7 @@ Future<List<Map<String, dynamic>>> fetchFromOverpass(String endpoint) async {
     HttpHeaders.userAgentHeader,
     'market_coverage street import',
   );
-  request.write('data=${Uri.encodeQueryComponent(overpassQuery)}');
+  request.write('data=${Uri.encodeQueryComponent(overpassQuery(cityName))}');
 
   final response = await request.close();
   final body = await response.transform(utf8.decoder).join();
@@ -135,9 +144,10 @@ Future<List<Map<String, dynamic>>> fetchFromOverpass(String endpoint) async {
   return elements.whereType<Map<String, dynamic>>().toList(growable: false);
 }
 
-const overpassQuery = '''
+String overpassQuery(String cityName) =>
+    '''
 [out:json][timeout:90];
-area["name"="Owasso"]["boundary"="administrative"]["admin_level"="8"]->.searchArea;
+area["name"="$cityName"]["boundary"="administrative"]["admin_level"="8"]->.searchArea;
 (
   way(area.searchArea)["highway"]["name"];
 );
@@ -146,6 +156,7 @@ out geom;
 
 List<Map<String, dynamic>> buildStreetRows(
   List<Map<String, dynamic>> elements,
+  String cityName,
 ) {
   final rowsById = <String, Map<String, dynamic>>{};
 

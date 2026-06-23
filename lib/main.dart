@@ -1002,6 +1002,349 @@ class CityReadiness {
   }
 }
 
+class Market {
+  final String id;
+  final String city;
+  final String state;
+  final String stateCode;
+  final String? county;
+  final String displayName;
+  final String? metro;
+  final int? population;
+  final int? metroRank;
+  final int? stateRank;
+  final String? parcelServiceUrl;
+  final int parcelServiceLayer;
+  final String parcelWhereClause;
+  final String streetDataStatus;
+  final String propertyDataStatus;
+  final String targetDataStatus;
+  final String readinessStatus;
+  final int cachedStreetCount;
+  final int cachedPropertyCount;
+  final int cachedTargetCount;
+  final DateTime? streetsLastImportedAt;
+  final DateTime? propertiesLastImportedAt;
+  final DateTime? targetsLastComputedAt;
+  final DateTime? lastImportedAt;
+  final int rolloutOrder;
+  final bool isActiveMarket;
+  final bool isVisibleInApp;
+  final String? notes;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  const Market({
+    required this.id,
+    required this.city,
+    required this.state,
+    required this.stateCode,
+    required this.county,
+    required this.displayName,
+    required this.metro,
+    required this.population,
+    required this.metroRank,
+    required this.stateRank,
+    required this.parcelServiceUrl,
+    required this.parcelServiceLayer,
+    required this.parcelWhereClause,
+    required this.streetDataStatus,
+    required this.propertyDataStatus,
+    required this.targetDataStatus,
+    required this.readinessStatus,
+    required this.cachedStreetCount,
+    required this.cachedPropertyCount,
+    required this.cachedTargetCount,
+    required this.streetsLastImportedAt,
+    required this.propertiesLastImportedAt,
+    required this.targetsLastComputedAt,
+    required this.lastImportedAt,
+    required this.rolloutOrder,
+    required this.isActiveMarket,
+    required this.isVisibleInApp,
+    required this.notes,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory Market.fromMap(Map<String, dynamic> map) {
+    int intValue(String key, [int fallback = 0]) {
+      final value = map[key];
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value?.toString() ?? '') ?? fallback;
+    }
+
+    int? nullableInt(String key) {
+      final value = map[key];
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value.toString());
+    }
+
+    DateTime? dateValue(String key) {
+      final value = map[key];
+      if (value == null) return null;
+      return DateTime.tryParse(value.toString());
+    }
+
+    final city = map['city']?.toString() ?? '';
+    final stateCode = map['state_code']?.toString() ?? '';
+    final displayName = map['display_name']?.toString();
+
+    return Market(
+      id: map['id']?.toString() ?? '',
+      city: city,
+      state: map['state']?.toString() ?? '',
+      stateCode: stateCode,
+      county: map['county']?.toString(),
+      displayName: displayName == null || displayName.trim().isEmpty
+          ? stateCode.isEmpty
+                ? city
+                : '$city, $stateCode'
+          : displayName,
+      metro: map['metro']?.toString(),
+      population: nullableInt('population'),
+      metroRank: nullableInt('metro_rank'),
+      stateRank: nullableInt('state_rank'),
+      parcelServiceUrl: map['parcel_service_url']?.toString(),
+      parcelServiceLayer: intValue('parcel_service_layer'),
+      parcelWhereClause:
+          map['parcel_where_clause']?.toString() ??
+          "PAR_TYPE IN ('PARCEL','CONDO')",
+      streetDataStatus: map['street_data_status']?.toString() ?? 'none',
+      propertyDataStatus: map['property_data_status']?.toString() ?? 'none',
+      targetDataStatus: map['target_data_status']?.toString() ?? 'none',
+      readinessStatus: map['readiness_status']?.toString() ?? 'planned',
+      cachedStreetCount: intValue('cached_street_count'),
+      cachedPropertyCount: intValue('cached_property_count'),
+      cachedTargetCount: intValue('cached_target_count'),
+      streetsLastImportedAt: dateValue('streets_last_imported_at'),
+      propertiesLastImportedAt: dateValue('properties_last_imported_at'),
+      targetsLastComputedAt: dateValue('targets_last_computed_at'),
+      lastImportedAt: dateValue('last_imported_at'),
+      rolloutOrder: intValue('rollout_order', 999),
+      isActiveMarket: map['is_active_market'] == true,
+      isVisibleInApp: map['is_visible_in_app'] != false,
+      notes: map['notes']?.toString(),
+      createdAt: dateValue('created_at'),
+      updatedAt: dateValue('updated_at'),
+    );
+  }
+
+  Color get statusColor {
+    if (readinessStatus == 'ready') return Colors.green;
+    if (readinessStatus == 'partial') return Colors.amber;
+    if (streetDataStatus == 'none' && propertyDataStatus != 'none') {
+      return Colors.orange;
+    }
+    return Colors.grey;
+  }
+
+  String get statusLabel {
+    if (readinessStatus == 'ready') return 'Ready';
+    if (readinessStatus == 'partial') return 'Partial';
+    if (streetDataStatus == 'none' && propertyDataStatus != 'none') {
+      return 'Building';
+    }
+    return 'Planned';
+  }
+
+  bool get isDrivable {
+    return readinessStatus == 'ready' ||
+        (cachedStreetCount >= 500 && parcelServiceUrl != null);
+  }
+
+  String get nextAction {
+    if (isDrivable) return 'Ready to drive';
+    if (streetDataStatus == 'none') return 'Import streets to unlock missions';
+    if (propertyDataStatus == 'none') {
+      return 'Build Market Map to unlock targets';
+    }
+    if (targetDataStatus == 'none') return 'Run target scoring';
+    return 'Verify data quality';
+  }
+}
+
+class MarketDataHealth {
+  final int streetCount;
+  final int propertyCount;
+  final int targetCount;
+  final int leadCount;
+  final int driveAreaCount;
+  final int missionCount;
+
+  const MarketDataHealth({
+    required this.streetCount,
+    required this.propertyCount,
+    required this.targetCount,
+    required this.leadCount,
+    required this.driveAreaCount,
+    required this.missionCount,
+  });
+
+  List<String> get missingLayers {
+    final missing = <String>[];
+    if (streetCount == 0) missing.add('Street centerlines are missing');
+    if (propertyCount == 0) missing.add('Property data is missing');
+    if (targetCount == 0) missing.add('Target scores are missing');
+    if (leadCount == 0) missing.add('No leads found in this market');
+    if (driveAreaCount == 0) missing.add('No drive areas exist yet');
+    if (missionCount == 0) missing.add('No missions have been created');
+    return missing;
+  }
+
+  String get primaryNextAction {
+    if (streetCount == 0) return 'Import streets to unlock missions';
+    if (propertyCount == 0) return 'Build Market Map to unlock targets';
+    if (targetCount == 0) return 'Run target scoring';
+    if (driveAreaCount == 0) return 'Create a drive area';
+    if (missionCount == 0) return 'Start the first mission';
+    if (leadCount == 0) return 'Capture leads in the market';
+    return 'Verify data quality';
+  }
+}
+
+class MarketService {
+  static Market? _activeMarketCache;
+  static List<Market>? _allMarketsCache;
+  static DateTime? _cacheTime;
+  static String _activeCityCache = defaultCoverageCity;
+
+  static bool get _cacheIsFresh {
+    final cacheTime = _cacheTime;
+    return cacheTime != null &&
+        DateTime.now().difference(cacheTime) < const Duration(minutes: 5);
+  }
+
+  static Future<List<Market>> loadAllMarkets() async {
+    if (_allMarketsCache != null && _cacheIsFresh) return _allMarketsCache!;
+
+    final data = await supabase
+        .from('markets')
+        .select()
+        .eq('is_visible_in_app', true)
+        .order('rollout_order', ascending: true);
+    final markets = data
+        .map<Market>((item) => Market.fromMap(item))
+        .toList(growable: false);
+
+    _allMarketsCache = markets;
+    _cacheTime = DateTime.now();
+    _activeMarketCache = markets
+        .where((market) => market.city == _activeCityCache)
+        .firstOrNull;
+
+    return markets;
+  }
+
+  static Future<List<Market>> loadMarketsByState(String stateCode) async {
+    final markets = await loadAllMarkets();
+    return markets
+        .where((market) => market.stateCode == stateCode)
+        .toList(growable: false);
+  }
+
+  static Future<Market?> loadMarket(String city, String stateCode) async {
+    final activeMarket = _activeMarketCache;
+    if (activeMarket != null &&
+        activeMarket.city == city &&
+        activeMarket.stateCode == stateCode) {
+      return activeMarket;
+    }
+
+    final markets = await loadAllMarkets();
+    final cached = markets
+        .where((market) => market.city == city && market.stateCode == stateCode)
+        .firstOrNull;
+    if (cached != null) return cached;
+
+    final data = await supabase
+        .from('markets')
+        .select()
+        .eq('city', city)
+        .eq('state_code', stateCode)
+        .maybeSingle();
+    if (data == null) return null;
+    return Market.fromMap(data);
+  }
+
+  static Future<MarketDataHealth> loadMarketHealth(Market market) async {
+    final streetCount = await supabase
+        .from('city_streets')
+        .count()
+        .ilike('city', market.city);
+    final driveAreaRows = await supabase
+        .from('drive_areas')
+        .select('id')
+        .ilike('city', market.city);
+    final driveAreaCount = await supabase
+        .from('drive_areas')
+        .count()
+        .ilike('city', market.city);
+    final driveAreaIds = driveAreaRows
+        .map<String>((row) => row['id'].toString())
+        .toList(growable: false);
+    final propertyCount = driveAreaIds.isEmpty
+        ? 0
+        : await supabase
+              .from('properties')
+              .count()
+              .inFilter('drive_area_id', driveAreaIds);
+    final targetCount = driveAreaIds.isEmpty
+        ? 0
+        : await supabase
+              .from('properties')
+              .count()
+              .inFilter('drive_area_id', driveAreaIds)
+              .not('target_score', 'is', null);
+    final leadCount = await supabase
+        .from('leads')
+        .count()
+        .ilike('address', '%${market.city}%');
+    final missionCount = driveAreaIds.isEmpty
+        ? 0
+        : await supabase
+              .from('missions')
+              .count()
+              .inFilter('drive_area_id', driveAreaIds);
+
+    return MarketDataHealth(
+      streetCount: streetCount,
+      propertyCount: propertyCount,
+      targetCount: targetCount,
+      leadCount: leadCount,
+      driveAreaCount: driveAreaCount,
+      missionCount: missionCount,
+    );
+  }
+
+  static String getActiveCity() {
+    return _activeCityCache.trim().isEmpty
+        ? defaultCoverageCity
+        : _activeCityCache;
+  }
+
+  static Future<void> setActiveCity(String city) async {
+    final activeCity = city.trim().isEmpty ? defaultCoverageCity : city.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(activeCoverageCityPrefsKey, activeCity);
+    _activeCityCache = activeCity;
+    _activeMarketCache = _allMarketsCache
+        ?.where((market) => market.city == activeCity)
+        .firstOrNull;
+  }
+
+  static Future<void> initActiveCity() async {
+    final prefs = await SharedPreferences.getInstance();
+    final activeCity = prefs.getString(activeCoverageCityPrefsKey);
+    _activeCityCache = activeCity == null || activeCity.trim().isEmpty
+        ? defaultCoverageCity
+        : activeCity;
+  }
+}
+
 class DrivingPoint {
   final LatLng point;
   final DateTime? createdAt;
@@ -1725,6 +2068,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
   @override
   void initState() {
     super.initState();
+    unawaited(MarketService.initActiveCity());
 
     // Load account-scoped data only when there's a signed-in user; (re)load on
     // sign-in and clear on sign-out.
@@ -2580,6 +2924,37 @@ class _AreasTab extends StatelessWidget {
     onRefresh();
   }
 
+  Future<void> deleteArea(BuildContext context, DriveArea area) async {
+    final state = driveState;
+    if (state == null) return;
+
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete ${area.name}?'),
+        content: const Text(
+          'This removes the saved area, its market-map properties, and missions for this area.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true || !context.mounted) return;
+
+    await state.deleteDriveArea(area);
+    onRefresh();
+  }
+
   void openCityDetail(BuildContext context, CityReadiness city) {
     final state = driveState;
     if (state == null) return;
@@ -2616,6 +2991,29 @@ class _AreasTab extends StatelessWidget {
     );
   }
 
+  void openMarketDetail(BuildContext context, Market market) {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _MarketDetailScreen(
+          market: market,
+          onActiveMarketChanged: onRefresh,
+        ),
+      ),
+    );
+  }
+
+  void openMarketList(BuildContext context) {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _MarketListScreen(
+          onOpenMarket: (market) => openMarketDetail(context, market),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = driveState;
@@ -2637,14 +3035,10 @@ class _AreasTab extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 14),
-            if (state != null)
-              _MarketsOverviewSection(
-                cities: state.cityReadiness,
-                activeCity: state.selectedCoverageCity,
-                isLoading: state.isLoadingCityReadiness,
-                onViewAll: () => openCityList(context),
-                onOpenCity: (city) => openCityDetail(context, city),
-              ),
+            _MarketsSection(
+              onViewAll: () => openMarketList(context),
+              onOpenMarket: (market) => openMarketDetail(context, market),
+            ),
             const SizedBox(height: 16),
             if (state == null || state.isLoadingDriveAreas)
               const _AreasLoadingCard()
@@ -2711,6 +3105,7 @@ class _AreasTab extends StatelessWidget {
                   onAnalyzeArea: () => analyzeArea(area),
                   onStartMission: () => startMissionForArea(context, area),
                   onSetActive: isActive ? null : () => setActive(context, area),
+                  onDelete: () => deleteArea(context, area),
                 );
               }),
           ],
@@ -2739,6 +3134,579 @@ class _AreasLoadingCard extends StatelessWidget {
             Text('Loading areas...'),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MarketsSection extends StatelessWidget {
+  final VoidCallback onViewAll;
+  final ValueChanged<Market> onOpenMarket;
+
+  const _MarketsSection({required this.onViewAll, required this.onOpenMarket});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Market>>(
+      future: MarketService.loadAllMarkets(),
+      builder: (context, snapshot) {
+        final markets = (snapshot.data ?? const <Market>[])
+            .where((market) => market.rolloutOrder <= 20)
+            .toList(growable: false);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Markets',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: onViewAll,
+                  label: const Text('Browse all'),
+                  icon: const Icon(Icons.arrow_forward),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                markets.isEmpty)
+              const SizedBox(
+                height: 120,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (snapshot.hasError)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'Markets will appear after the markets SQL runs.',
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: 120,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: markets.length,
+                  itemBuilder: (context, index) {
+                    final market = markets[index];
+                    return _MarketSummaryCard(
+                      market: market,
+                      onTap: () => onOpenMarket(market),
+                    );
+                  },
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MarketSummaryCard extends StatelessWidget {
+  final Market market;
+  final VoidCallback onTap;
+
+  const _MarketSummaryCard({required this.market, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 140,
+      child: Card(
+        margin: const EdgeInsets.only(right: 10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _StatusDot(color: market.statusColor),
+                const SizedBox(height: 10),
+                Text(
+                  market.displayName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                Text(
+                  market.statusLabel,
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  '${market.cachedStreetCount} streets',
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketListScreen extends StatefulWidget {
+  final ValueChanged<Market> onOpenMarket;
+
+  const _MarketListScreen({required this.onOpenMarket});
+
+  @override
+  State<_MarketListScreen> createState() => _MarketListScreenState();
+}
+
+class _MarketListScreenState extends State<_MarketListScreen> {
+  String query = '';
+  String filter = 'All';
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Markets')),
+      body: SafeArea(
+        child: FutureBuilder<List<Market>>(
+          future: MarketService.loadAllMarkets(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                !snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            if (snapshot.hasError) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text(
+                    'Markets will appear after the markets SQL runs.',
+                  ),
+                ),
+              );
+            }
+
+            final normalizedQuery = query.trim().toLowerCase();
+            final markets =
+                (snapshot.data ?? const <Market>[])
+                    .where((market) {
+                      final matchesQuery =
+                          normalizedQuery.isEmpty ||
+                          market.displayName.toLowerCase().contains(
+                            normalizedQuery,
+                          ) ||
+                          market.state.toLowerCase().contains(
+                            normalizedQuery,
+                          ) ||
+                          market.stateCode.toLowerCase().contains(
+                            normalizedQuery,
+                          );
+                      final matchesFilter =
+                          filter == 'All' || market.statusLabel == filter;
+                      return matchesQuery && matchesFilter;
+                    })
+                    .toList(growable: false)
+                  ..sort((a, b) {
+                    final stateCompare = a.state.compareTo(b.state);
+                    if (stateCompare != 0) return stateCompare;
+                    return a.rolloutOrder.compareTo(b.rolloutOrder);
+                  });
+            final states =
+                markets.map((market) => market.state).toSet().toList()..sort();
+
+            return ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Search markets',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (value) => setState(() => query = value),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  children: ['All', 'Ready', 'Partial', 'Planned']
+                      .map(
+                        (value) => FilterChip(
+                          label: Text(value),
+                          selected: filter == value,
+                          onSelected: (_) => setState(() => filter = value),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                const SizedBox(height: 12),
+                ...states.expand((state) {
+                  final stateMarkets =
+                      markets
+                          .where((market) => market.state == state)
+                          .toList(growable: false)
+                        ..sort(
+                          (a, b) => a.rolloutOrder.compareTo(b.rolloutOrder),
+                        );
+
+                  return [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      color: const Color(0xFFE5E7EB),
+                      child: Text(
+                        state,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    ...stateMarkets.map(
+                      (market) => ListTile(
+                        leading: _StatusDot(color: market.statusColor),
+                        title: Text(market.displayName),
+                        subtitle: Text(
+                          '${market.statusLabel} - ${market.cachedStreetCount} streets',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => widget.onOpenMarket(market),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ];
+                }),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketDetailScreen extends StatefulWidget {
+  final Market market;
+  final VoidCallback onActiveMarketChanged;
+
+  const _MarketDetailScreen({
+    required this.market,
+    required this.onActiveMarketChanged,
+  });
+
+  @override
+  State<_MarketDetailScreen> createState() => _MarketDetailScreenState();
+}
+
+class _MarketDetailScreenState extends State<_MarketDetailScreen> {
+  late final Future<MarketDataHealth> healthFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    healthFuture = MarketService.loadMarketHealth(widget.market);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final market = widget.market;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(market.displayName),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(child: _MarketStatusChip(market: market)),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Data Layers',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _MarketDataLayerRow(
+                        icon: Icons.timeline,
+                        label: 'Street Centerlines',
+                        value: market.cachedStreetCount > 0
+                            ? '${market.cachedStreetCount} streets'
+                            : 'NOT IMPORTED',
+                        isReady: market.cachedStreetCount > 0,
+                      ),
+                      _MarketDataLayerRow(
+                        icon: Icons.home_work,
+                        label: 'Property Data',
+                        value: market.cachedPropertyCount > 0
+                            ? '${market.cachedPropertyCount} properties'
+                            : 'Not built',
+                        isReady: market.cachedPropertyCount > 0,
+                      ),
+                      _MarketDataLayerRow(
+                        icon: Icons.adjust,
+                        label: 'Target Scores',
+                        value: market.cachedTargetCount > 0
+                            ? '${market.cachedTargetCount} targets'
+                            : 'Not computed',
+                        isReady: market.cachedTargetCount > 0,
+                      ),
+                      _MarketDataLayerRow(
+                        icon: Icons.route,
+                        label: 'Coverage Tracking',
+                        value: market.cachedStreetCount > 0
+                            ? 'Active'
+                            : 'Requires street data',
+                        isReady: market.cachedStreetCount > 0,
+                      ),
+                      _MarketDataLayerRow(
+                        icon: Icons.map,
+                        label: 'Parcel Service',
+                        value: market.parcelServiceUrl != null
+                            ? 'Configured'
+                            : 'Not configured',
+                        isReady: market.parcelServiceUrl != null,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Live Health Check',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      FutureBuilder<MarketDataHealth>(
+                        future: healthFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(20),
+                                child: CircularProgressIndicator(),
+                              ),
+                            );
+                          }
+
+                          if (snapshot.hasError || !snapshot.hasData) {
+                            return const Text(
+                              'Could not load live health check.',
+                            );
+                          }
+
+                          final health = snapshot.data!;
+                          final missingLayers = health.missingLayers;
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _MarketHealthRow(
+                                label: 'Streets',
+                                value: health.streetCount,
+                              ),
+                              _MarketHealthRow(
+                                label: 'Properties',
+                                value: health.propertyCount,
+                              ),
+                              _MarketHealthRow(
+                                label: 'Targets',
+                                value: health.targetCount,
+                              ),
+                              _MarketHealthRow(
+                                label: 'Leads in market',
+                                value: health.leadCount,
+                              ),
+                              _MarketHealthRow(
+                                label: 'Drive Areas',
+                                value: health.driveAreaCount,
+                              ),
+                              _MarketHealthRow(
+                                label: 'Missions',
+                                value: health.missionCount,
+                              ),
+                              if (missingLayers.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'Missing Data',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 6),
+                                ...missingLayers.map(
+                                  (layer) => Text(
+                                    layer,
+                                    style: const TextStyle(
+                                      color: Colors.amber,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 12),
+                              Card(
+                                color: const Color(0xFFF3F4F6),
+                                margin: EdgeInsets.zero,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Text(
+                                    'Next Step: ${health.primaryNextAction}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (market.isDrivable)
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.check_circle),
+                  label: const Text('Set as Active Market'),
+                  onPressed: () async {
+                    await MarketService.setActiveCity(market.city);
+                    widget.onActiveMarketChanged();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Active market set to ${market.displayName}',
+                        ),
+                      ),
+                    );
+                    Navigator.pop(context);
+                  },
+                )
+              else
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE5E7EB),
+                    foregroundColor: const Color(0xFF6B7280),
+                  ),
+                  onPressed: null,
+                  child: const Text('Data not ready for driving yet'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MarketStatusChip extends StatelessWidget {
+  final Market market;
+
+  const _MarketStatusChip({required this.market});
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      avatar: _StatusDot(color: market.statusColor),
+      label: Text(market.statusLabel),
+    );
+  }
+}
+
+class _MarketDataLayerRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool isReady;
+
+  const _MarketDataLayerRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.isReady,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isReady ? Colors.green : Colors.red;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          Icon(isReady ? Icons.check_circle : Icons.cancel, color: color),
+          const SizedBox(width: 8),
+          Icon(icon, color: const Color(0xFF6B7280), size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+          Text(
+            value,
+            textAlign: TextAlign.right,
+            style: TextStyle(color: color, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MarketHealthRow extends StatelessWidget {
+  final String label;
+  final int value;
+
+  const _MarketHealthRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          Text(
+            value.toString(),
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }
@@ -2916,6 +3884,7 @@ class _AreaListCard extends StatelessWidget {
   final VoidCallback onAnalyzeArea;
   final VoidCallback onStartMission;
   final VoidCallback? onSetActive;
+  final VoidCallback onDelete;
 
   const _AreaListCard({
     required this.area,
@@ -2927,6 +3896,7 @@ class _AreaListCard extends StatelessWidget {
     required this.onAnalyzeArea,
     required this.onStartMission,
     required this.onSetActive,
+    required this.onDelete,
   });
 
   @override
@@ -2981,6 +3951,13 @@ class _AreaListCard extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF2563EB),
                   ),
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: 'Delete area',
+                  icon: const Icon(Icons.delete_outline),
+                  color: Colors.red,
+                  onPressed: onDelete,
                 ),
               ],
             ),
@@ -3118,14 +4095,15 @@ class _AreaMetricPill extends StatelessWidget {
   }
 }
 
-class _MarketsOverviewSection extends StatelessWidget {
+class MarketsOverviewSection extends StatelessWidget {
   final List<CityReadiness> cities;
   final String activeCity;
   final bool isLoading;
   final VoidCallback onViewAll;
   final ValueChanged<CityReadiness> onOpenCity;
 
-  const _MarketsOverviewSection({
+  const MarketsOverviewSection({
+    super.key,
     required this.cities,
     required this.activeCity,
     required this.isLoading,
@@ -5234,7 +6212,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   LatLng currentMapCenter = const LatLng(36.2695, -95.8547);
   double currentZoom = 13;
-  String selectedCoverageCity = defaultCoverageCity;
+  String selectedCoverageCity = MarketService.getActiveCity();
   LatLng? myLocation;
   Position? lastKnownPosition;
   bool isFindingLocation = false;
@@ -5417,15 +6395,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   Future<void> loadActiveCoverageCityPreference() async {
+    await MarketService.initActiveCity();
     final prefs = await SharedPreferences.getInstance();
-    final activeCity = prefs.getString(activeCoverageCityPrefsKey);
+    final activeCity = MarketService.getActiveCity();
     final recentCities = prefs.getStringList(recentMarketCitiesPrefsKey) ?? [];
     if (!mounted) return;
 
     setState(() {
-      if (activeCity != null && activeCity.isNotEmpty) {
-        selectedCoverageCity = activeCity;
-      }
+      selectedCoverageCity = activeCity;
       recentMarketCities = recentCities;
     });
   }
@@ -5778,6 +6755,52 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not update active drive area.')),
+      );
+    }
+  }
+
+  Future<void> deleteDriveArea(DriveArea area) async {
+    try {
+      await supabase
+          .from('properties')
+          .delete()
+          .eq('account_id', widget.activeAccountId)
+          .eq('drive_area_id', area.id);
+      await supabase
+          .from('missions')
+          .delete()
+          .eq('account_id', widget.activeAccountId)
+          .eq('drive_area_id', area.id);
+      await supabase
+          .from('drive_areas')
+          .delete()
+          .eq('account_id', widget.activeAccountId)
+          .eq('id', area.id);
+
+      if (!mounted) return;
+
+      if (activeDriveArea?.id == area.id) {
+        setState(() {
+          activeDriveArea = null;
+          marketProperties = [];
+          activeMission = null;
+        });
+      }
+
+      await loadDriveAreas();
+      await loadMarketProperties();
+      await loadMissions();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Deleted ${area.name}.')));
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete drive area.')),
       );
     }
   }
@@ -9269,8 +10292,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   Future<void> changeCoverageCity(String city) async {
+    await MarketService.setActiveCity(city);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(activeCoverageCityPrefsKey, city);
     final updatedRecentMarkets = [
       city,
       ...recentMarketCities.where((recentCity) => recentCity != city),
