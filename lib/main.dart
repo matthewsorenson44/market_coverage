@@ -2178,6 +2178,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         .eq('account_id', accountId)
         .order('created_at', ascending: false);
 
+    if (!mounted) return;
+
     setState(() {
       leads = data.map<Lead>((item) => Lead.fromMap(item)).toList();
       leads.sort((a, b) => b.score.compareTo(a.score));
@@ -2341,6 +2343,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         .eq('account_id', activeAccountId ?? '')
         .eq('id', leadId);
 
+    if (!mounted) return;
+
     setState(() {
       final index = leads.indexWhere((lead) => lead.id == leadId);
 
@@ -2359,6 +2363,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         .update(scoreData.toMap())
         .eq('account_id', activeAccountId ?? '')
         .eq('id', leadId);
+
+    if (!mounted) return;
 
     setState(() {
       final index = leads.indexWhere((lead) => lead.id == leadId);
@@ -2380,6 +2386,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         .eq('account_id', activeAccountId ?? '')
         .eq('id', leadId);
 
+    if (!mounted) return;
+
     setState(() {
       final index = leads.indexWhere((lead) => lead.id == leadId);
 
@@ -2398,6 +2406,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         .update(reminderData.toMap())
         .eq('account_id', activeAccountId ?? '')
         .eq('id', leadId);
+
+    if (!mounted) return;
 
     setState(() {
       final index = leads.indexWhere((lead) => lead.id == leadId);
@@ -2418,6 +2428,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         .eq('account_id', activeAccountId ?? '')
         .eq('id', leadId);
 
+    if (!mounted) return;
+
     setState(() {
       final index = leads.indexWhere((lead) => lead.id == leadId);
 
@@ -2433,6 +2445,8 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
         .update({'source': source})
         .eq('account_id', activeAccountId ?? '')
         .eq('id', leadId);
+
+    if (!mounted) return;
 
     setState(() {
       final index = leads.indexWhere((lead) => lead.id == leadId);
@@ -2914,7 +2928,7 @@ class _AreasTab extends StatelessWidget {
       context,
       MaterialPageRoute(
         builder: (_) => _AreaDetailScreen(
-          driveState: state,
+          driveStateProvider: () => driveState,
           initialArea: area,
           onOpenDrive: onOpenDrive,
         ),
@@ -5080,12 +5094,12 @@ String _missionDateLabel(DateTime? date) {
 }
 
 class _AreaDetailScreen extends StatefulWidget {
-  final _DrivingScreenState driveState;
+  final _DrivingScreenState? Function() driveStateProvider;
   final DriveArea initialArea;
   final VoidCallback onOpenDrive;
 
   const _AreaDetailScreen({
-    required this.driveState,
+    required this.driveStateProvider,
     required this.initialArea,
     required this.onOpenDrive,
   });
@@ -5103,37 +5117,54 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
   bool filterLongHeld = false;
   bool filterOlderBuild = false;
 
-  _DrivingScreenState get driveState => widget.driveState;
+  _DrivingScreenState? get driveStateOrNull {
+    final state = widget.driveStateProvider();
+    if (state == null || !state.mounted) return null;
+
+    return state;
+  }
 
   DriveArea get area {
-    return driveState.driveAreas
+    final state = driveStateOrNull;
+
+    return state?.driveAreas
             .where((item) => item.id == widget.initialArea.id)
             .firstOrNull ??
         widget.initialArea;
   }
 
   Future<void> startMission() async {
-    await driveState.setActiveDriveArea(area);
+    final state = driveStateOrNull;
+    if (state == null) return;
+
+    await state.setActiveDriveArea(area);
     if (!mounted) return;
 
     widget.onOpenDrive();
     Navigator.pop(context);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!driveState.mounted) return;
-      driveState.openPlanTodayDriveSheet(const <StreetOpportunity>[]);
+      final currentState = driveStateOrNull;
+      if (currentState == null) return;
+      currentState.openPlanTodayDriveSheet(const <StreetOpportunity>[]);
     });
   }
 
   Future<void> analyzeArea() async {
-    await driveState.setActiveDriveArea(area);
-    await driveState.buildMarketMap();
+    final state = driveStateOrNull;
+    if (state == null) return;
+
+    await state.setActiveDriveArea(area);
+    await state.buildMarketMap();
     if (mounted) setState(() {});
   }
 
   Future<void> markComplete() async {
-    await driveState.setActiveDriveArea(area);
-    await driveState.markActiveDriveAreaComplete();
+    final state = driveStateOrNull;
+    if (state == null) return;
+
+    await state.setActiveDriveArea(area);
+    await state.markActiveDriveAreaComplete();
     if (mounted) setState(() {});
   }
 
@@ -5177,6 +5208,24 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final driveState = driveStateOrNull;
+    if (driveState == null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.initialArea.name)),
+        body: const SafeArea(
+          child: Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'Drive data is reloading. Go back and open this area again.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     final activeArea = driveState.activeDriveArea;
     final isActive = activeArea?.id == area.id;
     final stats = _areaStatsForDriveArea(driveState, area);
@@ -10485,7 +10534,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
         context,
         MaterialPageRoute(
           builder: (_) => _AreaDetailScreen(
-            driveState: this,
+            driveStateProvider: () => mounted ? this : null,
             initialArea: newArea,
             onOpenDrive: () {},
           ),
@@ -12944,7 +12993,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
                         ),
                         const SizedBox(height: 20),
                         SizedBox(
-                          key: mapWorkspaceKey,
                           width: double.infinity,
                           height: MediaQuery.of(context).size.height,
                           child: FlutterMap(
@@ -16594,82 +16642,106 @@ class _LeadListRow extends StatelessWidget {
     final detailLine = condition.isEmpty || secondaryLabel == condition
         ? secondaryLabel
         : '$secondaryLabel | $condition';
+    final infoChips = [
+      leadStageBadge(stage),
+      _MiniInfoChip(
+        icon: Icons.sell,
+        label: '$lastSaleDate ${formatMoney(lead.saleData.lastSalePrice)}',
+      ),
+      _MiniInfoChip(
+        icon: Icons.calculate,
+        label: 'MAO ${formatMoney(lead.mao)}',
+      ),
+    ];
+    final scoreBox = Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: leadScoreColor(lead.score).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Center(
+        child: Text(
+          lead.score.toString(),
+          style: TextStyle(
+            color: leadScoreColor(lead.score),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          primaryLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Color(0xFF111827),
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          detailLine,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Color(0xFF6B7280)),
+        ),
+      ],
+    );
 
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: leadScoreColor(lead.score).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Center(
-                  child: Text(
-                    lead.score.toString(),
-                    style: TextStyle(
-                      color: leadScoreColor(lead.score),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                flex: 3,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompact = constraints.maxWidth < 520;
+            final chips = Wrap(spacing: 8, runSpacing: 8, children: infoChips);
+
+            if (isCompact) {
+              return Padding(
+                padding: const EdgeInsets.all(14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      primaryLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF111827),
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      children: [
+                        scoreBox,
+                        const SizedBox(width: 12),
+                        Expanded(child: titleBlock),
+                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.chevron_right,
+                          color: Color(0xFF9CA3AF),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      detailLine,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Color(0xFF6B7280)),
-                    ),
+                    const SizedBox(height: 12),
+                    chips,
                   ],
                 ),
+              );
+            }
+
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  scoreBox,
+                  const SizedBox(width: 14),
+                  Expanded(flex: 3, child: titleBlock),
+                  const SizedBox(width: 12),
+                  Expanded(flex: 2, child: chips),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF)),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    leadStageBadge(stage),
-                    _MiniInfoChip(
-                      icon: Icons.sell,
-                      label:
-                          '$lastSaleDate ${formatMoney(lead.saleData.lastSalePrice)}',
-                    ),
-                    _MiniInfoChip(
-                      icon: Icons.calculate,
-                      label: 'MAO ${formatMoney(lead.mao)}',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF)),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -16684,22 +16756,29 @@ class _MiniInfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F4F6),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: const Color(0xFF6B7280)),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: const TextStyle(color: Color(0xFF374151), fontSize: 12),
-          ),
-        ],
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 190),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF3F4F6),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: const Color(0xFF6B7280)),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Color(0xFF374151), fontSize: 12),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
