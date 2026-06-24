@@ -55,8 +55,12 @@ const String pendingLeadsQueuePrefsKey = 'pending_leads_queue';
 const String activeMissionIdPrefsKey = 'active_mission_id';
 const String activeCoverageCityPrefsKey = 'active_coverage_city';
 const String recentMarketCitiesPrefsKey = 'recent_market_cities';
+const String firstMissionTipDismissedPrefsKey = 'first_mission_tip_dismissed';
 const String leadPhotosBucket = 'lead-photos';
 const String defaultCoverageCity = 'Owasso';
+const String motivatedSellersButtonLabel = 'Find Motivated Sellers';
+const String motivatedSellersDescription =
+    'Fetches every property in this area and scores them by investment potential.';
 const String primaryTulsaParcelLayerUrl =
     'https://map11.incog.org/arcgis11wa/rest/services/Parcels_TulsaCo/FeatureServer/0/query';
 const String fallbackTulsaParcelLayerUrl =
@@ -68,6 +72,10 @@ const List<String> tulsaParcelLayerUrls = [
 const int visibleParcelZoom = 17;
 const int houseNumberLabelZoom = 18;
 const int visibleParcelLimit = 250;
+const int marketMapMaxParcelPages = 40;
+const Duration marketMapParcelPageTimeout = Duration(seconds: 20);
+const Duration trackingPointMinInterval = Duration(seconds: 3);
+const double trackingPointMinDistanceMiles = 0.003;
 const int visibleStreetLimit = 800;
 const int missionStreetCount = 12;
 const double streetCoverageMatchMiles = 0.035;
@@ -1901,6 +1909,43 @@ double distanceToStreetMiles(LatLng point, CityStreet street) {
   return closestDistance;
 }
 
+({double minLat, double maxLat, double minLng, double maxLng})? latLngBounds(
+  List<LatLng> points,
+) {
+  if (points.isEmpty) return null;
+
+  var minLat = points.first.latitude;
+  var maxLat = points.first.latitude;
+  var minLng = points.first.longitude;
+  var maxLng = points.first.longitude;
+
+  for (final point in points.skip(1)) {
+    minLat = math.min(minLat, point.latitude);
+    maxLat = math.max(maxLat, point.latitude);
+    minLng = math.min(minLng, point.longitude);
+    maxLng = math.max(maxLng, point.longitude);
+  }
+
+  return (minLat: minLat, maxLat: maxLat, minLng: minLng, maxLng: maxLng);
+}
+
+bool pointNearLatLngBounds(
+  LatLng point,
+  ({double minLat, double maxLat, double minLng, double maxLng}) bounds,
+  double bufferMiles,
+) {
+  final latBuffer = bufferMiles / 69.0;
+  final averageLatitudeRadians =
+      ((bounds.minLat + bounds.maxLat) / 2) * math.pi / 180;
+  final lngMiles = math.max(1.0, math.cos(averageLatitudeRadians).abs() * 69.0);
+  final lngBuffer = bufferMiles / lngMiles;
+
+  return point.latitude >= bounds.minLat - latBuffer &&
+      point.latitude <= bounds.maxLat + latBuffer &&
+      point.longitude >= bounds.minLng - lngBuffer &&
+      point.longitude <= bounds.maxLng + lngBuffer;
+}
+
 String drivingPointDateKey(DrivingPoint drivingPoint) {
   final localDate = drivingPoint.createdAt?.toLocal();
 
@@ -2887,13 +2932,8 @@ class _AreasTab extends StatelessWidget {
     onOpenDrive();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final activeArea = state.activeDriveArea ?? area;
-      final streets = state.streetsInsideArea(activeArea);
-      final opportunities = state.streetOpportunitiesFor(
-        streets,
-        state.marketProperties,
-      );
-      state.openPlanTodayDriveSheet(opportunities);
+      if (!state.mounted) return;
+      state.openPlanTodayDriveSheet(const <StreetOpportunity>[]);
     });
   }
 
@@ -3782,7 +3822,7 @@ class _ActiveAreaBanner extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${area.city} · ${stats.coveragePercent.toStringAsFixed(0)}% covered · '
+              '${area.city} · '
               '${stats.leadsInArea} leads · ${stats.hotLeads} hot',
               style: const TextStyle(color: Color(0xFFD1D5DB)),
             ),
@@ -3794,50 +3834,16 @@ class _ActiveAreaBanner extends StatelessWidget {
               backgroundColor: const Color(0xFF374151),
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _AreaMetricPill(
-                  label: 'Total streets',
-                  value: '${stats.streetsCovered + stats.streetsRemaining}',
-                  dark: true,
-                ),
-                _AreaMetricPill(
-                  label: 'Covered',
-                  value: stats.streetsCovered.toString(),
-                  dark: true,
-                ),
-                _AreaMetricPill(
-                  label: 'Remaining',
-                  value: stats.streetsRemaining.toString(),
-                  dark: true,
-                ),
-                _AreaMetricPill(
-                  label: 'Total miles',
-                  value: _compactMilesLabel(stats.totalMiles),
-                  dark: true,
-                ),
-                _AreaMetricPill(
-                  label: 'Miles left',
-                  value: _compactMilesLabel(stats.milesRemaining),
-                  dark: true,
-                ),
-              ],
+            _CoverageStatBlock(
+              streetsDriven: stats.streetsCovered,
+              totalStreets: stats.streetsCovered + stats.streetsRemaining,
+              percent: stats.coveragePercent,
+              milesCovered: stats.coveredMiles,
+              totalMiles: stats.totalMiles,
+              remainingStreets: stats.streetsRemaining,
+              dark: true,
             ),
-            if (stats.streetsCovered + stats.streetsRemaining == 0) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'No street data is loaded inside this area yet, so mileage cannot be calculated.',
-                style: TextStyle(color: Color(0xFFD1D5DB), fontSize: 12),
-              ),
-            ],
             const SizedBox(height: 10),
-            const Text(
-              'Analyze Area loads parcel and home records so targets and mission time estimates can be ranked. It does not mark streets covered.',
-              style: TextStyle(color: Color(0xFFD1D5DB), fontSize: 12),
-            ),
-            const SizedBox(height: 14),
             Wrap(
               spacing: 10,
               runSpacing: 8,
@@ -3847,14 +3853,29 @@ class _ActiveAreaBanner extends StatelessWidget {
                   label: const Text('Start Mission'),
                   onPressed: onStartMission,
                 ),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.analytics),
-                  label: Text(isAnalyzing ? 'Analyzing...' : 'Analyze Area'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Color(0xFF9CA3AF)),
+                SizedBox(
+                  width: 280,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.analytics),
+                        label: Text(
+                          isAnalyzing
+                              ? 'Analyzing...'
+                              : motivatedSellersButtonLabel,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Color(0xFF9CA3AF)),
+                        ),
+                        onPressed: isAnalyzing ? null : onAnalyzeArea,
+                      ),
+                      const SizedBox(height: 4),
+                      const _MotivatedSellersDescription(dark: true),
+                    ],
                   ),
-                  onPressed: isAnalyzing ? null : onAnalyzeArea,
                 ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.open_in_new),
@@ -3944,15 +3965,6 @@ class _AreaListCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Text(
-                  '${stats.coveragePercent.toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2563EB),
-                  ),
-                ),
-                const SizedBox(width: 6),
                 IconButton(
                   tooltip: 'Delete area',
                   icon: const Icon(Icons.delete_outline),
@@ -3967,39 +3979,14 @@ class _AreaListCard extends StatelessWidget {
               minHeight: 4,
             ),
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _AreaMetricPill(
-                  label: 'Total streets',
-                  value: '${stats.streetsCovered + stats.streetsRemaining}',
-                ),
-                _AreaMetricPill(
-                  label: 'Covered',
-                  value: stats.streetsCovered.toString(),
-                ),
-                _AreaMetricPill(
-                  label: 'Remaining',
-                  value: stats.streetsRemaining.toString(),
-                ),
-                _AreaMetricPill(
-                  label: 'Total miles',
-                  value: _compactMilesLabel(stats.totalMiles),
-                ),
-                _AreaMetricPill(
-                  label: 'Miles left',
-                  value: _compactMilesLabel(stats.milesRemaining),
-                ),
-              ],
+            _CoverageStatBlock(
+              streetsDriven: stats.streetsCovered,
+              totalStreets: stats.streetsCovered + stats.streetsRemaining,
+              percent: stats.coveragePercent,
+              milesCovered: stats.coveredMiles,
+              totalMiles: stats.totalMiles,
+              remainingStreets: stats.streetsRemaining,
             ),
-            if (stats.streetsCovered + stats.streetsRemaining == 0) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'No street data loaded inside this area yet.',
-                style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
-              ),
-            ],
             const SizedBox(height: 10),
             Text(
               '${stats.leadsInArea} leads · ${stats.hotLeads} hot leads',
@@ -4019,9 +4006,24 @@ class _AreaListCard extends StatelessWidget {
                   onPressed: onOpenArea,
                   child: const Text('Open Area'),
                 ),
-                OutlinedButton(
-                  onPressed: isAnalyzing ? null : onAnalyzeArea,
-                  child: Text(isAnalyzing ? 'Analyzing...' : 'Analyze Area'),
+                SizedBox(
+                  width: 250,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      OutlinedButton(
+                        onPressed: isAnalyzing ? null : onAnalyzeArea,
+                        child: Text(
+                          isAnalyzing
+                              ? 'Analyzing...'
+                              : motivatedSellersButtonLabel,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const _MotivatedSellersDescription(),
+                    ],
+                  ),
                 ),
                 FilledButton(
                   onPressed: onStartMission,
@@ -4044,29 +4046,18 @@ class _AreaListCard extends StatelessWidget {
 class _AreaMetricPill extends StatelessWidget {
   final String label;
   final String value;
-  final bool dark;
 
-  const _AreaMetricPill({
-    required this.label,
-    required this.value,
-    this.dark = false,
-  });
+  const _AreaMetricPill({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
-    final foreground = dark ? Colors.white : const Color(0xFF111827);
-    final secondary = dark ? const Color(0xFFD1D5DB) : const Color(0xFF6B7280);
-    final background = dark ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6);
-
     return Container(
       constraints: const BoxConstraints(minWidth: 112),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: background,
+        color: const Color(0xFFF3F4F6),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: dark ? const Color(0xFF374151) : const Color(0xFFE5E7EB),
-        ),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4074,8 +4065,8 @@ class _AreaMetricPill extends StatelessWidget {
         children: [
           Text(
             value,
-            style: TextStyle(
-              color: foreground,
+            style: const TextStyle(
+              color: Color(0xFF111827),
               fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
@@ -4083,13 +4074,153 @@ class _AreaMetricPill extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             label,
-            style: TextStyle(
-              color: secondary,
+            style: const TextStyle(
+              color: Color(0xFF6B7280),
               fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MotivatedSellersDescription extends StatelessWidget {
+  final bool dark;
+
+  const _MotivatedSellersDescription({this.dark = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      motivatedSellersDescription,
+      style: TextStyle(
+        color: dark ? const Color(0xFFD1D5DB) : const Color(0xFF6B7280),
+        fontSize: 12,
+      ),
+    );
+  }
+}
+
+class _CoverageStatBlock extends StatelessWidget {
+  final int streetsDriven;
+  final int totalStreets;
+  final double percent;
+  final double milesCovered;
+  final double totalMiles;
+  final int remainingStreets;
+  final bool dark;
+
+  const _CoverageStatBlock({
+    required this.streetsDriven,
+    required this.totalStreets,
+    required this.percent,
+    required this.milesCovered,
+    required this.totalMiles,
+    required this.remainingStreets,
+    this.dark = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = dark ? Colors.white : const Color(0xFF111827);
+    final mutedColor = dark ? const Color(0xFFD1D5DB) : const Color(0xFF6B7280);
+
+    if (totalStreets == 0) {
+      return Text(
+        'No street data loaded for this area.',
+        style: TextStyle(color: mutedColor),
+      );
+    }
+
+    final safePercent = percent.clamp(0, 100).round();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Streets driven: $streetsDriven of $totalStreets ($safePercent%)',
+          style: TextStyle(color: color, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Miles covered: ${milesCovered.toStringAsFixed(1)} of ${totalMiles.toStringAsFixed(1)} mi',
+          style: TextStyle(color: color),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Remaining: $remainingStreets streets',
+          style: TextStyle(color: color),
+        ),
+      ],
+    );
+  }
+}
+
+class _FirstDriveAreaWelcomeCard extends StatelessWidget {
+  final VoidCallback onDrawArea;
+
+  const _FirstDriveAreaWelcomeCard({required this.onDrawArea});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 8,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Welcome to Market Coverage OS',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Start by drawing your first Drive Area - tap the button below to outline the neighborhood you want to cover.',
+                style: TextStyle(color: Color(0xFF6B7280)),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.edit_location_alt),
+                label: const Text('Draw My First Area ->'),
+                onPressed: onDrawArea,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FirstMissionTipCard extends StatelessWidget {
+  final VoidCallback onDismiss;
+
+  const _FirstMissionTipCard({required this.onDismiss});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFEFF6FF),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onDismiss,
+        child: const Padding(
+          padding: EdgeInsets.all(12),
+          child: Text(
+            "Tip: Tap Plan Today's Drive to create your first mission. Streets will turn green as you drive them.",
+            style: TextStyle(
+              color: Color(0xFF1E3A8A),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -4941,14 +5072,6 @@ String lastMissionLabel(Mission? mission) {
   return '$days days ago';
 }
 
-String _compactMiles(double miles) {
-  return miles.toStringAsFixed(miles >= 10 ? 0 : 1);
-}
-
-String _compactMilesLabel(double miles) {
-  return '${_compactMiles(miles)} mi';
-}
-
 String _missionDateLabel(DateTime? date) {
   final local = date?.toLocal();
   if (local == null) return 'Completed mission';
@@ -4997,14 +5120,8 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
     Navigator.pop(context);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final streets = driveState.streetsInsideArea(
-        driveState.activeDriveArea ?? area,
-      );
-      final opportunities = driveState.streetOpportunitiesFor(
-        streets,
-        driveState.marketProperties,
-      );
-      driveState.openPlanTodayDriveSheet(opportunities);
+      if (!driveState.mounted) return;
+      driveState.openPlanTodayDriveSheet(const <StreetOpportunity>[]);
     });
   }
 
@@ -5144,73 +5261,20 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: LinearProgressIndicator(
-                            value: (stats.coveragePercent / 100).clamp(0, 1),
-                            minHeight: 7,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          '${stats.coveragePercent.toStringAsFixed(0)}%',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+                    LinearProgressIndicator(
+                      value: (stats.coveragePercent / 100).clamp(0, 1),
+                      minHeight: 7,
                     ),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        _DriveStatTile(
-                          label: 'Total streets',
-                          value:
-                              '${stats.streetsCovered + stats.streetsRemaining}',
-                          icon: Icons.map,
-                          color: const Color(0xFF4F46E5),
-                        ),
-                        _DriveStatTile(
-                          label: 'Covered',
-                          value: stats.streetsCovered.toString(),
-                          icon: Icons.check_circle,
-                          color: const Color(0xFF059669),
-                        ),
-                        _DriveStatTile(
-                          label: 'Remaining',
-                          value: stats.streetsRemaining.toString(),
-                          icon: Icons.route,
-                          color: const Color(0xFFF59E0B),
-                        ),
-                        _DriveStatTile(
-                          label: 'Miles left',
-                          value: _compactMilesLabel(stats.milesRemaining),
-                          icon: Icons.timeline,
-                          color: const Color(0xFF2563EB),
-                        ),
-                        _DriveStatTile(
-                          label: 'Total miles',
-                          value: _compactMilesLabel(stats.totalMiles),
-                          icon: Icons.straighten,
-                          color: const Color(0xFF0891B2),
-                        ),
-                      ],
+                    _CoverageStatBlock(
+                      streetsDriven: stats.streetsCovered,
+                      totalStreets:
+                          stats.streetsCovered + stats.streetsRemaining,
+                      percent: stats.coveragePercent,
+                      milesCovered: stats.coveredMiles,
+                      totalMiles: stats.totalMiles,
+                      remainingStreets: stats.streetsRemaining,
                     ),
-                    if (stats.streetsCovered + stats.streetsRemaining == 0)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 10),
-                        child: Text(
-                          'No street data is loaded inside this area yet, so total miles and miles left are 0 mi.',
-                          style: TextStyle(
-                            color: Color(0xFF6B7280),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -5351,9 +5415,7 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
                         child: Center(child: CircularProgressIndicator()),
                       )
                     else if (properties.isEmpty)
-                      const Text(
-                        'Analyze Area loads parcel and home records inside this boundary. That powers target filters, opportunity score, and mission time estimates.',
-                      )
+                      const Text(motivatedSellersDescription)
                     else if (shownProperties.isEmpty)
                       const Text('No homes match these filters.')
                     else
@@ -5453,7 +5515,7 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
                         label: Text(
                           driveState.isBuildingMarketMap
                               ? 'Analyzing area...'
-                              : 'Analyze Area',
+                              : motivatedSellersButtonLabel,
                         ),
                         onPressed: driveState.isBuildingMarketMap
                             ? null
@@ -5465,12 +5527,14 @@ class _AreaDetailScreenState extends State<_AreaDetailScreen> {
                         label: Text(
                           driveState.isBuildingMarketMap
                               ? 'Analyzing area...'
-                              : 'Re-analyze Area',
+                              : motivatedSellersButtonLabel,
                         ),
                         onPressed: driveState.isBuildingMarketMap
                             ? null
                             : analyzeArea,
                       ),
+                    const SizedBox(height: 4),
+                    const _MotivatedSellersDescription(),
                     const SizedBox(height: 8),
                     OutlinedButton(
                       onPressed: markComplete,
@@ -6239,6 +6303,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
   StreamSubscription<Position>? positionStream;
   Timer? visibleParcelLoadTimer;
   Timer? visibleStreetLoadTimer;
+  bool isHandlingTrackingPoint = false;
+  LatLng? lastProcessedTrackingPoint;
+  DateTime? lastProcessedTrackingPointAt;
+  DateTime? lastMapFollowAt;
   List<DriveArea> driveAreas = [];
   DriveArea? activeDriveArea;
   List<LatLng> drawingAreaPoints = [];
@@ -6246,7 +6314,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool isLoadingDriveAreas = true;
   bool isSavingDriveArea = false;
   bool showOnlyActiveArea = false;
+  bool showAllDriveAreaBoundaries = false;
   bool showSavedAreasWhileDrawing = false;
+  bool firstMissionTipDismissed = false;
   List<CityReadiness> cityReadiness = [];
   DateTime? cityReadinessLoadedAt;
   bool isLoadingCityReadiness = false;
@@ -6264,10 +6334,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool targetFilterLowImprovement = false;
   bool showOnlyTargetsOnMap = false;
   Map<String, double> driveAreaRemainingOpportunity = {};
+  List<StreetOpportunity> cachedStreetOpportunities = const [];
+  String? cachedStreetOpportunityAreaId;
+  int cachedStreetOpportunityStreetCount = -1;
+  int cachedStreetOpportunityPropertyCount = -1;
+  int cachedStreetOpportunityCoveredCount = -1;
   Mission? activeMission;
   List<Mission> completedMissions = [];
   List<Mission> scheduledMissions = [];
   Map<String, List<Lead>> missionLeadsById = {};
+  bool hasCompletedMissionEver = false;
   bool isLoadingMissions = false;
   bool isSavingMission = false;
   bool hasShownActiveMissionResume = false;
@@ -6293,6 +6369,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     drivingLeads = widget.leads;
     loadStartupData();
     loadMissionPlannerPreferences();
+    loadFirstMissionTipPreference();
   }
 
   @override
@@ -6324,6 +6401,26 @@ class _DrivingScreenState extends State<DrivingScreen> {
       calibrationFactor = prefs.getDouble(calibrationFactorPrefsKey) ?? 1.0;
       calibrationMissionCount =
           prefs.getInt(calibrationMissionCountPrefsKey) ?? 0;
+    });
+  }
+
+  Future<void> loadFirstMissionTipPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
+    setState(() {
+      firstMissionTipDismissed =
+          prefs.getBool(firstMissionTipDismissedPrefsKey) ?? false;
+    });
+  }
+
+  Future<void> dismissFirstMissionTip() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(firstMissionTipDismissedPrefsKey, true);
+    if (!mounted) return;
+
+    setState(() {
+      firstMissionTipDismissed = true;
     });
   }
 
@@ -6392,6 +6489,29 @@ class _DrivingScreenState extends State<DrivingScreen> {
     unawaited(loadStreetCoverage());
     unawaited(loadDriveAreas());
     unawaited(loadCityReadiness());
+    unawaited(loadCompletedMissionHistoryFlag());
+  }
+
+  Future<void> loadCompletedMissionHistoryFlag() async {
+    try {
+      final data = await supabase
+          .from('missions')
+          .select('id')
+          .eq('account_id', widget.activeAccountId)
+          .eq('status', 'completed')
+          .limit(1);
+      if (!mounted) return;
+
+      setState(() {
+        hasCompletedMissionEver = data.isNotEmpty;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        hasCompletedMissionEver = completedMissions.isNotEmpty;
+      });
+    }
   }
 
   Future<void> loadActiveCoverageCityPreference() async {
@@ -6500,6 +6620,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       setState(() {
         coveredStreetIds = coveredIds;
         totalCityStreetCount = totalStreets;
+        clearStreetOpportunityCache();
         isLoadingStreetCoverage = false;
       });
 
@@ -6703,6 +6824,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           cityStreets = [];
           coveredStreetIds = {};
           totalCityStreetCount = 0;
+          clearStreetOpportunityCache();
         }
         isLoadingDriveAreas = false;
       });
@@ -6748,8 +6870,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
       }
 
       await loadDriveAreas();
-      await loadMarketProperties();
-      await loadMissions();
     } catch (_) {
       if (!mounted) return;
 
@@ -6840,6 +6960,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       setState(() {
         marketProperties = [];
+        clearStreetOpportunityCache();
         isLoadingMarketProperties = false;
       });
       return;
@@ -6864,6 +6985,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       setState(() {
         marketProperties = properties;
+        clearStreetOpportunityCache();
         isLoadingMarketProperties = false;
       });
 
@@ -6951,14 +7073,18 @@ class _DrivingScreenState extends State<DrivingScreen> {
       final openMission = missions
           .where((mission) => mission.isOpen)
           .firstOrNull;
+      final completedForArea = missions
+          .where((mission) => mission.status == 'completed')
+          .toList(growable: false);
 
       if (!mounted) return;
 
       setState(() {
         activeMission = openMission;
-        completedMissions = missions
-            .where((mission) => mission.status == 'completed')
-            .toList(growable: false);
+        completedMissions = completedForArea;
+        if (completedForArea.isNotEmpty) {
+          hasCompletedMissionEver = true;
+        }
         scheduledMissions = missions
             .where((mission) => mission.isScheduled)
             .toList(growable: false);
@@ -7111,6 +7237,34 @@ class _DrivingScreenState extends State<DrivingScreen> {
     } catch (_) {
       // Calibration is helpful but non-critical; keep the current factor.
     }
+  }
+
+  Mission startedMissionCopy(
+    Mission mission, {
+    required String sessionId,
+    required DateTime startedAt,
+  }) {
+    return Mission(
+      id: mission.id,
+      driveAreaId: mission.driveAreaId,
+      status: 'active',
+      targetStreetIds: mission.targetStreetIds,
+      streetCount: mission.streetCount,
+      opportunityAtStart: mission.opportunityAtStart,
+      leadsGenerated: mission.leadsGenerated,
+      milesDriven: mission.milesDriven,
+      streetsCovered: mission.streetsCovered,
+      opportunityCaptured: mission.opportunityCaptured,
+      timeBudgetMinutes: mission.timeBudgetMinutes,
+      estimatedMinutes: mission.estimatedMinutes,
+      actualMinutes: mission.actualMinutes,
+      scheduledDate: mission.scheduledDate,
+      weeklyPlanId: mission.weeklyPlanId,
+      driveSessionId: sessionId,
+      createdAt: mission.createdAt,
+      startedAt: startedAt,
+      completedAt: mission.completedAt,
+    );
   }
 
   String? missionIdForPoint(LatLng? point) {
@@ -7489,6 +7643,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     if (isSavingMission) return;
 
     final sessionId = 'mission-${DateTime.now().millisecondsSinceEpoch}';
+    final startedAt = DateTime.now().toUtc();
 
     setState(() {
       isSavingMission = true;
@@ -7500,15 +7655,25 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .from('missions')
           .update({
             'status': 'active',
-            'started_at': DateTime.now().toUtc().toIso8601String(),
+            'started_at': startedAt.toIso8601String(),
             'drive_session_id': sessionId,
           })
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
       unawaited(FieldTestLogger.log('mission_start', detail: mission.id));
 
-      await loadMissions();
+      setState(() {
+        activeMission = startedMissionCopy(
+          mission,
+          sessionId: sessionId,
+          startedAt: startedAt,
+        );
+        scheduledMissions = scheduledMissions
+            .where((item) => item.id != mission.id)
+            .toList(growable: false);
+      });
       await startTracking(sessionIdOverride: sessionId);
+      unawaited(loadMissions());
 
       if (!mounted) return;
 
@@ -7519,7 +7684,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       final firstStreet = mission.targetStreetIds.firstOrNull;
       final firstOpportunity = firstStreet == null
           ? null
-          : streetOpportunitiesFor(
+          : cachedStreetOpportunitiesForActiveArea(
                   activeDriveArea == null
                       ? const <CityStreet>[]
                       : streetsInsideArea(activeDriveArea!),
@@ -7569,8 +7734,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
     if (mission == null || isSavingMission) return;
 
     final sessionId = 'mission-${DateTime.now().millisecondsSinceEpoch}';
+    final startedAt = mission.startedAt?.toUtc() ?? DateTime.now().toUtc();
 
     setState(() {
+      isSavingMission = true;
       currentDriveSessionId = sessionId;
     });
 
@@ -7579,19 +7746,34 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .from('missions')
           .update({
             'status': 'active',
-            'started_at':
-                mission.startedAt?.toUtc().toIso8601String() ??
-                DateTime.now().toUtc().toIso8601String(),
+            'started_at': startedAt.toIso8601String(),
             'drive_session_id': sessionId,
           })
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
       unawaited(FieldTestLogger.log('mission_start', detail: mission.id));
 
-      await loadMissions();
+      setState(() {
+        activeMission = startedMissionCopy(
+          mission,
+          sessionId: sessionId,
+          startedAt: startedAt,
+        );
+      });
       await startTracking(sessionIdOverride: sessionId);
+      unawaited(loadMissions());
+
+      if (!mounted) return;
+
+      setState(() {
+        isSavingMission = false;
+      });
     } catch (_) {
       if (!mounted) return;
+
+      setState(() {
+        isSavingMission = false;
+      });
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not start mission driving.')),
@@ -8766,6 +8948,19 @@ class _DrivingScreenState extends State<DrivingScreen> {
     var rememberAsDefault = false;
     final customController = TextEditingController();
 
+    List<StreetOpportunity> sheetStreetOpportunities(
+      List<CityStreet> areaStreets,
+      List<MarketProperty> areaMarketProperties,
+    ) {
+      final area = activeDriveArea;
+      if (area == null) return streetOpportunities;
+
+      return cachedStreetOpportunitiesForActiveArea(
+        areaStreets,
+        areaMarketProperties,
+      );
+    }
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -8797,9 +8992,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
           final areaMarketProperties = activeDriveArea == null
               ? const <MarketProperty>[]
               : _marketPropertiesForArea(this, activeDriveArea!);
-          final currentStreetOpportunities = activeDriveArea == null
-              ? streetOpportunities
-              : streetOpportunitiesFor(areaStreets, areaMarketProperties);
+          final currentStreetOpportunities = sheetStreetOpportunities(
+            areaStreets,
+            areaMarketProperties,
+          );
           final hasMarketMapData = areaMarketProperties.isNotEmpty;
           final includeUnscoredMissionStreets =
               hasMarketMapData && hasAreaStreetData;
@@ -9118,7 +9314,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                 label: Text(
                                   isBuildingMarketMap
                                       ? 'Analyzing area...'
-                                      : 'Analyze Area & Continue',
+                                      : motivatedSellersButtonLabel,
                                 ),
                                 onPressed:
                                     isBuildingMarketMap ||
@@ -9130,6 +9326,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                         setSheetState(() {});
                                       },
                               ),
+                              const SizedBox(height: 4),
+                              const _MotivatedSellersDescription(),
                             ],
                           ],
                         ),
@@ -9544,8 +9742,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     try {
       final parcelsByAccount = <String, ParcelProperty>{};
+      var hitPageLimit = false;
 
-      for (var offset = 0; ; offset += visibleParcelLimit) {
+      for (
+        var pageIndex = 0;
+        pageIndex < marketMapMaxParcelPages;
+        pageIndex++
+      ) {
+        final offset = pageIndex * visibleParcelLimit;
         final page = await fetchParcelsByLatLongBox(
           west: bounds.west,
           south: bounds.south,
@@ -9554,8 +9758,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
           resultRecordCount: visibleParcelLimit,
           returnGeometry: true,
           resultOffset: offset,
-        );
+        ).timeout(marketMapParcelPageTimeout);
 
+        var newParcelCount = 0;
         for (final parcel in page) {
           final centroid = parcel.centroid;
 
@@ -9563,7 +9768,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
             continue;
           }
 
-          parcelsByAccount[marketPropertyKey(parcel)] = parcel;
+          final key = marketPropertyKey(parcel);
+          if (!parcelsByAccount.containsKey(key)) {
+            newParcelCount++;
+          }
+          parcelsByAccount[key] = parcel;
         }
 
         if (!mounted) return;
@@ -9571,10 +9780,34 @@ class _DrivingScreenState extends State<DrivingScreen> {
         setState(() {
           marketMapFetchedCount = parcelsByAccount.length;
           marketMapMessage =
-              'Fetched $marketMapFetchedCount parcels inside the area...';
+              'Fetched $marketMapFetchedCount parcels inside the area... '
+              '(page ${pageIndex + 1})';
         });
 
         if (page.length < visibleParcelLimit) break;
+        if (newParcelCount == 0) break;
+        if (pageIndex == marketMapMaxParcelPages - 1) {
+          hitPageLimit = true;
+        }
+      }
+
+      if (hitPageLimit) {
+        if (!mounted) return;
+
+        setState(() {
+          isBuildingMarketMap = false;
+          marketMapMessage =
+              'This area is too large to analyze at once. Draw a smaller Drive Area and try again.';
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This area is too large to analyze at once. Draw a smaller Drive Area and try again.',
+            ),
+          ),
+        );
+        return;
       }
 
       final portfolioCounts = <String, int>{};
@@ -9628,17 +9861,35 @@ class _DrivingScreenState extends State<DrivingScreen> {
         minZoom: 15,
         message: 'Targets map ready for ${area.name}.',
       );
+    } on TimeoutException {
+      if (!mounted) return;
+
+      setState(() {
+        isBuildingMarketMap = false;
+        marketMapMessage =
+            'Parcel service timed out. Try again, or draw a smaller Drive Area.';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Parcel service timed out. Try again, or draw a smaller Drive Area.',
+          ),
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
 
       setState(() {
         isBuildingMarketMap = false;
-        marketMapMessage = 'Could not analyze area.';
+        marketMapMessage = 'Could not analyze area. Try a smaller area.';
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not analyze area.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not analyze area. Try a smaller area.'),
+        ),
+      );
     }
   }
 
@@ -9872,19 +10123,36 @@ class _DrivingScreenState extends State<DrivingScreen> {
     List<CityStreet> streets,
     List<MarketProperty> properties,
   ) {
+    final propertyPoints = <({LatLng point, double score})>[];
+
+    for (final property in properties) {
+      final centroid = property.parcel.centroid;
+      if (centroid == null) continue;
+
+      propertyPoints.add((point: centroid, score: property.targetScore));
+    }
+
     final opportunities = streets.map((street) {
       final isCovered = coveredStreetIds.contains(street.id);
       var score = 0.0;
 
       if (!isCovered) {
-        for (final property in properties) {
-          final centroid = property.parcel.centroid;
+        final bounds = latLngBounds(street.path);
 
-          if (centroid == null) continue;
+        if (bounds != null) {
+          for (final property in propertyPoints) {
+            if (!pointNearLatLngBounds(
+              property.point,
+              bounds,
+              opportunityStreetMatchMiles,
+            )) {
+              continue;
+            }
 
-          if (distanceToStreetMiles(centroid, street) <=
-              opportunityStreetMatchMiles) {
-            score += property.targetScore;
+            if (distanceToStreetMiles(property.point, street) <=
+                opportunityStreetMatchMiles) {
+              score += property.score;
+            }
           }
         }
       }
@@ -9899,6 +10167,39 @@ class _DrivingScreenState extends State<DrivingScreen> {
     opportunities.sort((a, b) => b.score.compareTo(a.score));
 
     return opportunities;
+  }
+
+  List<StreetOpportunity> cachedStreetOpportunitiesForActiveArea(
+    List<CityStreet> streets,
+    List<MarketProperty> properties,
+  ) {
+    final area = activeDriveArea;
+    if (area == null) return const <StreetOpportunity>[];
+
+    final coveredCount = coveredStreetIds.length;
+    if (cachedStreetOpportunityAreaId == area.id &&
+        cachedStreetOpportunityStreetCount == streets.length &&
+        cachedStreetOpportunityPropertyCount == properties.length &&
+        cachedStreetOpportunityCoveredCount == coveredCount) {
+      return cachedStreetOpportunities;
+    }
+
+    final opportunities = streetOpportunitiesFor(streets, properties);
+    cachedStreetOpportunities = opportunities;
+    cachedStreetOpportunityAreaId = area.id;
+    cachedStreetOpportunityStreetCount = streets.length;
+    cachedStreetOpportunityPropertyCount = properties.length;
+    cachedStreetOpportunityCoveredCount = coveredCount;
+
+    return opportunities;
+  }
+
+  void clearStreetOpportunityCache() {
+    cachedStreetOpportunities = const [];
+    cachedStreetOpportunityAreaId = null;
+    cachedStreetOpportunityStreetCount = -1;
+    cachedStreetOpportunityPropertyCount = -1;
+    cachedStreetOpportunityCoveredCount = -1;
   }
 
   Color streetOpportunityColor(StreetOpportunity opportunity) {
@@ -10306,6 +10607,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       cityStreets = [];
       coveredStreetIds = {};
       totalCityStreetCount = 0;
+      clearStreetOpportunityCache();
     });
 
     await loadStreetCoverage();
@@ -10375,6 +10677,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       setState(() {
         cityStreets = streets;
+        clearStreetOpportunityCache();
         isLoadingVisibleStreets = false;
       });
 
@@ -10394,11 +10697,22 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   List<CityStreet> findNearbyUncoveredStreets(Iterable<LatLng> points) {
     final newlyCoveredStreets = <String, CityStreet>{};
+    final streetBounds = cityStreets
+        .map((street) => (street: street, bounds: latLngBounds(street.path)))
+        .where((entry) => entry.bounds != null)
+        .toList(growable: false);
 
     for (final point in points) {
-      for (final street in cityStreets) {
+      for (final entry in streetBounds) {
+        final street = entry.street;
         if (coveredStreetIds.contains(street.id) ||
             newlyCoveredStreets.containsKey(street.id)) {
+          continue;
+        }
+
+        final bounds = entry.bounds;
+        if (bounds == null ||
+            !pointNearLatLngBounds(point, bounds, streetCoverageMatchMiles)) {
           continue;
         }
 
@@ -10450,6 +10764,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           ...coveredStreetIds,
           ...newlyCoveredStreets.map((street) => street.id),
         };
+        clearStreetOpportunityCache();
       });
     }
 
@@ -10469,6 +10784,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   Future<void> syncSavedDrivingPointsToStreetCoverage() async {
     if (isSyncingStreetCoverage ||
+        isTracking ||
         cityStreets.isEmpty ||
         savedDrivingPoints.isEmpty) {
       return;
@@ -10489,6 +10805,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
             ...coveredStreetIds,
             ...newlyCoveredStreets.map((street) => street.id),
           };
+          clearStreetOpportunityCache();
         });
       }
 
@@ -11335,6 +11652,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   Future<void> startTracking({String? sessionIdOverride}) async {
+    if (isTracking) return;
+
     final allowed = await checkLocationPermission();
 
     if (!allowed) return;
@@ -11347,6 +11666,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
       currentDriveSessionId = sessionId;
       locationMessage = 'Tracking started.';
       routePoints.clear();
+      lastProcessedTrackingPoint = null;
+      lastProcessedTrackingPointAt = null;
+      lastMapFollowAt = null;
     });
 
     const locationSettings = LocationSettings(
@@ -11355,32 +11677,75 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
 
     positionStream =
-        Geolocator.getPositionStream(
-          locationSettings: locationSettings,
-        ).listen((Position position) async {
-          final point = LatLng(position.latitude, position.longitude);
-          gpsUpdateLogCounter++;
-          if (gpsUpdateLogCounter % 10 == 0) {
-            unawaited(
-              FieldTestLogger.log(
-                'gps_update',
-                detail: 'accuracy: ${position.accuracy}m',
-              ),
-            );
-          }
+        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+          (Position position) async {
+            final point = LatLng(position.latitude, position.longitude);
+            final now = DateTime.now();
+            gpsUpdateLogCounter++;
+            if (gpsUpdateLogCounter % 10 == 0) {
+              unawaited(
+                FieldTestLogger.log(
+                  'gps_update',
+                  detail: 'accuracy: ${position.accuracy}m',
+                ),
+              );
+            }
 
-          setState(() {
-            myLocation = point;
-            lastKnownPosition = position;
-            routePoints.add(point);
-            locationMessage = 'Tracking route... Points: ${routePoints.length}';
-          });
+            final lastPoint = lastProcessedTrackingPoint;
+            final lastAt = lastProcessedTrackingPointAt;
+            if (lastPoint != null && lastAt != null) {
+              final movedMiles = const Distance().as(
+                LengthUnit.Mile,
+                lastPoint,
+                point,
+              );
+              final tooSoon =
+                  now.difference(lastAt) < trackingPointMinInterval &&
+                  movedMiles < trackingPointMinDistanceMiles;
 
-          mapController.move(point, 17);
+              if (tooSoon || isHandlingTrackingPoint) {
+                if (!mounted) return;
 
-          await saveDrivingPoint(point, currentDriveSessionId);
-          await markNearbyStreetsCovered(point, currentDriveSessionId);
-        });
+                setState(() {
+                  myLocation = point;
+                  lastKnownPosition = position;
+                });
+                return;
+              }
+            } else if (isHandlingTrackingPoint) {
+              return;
+            }
+
+            isHandlingTrackingPoint = true;
+
+            try {
+              if (!mounted) return;
+
+              setState(() {
+                myLocation = point;
+                lastKnownPosition = position;
+                routePoints.add(point);
+                locationMessage =
+                    'Tracking route... Points: ${routePoints.length}';
+              });
+
+              if (mapIsReady &&
+                  (lastMapFollowAt == null ||
+                      now.difference(lastMapFollowAt!) >
+                          const Duration(seconds: 2))) {
+                mapController.move(point, 17);
+                lastMapFollowAt = now;
+              }
+
+              await saveDrivingPoint(point, currentDriveSessionId);
+              await markNearbyStreetsCovered(point, currentDriveSessionId);
+              lastProcessedTrackingPoint = point;
+              lastProcessedTrackingPointAt = now;
+            } finally {
+              isHandlingTrackingPoint = false;
+            }
+          },
+        );
   }
 
   Future<void> saveDrivingPoint(LatLng point, String? driveSessionId) async {
@@ -11452,6 +11817,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
       isTracking = false;
       currentDriveSessionId = null;
       routePoints.clear();
+      isHandlingTrackingPoint = false;
+      lastProcessedTrackingPoint = null;
+      lastProcessedTrackingPointAt = null;
+      lastMapFollowAt = null;
       locationMessage = 'Tracking stopped. Points saved: $savedPointCount';
     });
   }
@@ -11662,6 +12031,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final coverageSegments = cityStreets
         .map((street) => CoverageSegment(id: street.id, path: street.path))
         .toList();
+    final estimatedCityStreetMiles = coverageSegments.fold<double>(
+      0,
+      (sum, segment) => sum + segment.lengthMiles,
+    );
     final streetCoveragePercent = totalStreetCount == 0
         ? 0.0
         : (coveredStreetCount / totalStreetCount) * 100;
@@ -11669,14 +12042,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
         isLoadingCoverage || isLoadingStreetCoverage;
     final hasStreetReferenceData = totalStreetCount > 0;
     final coverageHeadline = isStreetCoverageLoading
-        ? 'Coverage: Loading...'
+        ? 'Loading saved coverage...'
         : hasStreetReferenceData
-        ? 'Coverage: ${streetCoveragePercent.toStringAsFixed(0)}%'
-        : 'Coverage: Not available';
-    final remainingStreetMiles = remainingMiles(
-      coverageSegments,
-      coveredStreetIds,
-    );
+        ? '$selectedCoverageCity coverage'
+        : 'No street data loaded for $selectedCoverageCity yet.';
     final coveredStreets = cityStreets
         .where((street) => coveredStreetIds.contains(street.id))
         .toList();
@@ -11684,6 +12053,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
         .where((street) => !coveredStreetIds.contains(street.id))
         .toList();
     final activeAreaPolygon = activeDriveArea?.polygon ?? const <LatLng>[];
+    final shouldShowSavedAreaBoundaries =
+        !isDrawAreaMode || showSavedAreasWhileDrawing;
+    final driveAreaBoundaryAreas = shouldShowSavedAreaBoundaries
+        ? (showAllDriveAreaBoundaries
+              ? driveAreas
+              : activeDriveArea == null
+              ? const <DriveArea>[]
+              : [activeDriveArea!])
+        : const <DriveArea>[];
     final activeAreaStreets = activeAreaPolygon.length < 3
         ? <CityStreet>[]
         : cityStreets
@@ -11691,6 +12069,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 (street) => streetFallsInsidePolygon(street, activeAreaPolygon),
               )
               .toList();
+    final activeAreaCoverageSegments = activeAreaStreets
+        .map((street) => CoverageSegment(id: street.id, path: street.path))
+        .toList(growable: false);
+    final activeAreaTotalMiles = activeAreaCoverageSegments.fold<double>(
+      0,
+      (sum, segment) => sum + segment.lengthMiles,
+    );
+    final activeAreaCoveredMiles = coveredMiles(
+      activeAreaCoverageSegments,
+      coveredStreetIds,
+    );
     final activeAreaCoveredStreetCount = activeAreaStreets
         .where((street) => coveredStreetIds.contains(street.id))
         .length;
@@ -11755,7 +12144,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ? targetParcels
               : visibleParcels)
         : <ParcelProperty>[];
-    final streetOpportunities = streetOpportunitiesFor(
+    final streetOpportunities = cachedStreetOpportunitiesForActiveArea(
       activeAreaStreets,
       marketProperties,
     );
@@ -11899,6 +12288,18 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final todayScheduledEstimatedMinutes = todayScheduledOpportunities.isEmpty
         ? todayScheduledMission?.estimatedMinutes ?? 0
         : estimatedMinutesForMissionStreets(todayScheduledOpportunities);
+    final hasNoDriveAreas = !isLoadingDriveAreas && driveAreas.isEmpty;
+    final showFirstMissionTip =
+        !isLoadingDriveAreas &&
+        driveAreas.isNotEmpty &&
+        !hasCompletedMissionEver &&
+        !firstMissionTipDismissed;
+    final planPanelHeight = todayScheduledMission == null
+        ? (showFirstMissionTip ? 172.0 : 92.0)
+        : (showFirstMissionTip ? 262.0 : 182.0);
+    final activeCityLabel = MarketService.getActiveCity().isEmpty
+        ? selectedCoverageCity
+        : MarketService.getActiveCity();
 
     return Scaffold(
       body: Stack(
@@ -12040,17 +12441,27 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           )
                           .toList(),
                     ),
-                  if (activeAreaPolygon.length >= 3 &&
-                      (!isDrawAreaMode || showSavedAreasWhileDrawing))
+                  if (driveAreaBoundaryAreas.any(
+                    (area) => area.polygon.length >= 3,
+                  ))
                     PolygonLayer(
-                      polygons: [
-                        Polygon(
-                          points: activeAreaPolygon,
-                          color: const Color(0x1A1976D2),
-                          borderColor: const Color(0xFF0D47A1),
-                          borderStrokeWidth: 4,
-                        ),
-                      ],
+                      polygons: driveAreaBoundaryAreas
+                          .where((area) => area.polygon.length >= 3)
+                          .map((area) {
+                            final isActive = area.id == activeDriveArea?.id;
+
+                            return Polygon(
+                              points: area.polygon,
+                              color: isActive
+                                  ? const Color(0x1A1976D2)
+                                  : const Color(0x0F111827),
+                              borderColor: isActive
+                                  ? const Color(0xFF0D47A1)
+                                  : const Color(0xFF6B7280),
+                              borderStrokeWidth: isActive ? 4 : 2,
+                            );
+                          })
+                          .toList(),
                     ),
                   if (drawingBoundaryPoints.length > 1)
                     PolylineLayer(
@@ -12677,18 +13088,28 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       )
                                       .toList(),
                                 ),
-                              if (activeAreaPolygon.length >= 3 &&
-                                  (!isDrawAreaMode ||
-                                      showSavedAreasWhileDrawing))
+                              if (driveAreaBoundaryAreas.any(
+                                (area) => area.polygon.length >= 3,
+                              ))
                                 PolygonLayer(
-                                  polygons: [
-                                    Polygon(
-                                      points: activeAreaPolygon,
-                                      color: const Color(0x1A1976D2),
-                                      borderColor: const Color(0xFF0D47A1),
-                                      borderStrokeWidth: 4,
-                                    ),
-                                  ],
+                                  polygons: driveAreaBoundaryAreas
+                                      .where((area) => area.polygon.length >= 3)
+                                      .map((area) {
+                                        final isActive =
+                                            area.id == activeDriveArea?.id;
+
+                                        return Polygon(
+                                          points: area.polygon,
+                                          color: isActive
+                                              ? const Color(0x1A1976D2)
+                                              : const Color(0x0F111827),
+                                          borderColor: isActive
+                                              ? const Color(0xFF0D47A1)
+                                              : const Color(0xFF6B7280),
+                                          borderStrokeWidth: isActive ? 4 : 2,
+                                        );
+                                      })
+                                      .toList(),
                                 ),
                               if (drawingBoundaryPoints.length > 1)
                                 PolylineLayer(
@@ -12988,24 +13409,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                     const SizedBox(height: 8),
                                     Text('City: ${activeDriveArea!.city}'),
                                     const SizedBox(height: 8),
-                                    if (activeAreaStreets.isEmpty)
-                                      const Text(
-                                        'No street data for this area yet',
-                                      )
-                                    else ...[
-                                      Text(
-                                        'Area coverage: ${activeAreaCoveragePercent.toStringAsFixed(0)}% '
-                                        '($activeAreaCoveredStreetCount/${activeAreaStreets.length} streets)',
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Covered streets: $activeAreaCoveredStreetCount',
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Remaining streets: $activeAreaRemainingStreetCount',
-                                      ),
-                                    ],
+                                    _CoverageStatBlock(
+                                      streetsDriven:
+                                          activeAreaCoveredStreetCount,
+                                      totalStreets: activeAreaStreets.length,
+                                      percent: activeAreaCoveragePercent,
+                                      milesCovered: activeAreaCoveredMiles,
+                                      totalMiles: activeAreaTotalMiles,
+                                      remainingStreets:
+                                          activeAreaRemainingStreetCount,
+                                    ),
                                     const SizedBox(height: 8),
                                     Text(
                                       'Leads found inside area: $activeAreaLeadsFound',
@@ -13071,13 +13484,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                         label: Text(
                                           isBuildingMarketMap
                                               ? 'Analyzing area...'
-                                              : 'Analyze Area',
+                                              : motivatedSellersButtonLabel,
                                         ),
                                         onPressed: isBuildingMarketMap
                                             ? null
                                             : buildMarketMap,
                                       ),
                                     ),
+                                    const SizedBox(height: 4),
+                                    const _MotivatedSellersDescription(),
                                     if (marketMapMessage.isNotEmpty) ...[
                                       const SizedBox(height: 8),
                                       Text(marketMapMessage),
@@ -13940,57 +14355,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 16),
-                                    Wrap(
-                                      spacing: 10,
-                                      runSpacing: 10,
-                                      children: [
-                                        _DriveStatTile(
-                                          label: 'Street coverage',
-                                          value: hasStreetReferenceData
-                                              ? '${streetCoveragePercent.toStringAsFixed(0)}%'
-                                              : 'N/A',
-                                          icon: Icons.timeline,
-                                          color: const Color(0xFF2563EB),
-                                        ),
-                                        _DriveStatTile(
-                                          label: 'Covered',
-                                          value: coveredStreetCount.toString(),
-                                          icon: Icons.check_circle,
-                                          color: const Color(0xFF059669),
-                                        ),
-                                        _DriveStatTile(
-                                          label: 'Remaining',
-                                          value: remainingStreetCount
-                                              .toString(),
-                                          icon: Icons.route,
-                                          color: const Color(0xFFF59E0B),
-                                        ),
-                                        _DriveStatTile(
-                                          label: 'Miles left',
-                                          value: remainingStreetMiles
-                                              .toStringAsFixed(1),
-                                          icon: Icons.social_distance,
-                                          color: const Color(0xFFEA580C),
-                                        ),
-                                        _DriveStatTile(
-                                          label: 'Total streets',
-                                          value: totalStreetCount.toString(),
-                                          icon: Icons.add_road,
-                                          color: const Color(0xFF7C3AED),
-                                        ),
-                                        _DriveStatTile(
-                                          label: 'Miles driven',
-                                          value: totalMiles.toStringAsFixed(2),
-                                          icon: Icons.speed,
-                                          color: const Color(0xFF111827),
-                                        ),
-                                        _DriveStatTile(
-                                          label: 'Leads',
-                                          value: leadsFound.toString(),
-                                          icon: Icons.person_pin_circle,
-                                          color: const Color(0xFFDC2626),
-                                        ),
-                                      ],
+                                    _CoverageStatBlock(
+                                      streetsDriven: coveredStreetCount,
+                                      totalStreets: totalStreetCount,
+                                      percent: streetCoveragePercent,
+                                      milesCovered: totalMiles,
+                                      totalMiles: estimatedCityStreetMiles,
+                                      remainingStreets: remainingStreetCount,
                                     ),
                                     const SizedBox(height: 12),
                                     Text(
@@ -14126,43 +14497,60 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: handleFieldTestTitleTap,
-                        child: Text(
-                          activeDriveArea?.name ?? 'Market Coverage',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: handleFieldTestTitleTap,
+                              child: Text(
+                                activeDriveArea?.name ?? 'Market Coverage',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Tooltip(
-                      message: isTracking
-                          ? 'Stop tracking before changing markets'
-                          : 'Search markets',
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.search, size: 18),
-                        label: Text(
-                          selectedCoverageCity,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          disabledForegroundColor: const Color(0xFF9CA3AF),
-                          side: BorderSide(
-                            color: isTracking
-                                ? const Color(0xFF4B5563)
-                                : const Color(0xFF9CA3AF),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 6),
+                            child: Text(
+                              '·',
+                              style: TextStyle(
+                                color: Color(0xFFCBD5E1),
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        onPressed: isTracking ? null : openMarketPicker,
+                          Tooltip(
+                            message: isTracking
+                                ? 'Stop tracking before changing markets'
+                                : 'Search markets',
+                            child: TextButton.icon(
+                              icon: const Icon(Icons.search, size: 16),
+                              label: Text(
+                                activeCityLabel,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                disabledForegroundColor: const Color(
+                                  0xFF9CA3AF,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 6,
+                                ),
+                              ),
+                              onPressed: isTracking ? null : openMarketPicker,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -14170,7 +14558,49 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ),
             ),
           ),
-          if (activeMission == null && !isDrawAreaMode)
+          if (driveAreas.length > 1 && !isDrawAreaMode)
+            Positioned(
+              top: 64,
+              left: 12,
+              child: SafeArea(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: const Color(0xE6FFFFFF),
+                    foregroundColor: const Color(0xFF111827),
+                    side: const BorderSide(color: Color(0xFFD1D5DB)),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      showAllDriveAreaBoundaries = !showAllDriveAreaBoundaries;
+                    });
+                  },
+                  child: Text(
+                    showAllDriveAreaBoundaries
+                        ? 'Active area only'
+                        : 'Show all areas',
+                  ),
+                ),
+              ),
+            ),
+          if (hasNoDriveAreas && !isDrawAreaMode)
+            Positioned.fill(
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 86, 18, 24),
+                  child: Center(
+                    child: _FirstDriveAreaWelcomeCard(
+                      onDrawArea: enterDrawAreaMode,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (activeMission == null && !isDrawAreaMode && !hasNoDriveAreas)
             Positioned(
               left: 0,
               right: 0,
@@ -14178,7 +14608,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
               child: SafeArea(
                 top: false,
                 child: Container(
-                  height: todayScheduledMission == null ? 92 : 182,
+                  height: planPanelHeight,
                   padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
                   decoration: const BoxDecoration(
                     color: Colors.white,
@@ -14193,79 +14623,99 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       ),
                     ],
                   ),
-                  child: todayScheduledMission == null
-                      ? FilledButton.icon(
-                          icon: const Icon(Icons.arrow_forward),
-                          label: const Text("Plan Today's Drive"),
-                          onPressed: () =>
-                              openPlanTodayDriveSheet(streetOpportunities),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Row(
-                              children: [
-                                const Expanded(
-                                  child: Text(
-                                    "Today's Planned Mission",
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (showFirstMissionTip) ...[
+                        _FirstMissionTipCard(onDismiss: dismissFirstMissionTip),
+                        const SizedBox(height: 10),
+                      ],
+                      Expanded(
+                        child: todayScheduledMission == null
+                            ? FilledButton.icon(
+                                icon: const Icon(Icons.arrow_forward),
+                                label: const Text("Plan Today's Drive"),
+                                onPressed: () => openPlanTodayDriveSheet(
+                                  streetOpportunities,
                                 ),
-                                Text(
-                                  shortPlannerDateLabel(today),
-                                  style: const TextStyle(
-                                    color: Color(0xFF6B7280),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${activeDriveArea?.name ?? 'Drive Area'} - ${todayScheduledMission.streetCount} streets - ~$todayScheduledEstimatedMinutes min',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Color(0xFF374151)),
-                            ),
-                            const Spacer(),
-                            FilledButton.icon(
-                              icon: const Icon(Icons.arrow_forward),
-                              label: const Text('Start Driving ->'),
-                              onPressed: isSavingMission
-                                  ? null
-                                  : () => startScheduledMission(
-                                      todayScheduledMission,
-                                    ),
-                            ),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                TextButton(
-                                  onPressed: () => skipScheduledMission(
-                                    todayScheduledMission,
-                                  ),
-                                  child: const Text('Skip today'),
-                                ),
-                                const Text(
-                                  '-',
-                                  style: TextStyle(color: Color(0xFF6B7280)),
-                                ),
-                                TextButton(
-                                  onPressed: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Adjust coming soon'),
+                              )
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Expanded(
+                                        child: Text(
+                                          "Today's Planned Mission",
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
                                       ),
-                                    );
-                                  },
-                                  child: const Text('Adjust'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                                      Text(
+                                        shortPlannerDateLabel(today),
+                                        style: const TextStyle(
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${activeDriveArea?.name ?? 'Drive Area'} - ${todayScheduledMission.streetCount} streets - ~$todayScheduledEstimatedMinutes min',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFF374151),
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  FilledButton.icon(
+                                    icon: const Icon(Icons.arrow_forward),
+                                    label: const Text('Start Driving ->'),
+                                    onPressed: isSavingMission
+                                        ? null
+                                        : () => startScheduledMission(
+                                            todayScheduledMission,
+                                          ),
+                                  ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      TextButton(
+                                        onPressed: () => skipScheduledMission(
+                                          todayScheduledMission,
+                                        ),
+                                        child: const Text('Skip today'),
+                                      ),
+                                      const Text(
+                                        '-',
+                                        style: TextStyle(
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                      TextButton(
+                                        onPressed: () {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Adjust coming soon',
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: const Text('Adjust'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             )
