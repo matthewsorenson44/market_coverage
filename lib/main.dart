@@ -8682,15 +8682,29 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
+  void disposeModalTextController(
+    TextEditingController controller, {
+    FocusNode? focusNode,
+  }) {
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 450), () {
+        focusNode?.dispose();
+        controller.dispose();
+      }),
+    );
+  }
+
   void openQuickCaptureSheet() {
     unawaited(FieldTestLogger.log('qc_open'));
     final usedGpsForQuickCapture = myLocation != null;
     final quickCaptureAccuracyMeters = lastKnownPosition?.accuracy;
     final lookupPoint = myLocation ?? currentMapCenter;
     final noteController = TextEditingController();
+    final noteFocusNode = FocusNode();
     var fetchStarted = false;
     var isLoading = true;
     var isSaving = false;
+    var isClosing = false;
     var parcelLoadFailed = false;
     ParcelProperty? quickParcel;
     Lead? existingLead;
@@ -8760,7 +8774,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 foundParcel = null;
               }
 
-              if (!mounted || !sheetContext.mounted) return;
+              if (!mounted || !sheetContext.mounted || isClosing) return;
 
               if (foundParcel == null) {
                 unawaited(FieldTestLogger.log('qc_parcel_failed'));
@@ -8798,13 +8812,19 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
           Future<void> saveQuickCapture({required bool openPhotos}) async {
             final parcel = quickParcel;
-            if (parcel == null || isSaving) return;
+            if (parcel == null || isSaving || isClosing) return;
+
+            FocusScope.of(sheetContext).unfocus();
+            noteFocusNode.unfocus();
+            final noteText = noteController.text.trim();
 
             final proceed = await confirmQuickCaptureDuplicate(
               parcel: parcel,
               sheetContext: sheetContext,
             );
-            if (!proceed || !mounted || !sheetContext.mounted) return;
+            if (!proceed || !mounted || !sheetContext.mounted || isClosing) {
+              return;
+            }
 
             setSheetState(() {
               isSaving = true;
@@ -8830,7 +8850,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 parcel: parcel,
                 scoreData: currentScoreData(),
                 condition: condition,
-                notes: noteController.text.trim(),
+                notes: noteText,
               );
               final savedLead = saveResult.lead;
               unawaited(
@@ -8841,8 +8861,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 ),
               );
 
-              if (!mounted || !sheetContext.mounted) return;
+              if (isClosing || !mounted || !sheetContext.mounted) return;
 
+              isClosing = true;
+              FocusScope.of(sheetContext).unfocus();
+              noteFocusNode.unfocus();
               Navigator.pop(sheetContext);
               if (openPhotos && savedLead != null) {
                 openLeadDetails(savedLead);
@@ -8870,7 +8893,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
               );
             } catch (_) {
               unawaited(FieldTestLogger.log('qc_save_failed'));
-              if (!mounted || !sheetContext.mounted) return;
+              if (!mounted || !sheetContext.mounted || isClosing) return;
 
               setSheetState(() {
                 isSaving = false;
@@ -9085,6 +9108,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               const SizedBox(height: 12),
                               TextField(
                                 controller: noteController,
+                                focusNode: noteFocusNode,
                                 minLines: 1,
                                 maxLines: 1,
                                 decoration: const InputDecoration(
@@ -9097,11 +9121,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                 label: Text(
                                   isSaving ? 'Saving...' : 'Save Lead →',
                                 ),
-                                onPressed: isSaving
+                                onPressed: isSaving || isClosing
                                     ? null
                                     : () async {
                                         final parcel = quickParcel;
                                         if (parcel == null) return;
+
+                                        FocusScope.of(sheetContext).unfocus();
+                                        noteFocusNode.unfocus();
+                                        final noteText = noteController.text
+                                            .trim();
 
                                         final proceed =
                                             await confirmQuickCaptureDuplicate(
@@ -9110,7 +9139,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                             );
                                         if (!proceed ||
                                             !mounted ||
-                                            !sheetContext.mounted) {
+                                            !sheetContext.mounted ||
+                                            isClosing) {
                                           return;
                                         }
 
@@ -9139,8 +9169,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                 parcel: parcel,
                                                 scoreData: currentScoreData(),
                                                 condition: condition,
-                                                notes: noteController.text
-                                                    .trim(),
+                                                notes: noteText,
                                               );
                                           final savedLead = saveResult.lead;
                                           unawaited(
@@ -9156,6 +9185,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                             return;
                                           }
 
+                                          isClosing = true;
+                                          FocusScope.of(sheetContext).unfocus();
+                                          noteFocusNode.unfocus();
                                           Navigator.pop(sheetContext);
                                           ScaffoldMessenger.of(
                                             context,
@@ -9198,7 +9230,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                             ),
                                           );
                                           if (!mounted ||
-                                              !sheetContext.mounted) {
+                                              !sheetContext.mounted ||
+                                              isClosing) {
                                             return;
                                           }
 
@@ -9223,7 +9256,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                 label: Text(
                                   isSaving ? 'Saving...' : 'Save + Photos ->',
                                 ),
-                                onPressed: isSaving
+                                onPressed: isSaving || isClosing
                                     ? null
                                     : () => saveQuickCapture(openPhotos: true),
                               ),
@@ -9236,7 +9269,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
           );
         },
       ),
-    ).whenComplete(noteController.dispose);
+    ).whenComplete(
+      () =>
+          disposeModalTextController(noteController, focusNode: noteFocusNode),
+    );
   }
 
   void openWeeklyPlannerSheet(List<StreetOpportunity> streetOpportunities) {
@@ -9484,7 +9520,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           );
         },
       ),
-    ).whenComplete(customController.dispose);
+    ).whenComplete(() => disposeModalTextController(customController));
   }
 
   void openPlanTodayDriveSheet(List<StreetOpportunity> streetOpportunities) {
@@ -10008,7 +10044,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           );
         },
       ),
-    ).whenComplete(customController.dispose);
+    ).whenComplete(() => disposeModalTextController(customController));
   }
 
   void openMissionDetailSheet({
