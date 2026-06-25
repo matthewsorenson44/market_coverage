@@ -57,6 +57,7 @@ const String activeCoverageCityPrefsKey = 'active_coverage_city';
 const String recentMarketCitiesPrefsKey = 'recent_market_cities';
 const String firstMissionTipDismissedPrefsKey = 'first_mission_tip_dismissed';
 const String leadPhotosBucket = 'lead-photos';
+const int maxLeadPhotoBytes = 10 * 1024 * 1024;
 const String defaultCoverageCity = 'Owasso';
 const String motivatedSellersButtonLabel = 'Find Motivated Sellers';
 const String motivatedSellersDescription =
@@ -7860,6 +7861,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     required double opportunityCaptured,
     required int leadsFound,
     required double milesDriven,
+    BuildContext? closeContext,
   }) async {
     final mission = activeMission;
     if (mission == null) return;
@@ -7910,6 +7912,18 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ).where((street) => !coveredStreetIds.contains(street.id)),
             );
       await loadMissions();
+
+      if (!mounted) return;
+
+      setState(() {
+        mapMode = 'drive';
+        locationMessage = 'Mission completed.';
+      });
+
+      if (closeContext != null && closeContext.mounted) {
+        await Navigator.of(closeContext).maybePop();
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
 
       if (!mounted) return;
 
@@ -9595,6 +9609,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       opportunityCaptured: missionOpportunityCaptured,
                       leadsFound: missionLeadsFound,
                       milesDriven: missionMiles,
+                      closeContext: context,
                     ),
                   ),
                 ],
@@ -11605,39 +11620,109 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   Future<bool> checkLocationPermission() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    bool serviceEnabled;
 
-    if (!serviceEnabled) {
+    try {
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    } catch (error) {
+      if (!mounted) return false;
+
+      final message = locationErrorMessage(error);
       setState(() {
-        locationMessage = 'Location services are turned off.';
+        locationMessage = message;
       });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
       return false;
     }
 
-    LocationPermission permission = await Geolocator.checkPermission();
+    if (!serviceEnabled) {
+      if (!mounted) return false;
 
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+      const message = 'Location services are turned off.';
+      setState(() {
+        locationMessage = message;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text(message)));
+      return false;
+    }
+
+    LocationPermission permission;
+
+    try {
+      permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+    } catch (error) {
+      if (!mounted) return false;
+
+      final message = locationErrorMessage(error);
+      setState(() {
+        locationMessage = message;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      return false;
     }
 
     if (permission == LocationPermission.denied) {
+      if (!mounted) return false;
+
+      const message = 'Location permission denied.';
       setState(() {
-        locationMessage = 'Location permission denied.';
+        locationMessage = message;
       });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text(message)));
       return false;
     }
 
     if (permission == LocationPermission.deniedForever) {
+      if (!mounted) return false;
+
+      const message = 'Location permission permanently denied.';
       setState(() {
-        locationMessage = 'Location permission permanently denied.';
+        locationMessage = message;
       });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text(message)));
       return false;
     }
 
     return true;
   }
 
+  String locationErrorMessage(Object error) {
+    final details = error.toString();
+
+    if (details.contains('NSLocationWhenInUseUsageDescription') ||
+        details.contains('NSLocationAlwaysAndWhenInUseUsageDescription') ||
+        details.contains('Info.plist')) {
+      return 'Location permission is not configured for iPhone. Pull the latest build and reinstall the app.';
+    }
+
+    if (details.toLowerCase().contains('denied')) {
+      return 'Location permission denied. Enable location access in iPhone Settings.';
+    }
+
+    if (details.toLowerCase().contains('disabled')) {
+      return 'Location services are turned off.';
+    }
+
+    return 'Could not get your location: $details';
+  }
+
   Future<void> findMyLocation() async {
+    if (!mounted) return;
+
     setState(() {
       isFindingLocation = true;
       locationMessage = 'Finding your location...';
@@ -11646,35 +11731,57 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final allowed = await checkLocationPermission();
 
     if (!allowed) {
+      if (!mounted) return;
+
       setState(() {
         isFindingLocation = false;
       });
       return;
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-      ),
-    );
-    unawaited(
-      FieldTestLogger.log(
-        'gps_acquired',
-        detail: 'accuracy: ${position.accuracy}m',
-      ),
-    );
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      unawaited(
+        FieldTestLogger.log(
+          'gps_acquired',
+          detail: 'accuracy: ${position.accuracy}m',
+        ),
+      );
 
-    final newLocation = LatLng(position.latitude, position.longitude);
+      final newLocation = LatLng(position.latitude, position.longitude);
 
-    setState(() {
-      myLocation = newLocation;
-      lastKnownPosition = position;
-      currentMapCenter = newLocation;
-      isFindingLocation = false;
-      locationMessage = 'Location found.';
-    });
+      if (!mounted) return;
 
-    mapController.move(newLocation, 16);
+      setState(() {
+        myLocation = newLocation;
+        lastKnownPosition = position;
+        currentMapCenter = newLocation;
+        isFindingLocation = false;
+        locationMessage = 'Location found.';
+      });
+
+      if (mapIsReady) {
+        mapController.move(newLocation, 16);
+      }
+    } catch (error) {
+      unawaited(FieldTestLogger.log('gps_failed', detail: error.toString()));
+
+      if (!mounted) return;
+
+      final message = locationErrorMessage(error);
+      setState(() {
+        isFindingLocation = false;
+        locationMessage = message;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   Future<void> startTracking({String? sessionIdOverride}) async {
@@ -16945,6 +17052,46 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     }
   }
 
+  String photoStorageErrorMessage(Object error) {
+    final details = error.toString();
+    final lowerDetails = details.toLowerCase();
+
+    if (lowerDetails.contains('bucket') && lowerDetails.contains('not found')) {
+      return 'Missing Supabase Storage bucket "$leadPhotosBucket". Create the bucket and storage policies, then try again.';
+    }
+
+    if (lowerDetails.contains('row-level security') ||
+        lowerDetails.contains('rls') ||
+        lowerDetails.contains('unauthorized') ||
+        lowerDetails.contains('403') ||
+        lowerDetails.contains('401')) {
+      return 'Photo upload blocked by Supabase Storage policy: $details';
+    }
+
+    if (lowerDetails.contains('payload too large') ||
+        lowerDetails.contains('file size') ||
+        lowerDetails.contains('max allowed') ||
+        lowerDetails.contains('too large')) {
+      return 'Photo is too large. Choose a smaller image or lower camera resolution.';
+    }
+
+    return 'Photo upload failed: $details';
+  }
+
+  void showPhotoError(Object error) {
+    final message = photoStorageErrorMessage(error);
+    debugPrint('Lead photo error: $error');
+    unawaited(
+      FieldTestLogger.log('lead_photo_error', detail: error.toString()),
+    );
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 8)),
+    );
+  }
+
   Future<void> loadLeadPhotos() async {
     setState(() {
       isLoadingPhotos = true;
@@ -16972,16 +17119,14 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
         photos = loadedPhotos;
         isLoadingPhotos = false;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
 
       setState(() {
         isLoadingPhotos = false;
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not load photos.')));
+      showPhotoError(error);
     }
   }
 
@@ -17039,10 +17184,19 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
   }
 
   Future<void> uploadLeadPhoto() async {
-    final pickedPhoto = await imagePicker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-    );
+    XFile? pickedPhoto;
+
+    try {
+      pickedPhoto = await imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 82,
+        maxWidth: 2048,
+        maxHeight: 2048,
+      );
+    } catch (error) {
+      showPhotoError(error);
+      return;
+    }
 
     if (pickedPhoto == null) return;
 
@@ -17051,7 +17205,17 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     });
 
     try {
-      final photoBytes = await pickedPhoto.readAsBytes();
+      final photoSize = await pickedPhoto.length();
+
+      if (photoSize > maxLeadPhotoBytes) {
+        throw StateError(
+          'Selected photo is ${(photoSize / (1024 * 1024)).toStringAsFixed(1)} MB. Max allowed is 10 MB.',
+        );
+      }
+
+      final photoBytes = await pickedPhoto.readAsBytes().timeout(
+        const Duration(seconds: 30),
+      );
       final extension = photoExtension(pickedPhoto.name);
       final fileName = '${DateTime.now().millisecondsSinceEpoch}$extension';
       final storagePath = '${widget.lead.id}/$fileName';
@@ -17064,7 +17228,8 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
             fileOptions: FileOptions(
               contentType: pickedPhoto.mimeType ?? photoContentType(fileName),
             ),
-          );
+          )
+          .timeout(const Duration(seconds: 45));
 
       await loadLeadPhotos();
 
@@ -17073,12 +17238,8 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Photo uploaded.')));
-    } catch (_) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not upload photo.')));
+    } catch (error) {
+      showPhotoError(error);
     } finally {
       if (mounted) {
         setState(() {

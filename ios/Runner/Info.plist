@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Market Coverage lets you attach property photos to leads.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Market Coverage uses your location to center the drive map, track driven routes, and mark street coverage during missions.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
