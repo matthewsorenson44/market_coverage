@@ -17205,6 +17205,14 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     });
 
     try {
+      if (supabase.auth.currentSession == null) {
+        await supabase.auth.refreshSession();
+      }
+
+      if (supabase.auth.currentSession == null) {
+        throw StateError('You are not signed in. Sign in again, then retry.');
+      }
+
       final photoSize = await pickedPhoto.length();
 
       if (photoSize > maxLeadPhotoBytes) {
@@ -17219,15 +17227,22 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
       final extension = photoExtension(pickedPhoto.name);
       final fileName = '${DateTime.now().millisecondsSinceEpoch}$extension';
       final storagePath = '${widget.lead.id}/$fileName';
+      final contentType = pickedPhoto.mimeType ?? photoContentType(fileName);
+
+      unawaited(
+        FieldTestLogger.log(
+          'lead_photo_upload_start',
+          detail:
+              'lead=${widget.lead.id}, bytes=$photoSize, type=$contentType, path=$storagePath',
+        ),
+      );
 
       await supabase.storage
           .from(leadPhotosBucket)
           .uploadBinary(
             storagePath,
             photoBytes,
-            fileOptions: FileOptions(
-              contentType: pickedPhoto.mimeType ?? photoContentType(fileName),
-            ),
+            fileOptions: FileOptions(contentType: contentType),
           )
           .timeout(const Duration(seconds: 45));
 
