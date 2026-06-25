@@ -58,6 +58,7 @@ const String recentMarketCitiesPrefsKey = 'recent_market_cities';
 const String firstMissionTipDismissedPrefsKey = 'first_mission_tip_dismissed';
 const String leadPhotosBucket = 'lead-photos';
 const int maxLeadPhotoBytes = 10 * 1024 * 1024;
+const int leadPhotoSignedUrlSeconds = 60 * 60 * 24 * 7;
 const String defaultCoverageCity = 'Owasso';
 const String motivatedSellersButtonLabel = 'Find Motivated Sellers';
 const String motivatedSellersDescription =
@@ -17117,16 +17118,16 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
           .from(leadPhotosBucket)
           .list(path: storageFolder);
 
-      final loadedPhotos = files.where((file) => file.name.isNotEmpty).map((
-        file,
-      ) {
-        final path = '$storageFolder/${file.name}';
+      final loadedPhotos = await Future.wait(
+        files.where((file) => file.name.isNotEmpty).map((file) async {
+          final path = '$storageFolder/${file.name}';
+          final signedUrl = await supabase.storage
+              .from(leadPhotosBucket)
+              .createSignedUrl(path, leadPhotoSignedUrlSeconds);
 
-        return LeadPhoto(
-          path: path,
-          url: supabase.storage.from(leadPhotosBucket).getPublicUrl(path),
-        );
-      }).toList();
+          return LeadPhoto(path: path, url: signedUrl);
+        }),
+      );
 
       if (!mounted) return;
 
