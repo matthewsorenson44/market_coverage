@@ -7682,14 +7682,74 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   String missionStartSaveErrorMessage(Object error, String fallback) {
-    final details = error.toString().toLowerCase();
-    if (details.contains('mission_start_lat') ||
-        details.contains('mission_start_lng') ||
-        details.contains('mission_started_at')) {
+    if (missionStartColumnsMissing(error)) {
       return 'Mission start fields are missing. Run Supabase migration 0011_mission_start_location.sql.';
     }
 
     return fallback;
+  }
+
+  bool missionStartColumnsMissing(Object error) {
+    final details = error.toString().toLowerCase();
+    return details.contains('mission_start_lat') ||
+        details.contains('mission_start_lng') ||
+        details.contains('mission_started_at');
+  }
+
+  Map<String, dynamic> withoutMissionStartColumns(Map<String, dynamic> row) {
+    return Map<String, dynamic>.from(row)
+      ..remove('mission_start_lat')
+      ..remove('mission_start_lng')
+      ..remove('mission_started_at');
+  }
+
+  Future<Map<String, dynamic>> insertMissionRowWithStartFallback(
+    Map<String, dynamic> row,
+  ) async {
+    try {
+      return await supabase.from('missions').insert(row).select('id').single();
+    } catch (error) {
+      if (!missionStartColumnsMissing(error)) rethrow;
+
+      unawaited(
+        FieldTestLogger.log(
+          'mission_start_fields_missing_fallback',
+          detail: 'insert',
+        ),
+      );
+      return supabase
+          .from('missions')
+          .insert(withoutMissionStartColumns(row))
+          .select('id')
+          .single();
+    }
+  }
+
+  Future<void> updateMissionWithStartFallback(
+    String missionId,
+    Map<String, dynamic> row,
+  ) async {
+    try {
+      await supabase
+          .from('missions')
+          .update(row)
+          .eq('account_id', widget.activeAccountId)
+          .eq('id', missionId);
+    } catch (error) {
+      if (!missionStartColumnsMissing(error)) rethrow;
+
+      unawaited(
+        FieldTestLogger.log(
+          'mission_start_fields_missing_fallback',
+          detail: 'update',
+        ),
+      );
+      await supabase
+          .from('missions')
+          .update(withoutMissionStartColumns(row))
+          .eq('account_id', widget.activeAccountId)
+          .eq('id', missionId);
+    }
   }
 
   String? missionIdForPoint(LatLng? point) {
@@ -7928,10 +7988,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final startPosition = await requireMissionStartLocation();
     if (startPosition == null) return;
 
+    final sessionId = 'mission-${DateTime.now().millisecondsSinceEpoch}';
     final startedAt = DateTime.now().toUtc();
 
     setState(() {
       isSavingMission = true;
+      currentDriveSessionId = sessionId;
     });
 
     try {
@@ -7941,14 +8003,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
         timeBudgetMinutes: timeBudgetMinutes,
       );
       row.addAll(
-        missionStartFields(position: startPosition, startedAt: startedAt),
+        missionStartFields(
+          position: startPosition,
+          startedAt: startedAt,
+          sessionId: sessionId,
+        ),
       );
 
-      final insertedMission = await supabase
-          .from('missions')
-          .insert(row)
-          .select('id')
-          .single();
+      final insertedMission = await insertMissionRowWithStartFallback(row);
       unawaited(
         FieldTestLogger.log(
           'mission_start',
@@ -7957,6 +8019,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       );
 
       await loadMissions();
+      await startTracking(sessionIdOverride: sessionId);
 
       if (!mounted) return;
 
@@ -8091,18 +8154,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
 
     try {
-      await supabase
-          .from('missions')
-          .update({
-            'status': 'active',
-            ...missionStartFields(
-              position: startPosition,
-              startedAt: startedAt,
-              sessionId: sessionId,
-            ),
-          })
-          .eq('account_id', widget.activeAccountId)
-          .eq('id', mission.id);
+      await updateMissionWithStartFallback(mission.id, {
+        'status': 'active',
+        ...missionStartFields(
+          position: startPosition,
+          startedAt: startedAt,
+          sessionId: sessionId,
+        ),
+      });
       unawaited(FieldTestLogger.log('mission_start', detail: mission.id));
 
       setState(() {
@@ -8197,18 +8256,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
 
     try {
-      await supabase
-          .from('missions')
-          .update({
-            'status': 'active',
-            ...missionStartFields(
-              position: startPosition,
-              startedAt: startedAt,
-              sessionId: sessionId,
-            ),
-          })
-          .eq('account_id', widget.activeAccountId)
-          .eq('id', mission.id);
+      await updateMissionWithStartFallback(mission.id, {
+        'status': 'active',
+        ...missionStartFields(
+          position: startPosition,
+          startedAt: startedAt,
+          sessionId: sessionId,
+        ),
+      });
       unawaited(FieldTestLogger.log('mission_start', detail: mission.id));
 
       setState(() {
@@ -9499,8 +9554,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
             areaMarketProperties,
           );
           final hasMarketMapData = areaMarketProperties.isNotEmpty;
-          final includeUnscoredMissionStreets =
-              hasMarketMapData && hasAreaStreetData;
+          final includeUnscoredMissionStreets = hasAreaStreetData;
           final previewStreets = timeMissionsEnabled && selectedBudget != null
               ? selectMissionStreetsForBudget(
                   currentStreetOpportunities,
@@ -9526,22 +9580,21 @@ class _DrivingScreenState extends State<DrivingScreen> {
           final missionRemainingCoveragePercent = areaUncoveredStreets.isEmpty
               ? 0.0
               : (previewStreets.length / areaUncoveredStreets.length) * 100;
-          final noMarketMapForArea =
+          final shouldSuggestMarketMap =
               hasAreaStreetData && hasUncoveredAreaStreets && !hasMarketMapData;
           final noTimeFit =
               timeMissionsEnabled &&
               selectedBudget != null &&
               hasAreaStreetData &&
               hasUncoveredAreaStreets &&
-              hasMarketMapData &&
               previewStreets.isEmpty;
           final noUncoveredStreets =
               hasAreaStreetData && !hasUncoveredAreaStreets;
           final availableTimeLabel = selectedBudget == null
               ? 'Default mission'
               : '$selectedBudget min available';
-          final previewTitle = noMarketMapForArea
-              ? 'Analyze the area to unlock time estimates.'
+          final previewTitle = !hasAreaStreetData
+              ? 'No available mission streets.'
               : noTimeFit
               ? 'No streets fit this time window.'
               : noUncoveredStreets
@@ -9549,10 +9602,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
               : previewStreets.isEmpty
               ? 'No available mission streets.'
               : '${previewStreets.length} streets - ~$previewMinutes min';
-          final previewHelper = noMarketMapForArea
-              ? 'Area analysis is needed before the time planner can rank streets here.'
+          final previewHelper = !hasAreaStreetData
+              ? 'Street data is needed before this area can become a mission.'
               : noTimeFit
               ? 'Increase your time or start a default mission.'
+              : shouldSuggestMarketMap
+              ? 'Using street coverage now. Find motivated sellers later to rank properties.'
               : calibrationMissionCount >= 3
               ? 'Based on your driving history'
               : 'Estimated at 10 mph scouting speed';
@@ -9798,7 +9853,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               ],
                             ),
                             if (!noTimeFit &&
-                                !noMarketMapForArea &&
                                 hasAreaStreetData &&
                                 previewStreets.isNotEmpty) ...[
                               const SizedBox(height: 8),
@@ -9809,14 +9863,20 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                 ),
                               ),
                             ],
-                            if (!hasAreaStreetData || noMarketMapForArea) ...[
+                            if (!hasAreaStreetData) ...[
                               const SizedBox(height: 8),
-                              FilledButton.icon(
+                              const Text(
+                                'This area has no loaded streets. Try a larger area or import street data for this market.',
+                                style: TextStyle(color: Color(0xFF6B7280)),
+                              ),
+                            ] else if (shouldSuggestMarketMap) ...[
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
                                 icon: const Icon(Icons.analytics),
                                 label: Text(
                                   isBuildingMarketMap
                                       ? 'Analyzing area...'
-                                      : motivatedSellersButtonLabel,
+                                      : 'Find Motivated Sellers',
                                 ),
                                 onPressed:
                                     isBuildingMarketMap ||
@@ -10498,8 +10558,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
       );
     }
 
-    scheduleVisibleParcelLoad();
-    scheduleVisibleStreetLoad();
+    final isAutomaticFollowMove = !hasGesture && followMyLocation;
+    if (!isAutomaticFollowMove) {
+      scheduleVisibleParcelLoad();
+      scheduleVisibleStreetLoad();
+    }
   }
 
   Widget buildFindMeFab() {
@@ -11077,65 +11140,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
-  Future<String?> promptForDrawnAreaAction() {
-    return showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'Analyze this area?',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  "We'll load the streets, homes, parcels, your saved leads, and target opportunities inside this area.",
-                  style: TextStyle(color: Color(0xFF6B7280)),
-                ),
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  icon: const Icon(Icons.analytics),
-                  label: const Text('Analyze'),
-                  onPressed: () => Navigator.pop(sheetContext, 'analyze'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.edit_location_alt),
-                  label: const Text('Adjust'),
-                  onPressed: () => Navigator.pop(sheetContext, 'adjust'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(sheetContext, 'cancel'),
-                  child: const Text('Cancel'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> saveDrawingArea() async {
     if (drawingAreaPoints.length < 3 || isSavingDriveArea) return;
 
     final name = await promptForDriveAreaName();
     if (!mounted) return;
     if (name == null || name.isEmpty) return;
-
-    final action = await promptForDrawnAreaAction();
-    if (!mounted) return;
-    if (action == null || action == 'adjust') return;
-    if (action == 'cancel') {
-      cancelDrawAreaMode();
-      return;
-    }
 
     setState(() {
       isSavingDriveArea = true;
@@ -11171,18 +11181,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
       });
 
       await loadDriveAreas();
-      await buildMarketMap();
       if (!mounted) return;
 
-      await Navigator.push<void>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => _AreaDetailScreen(
-            driveStateProvider: () => mounted ? this : null,
-            initialArea: newArea,
-            onOpenDrive: () {},
-          ),
-        ),
+      focusMapWorkspace(
+        mode: 'coverage',
+        point: polygonCenter(newArea.polygon),
+        minZoom: 15,
+        message:
+            'Area saved: ${newArea.name}. Start a mission when you are ready.',
       );
     } catch (_) {
       if (!mounted) return;
@@ -12468,6 +12474,67 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
   }
 
+  void moveFollowCameraTo(LatLng point, DateTime now) {
+    if (!followMyLocation || !mapIsReady) return;
+    if (lastMapFollowAt != null &&
+        now.difference(lastMapFollowAt!) < const Duration(milliseconds: 900)) {
+      return;
+    }
+
+    mapController.move(point, math.max(currentZoom, 17));
+    lastMapFollowAt = now;
+  }
+
+  void updateLiveGpsPosition(
+    Position position, {
+    String? message,
+    bool addRoutePoint = false,
+  }) {
+    if (!mounted) return;
+
+    final point = LatLng(position.latitude, position.longitude);
+    final now = DateTime.now();
+
+    setState(() {
+      myLocation = point;
+      lastKnownPosition = position;
+      currentMapCenter = point;
+      if (addRoutePoint) {
+        routePoints.add(point);
+      }
+      if (message != null) {
+        locationMessage = message;
+      }
+    });
+
+    moveFollowCameraTo(point, now);
+  }
+
+  Future<void> persistTrackingPoint(
+    LatLng point,
+    String? driveSessionId,
+    DateTime recordedAt,
+  ) async {
+    if (isHandlingTrackingPoint) return;
+
+    isHandlingTrackingPoint = true;
+    try {
+      await saveDrivingPoint(point, driveSessionId);
+      await markNearbyStreetsCovered(point, driveSessionId);
+      lastProcessedTrackingPoint = point;
+      lastProcessedTrackingPointAt = recordedAt;
+    } catch (error) {
+      unawaited(
+        FieldTestLogger.log(
+          'gps_tracking_persist_failed',
+          detail: error.toString(),
+        ),
+      );
+    } finally {
+      isHandlingTrackingPoint = false;
+    }
+  }
+
   Future<void> startTracking({String? sessionIdOverride}) async {
     if (isTracking) return;
 
@@ -12497,7 +12564,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     positionStream =
         Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-          (Position position) async {
+          (Position position) {
             final point = LatLng(position.latitude, position.longitude);
             final now = DateTime.now();
             gpsUpdateLogCounter++;
@@ -12511,14 +12578,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
             }
 
             if (isLowAccuracyPosition(position)) {
-              if (!mounted) return;
-
-              final message = lowAccuracyLocationMessage(position);
-              setState(() {
-                myLocation = point;
-                lastKnownPosition = position;
-                locationMessage = message;
-              });
+              updateLiveGpsPosition(
+                position,
+                message: lowAccuracyLocationMessage(position),
+              );
               if (gpsUpdateLogCounter % 5 == 0) {
                 unawaited(
                   FieldTestLogger.log(
@@ -12543,47 +12606,20 @@ class _DrivingScreenState extends State<DrivingScreen> {
                   movedMiles < trackingPointMinDistanceMiles;
 
               if (tooSoon || isHandlingTrackingPoint) {
-                if (!mounted) return;
-
-                setState(() {
-                  myLocation = point;
-                  lastKnownPosition = position;
-                });
+                updateLiveGpsPosition(position);
                 return;
               }
             } else if (isHandlingTrackingPoint) {
+              updateLiveGpsPosition(position);
               return;
             }
 
-            isHandlingTrackingPoint = true;
-
-            try {
-              if (!mounted) return;
-
-              setState(() {
-                myLocation = point;
-                lastKnownPosition = position;
-                routePoints.add(point);
-                locationMessage =
-                    'Tracking route... Points: ${routePoints.length}';
-              });
-
-              if (followMyLocation &&
-                  mapIsReady &&
-                  (lastMapFollowAt == null ||
-                      now.difference(lastMapFollowAt!) >
-                          const Duration(seconds: 2))) {
-                mapController.move(point, 17);
-                lastMapFollowAt = now;
-              }
-
-              await saveDrivingPoint(point, currentDriveSessionId);
-              await markNearbyStreetsCovered(point, currentDriveSessionId);
-              lastProcessedTrackingPoint = point;
-              lastProcessedTrackingPointAt = now;
-            } finally {
-              isHandlingTrackingPoint = false;
-            }
+            updateLiveGpsPosition(
+              position,
+              message: 'Tracking route... Points: ${routePoints.length + 1}',
+              addRoutePoint: true,
+            );
+            unawaited(persistTrackingPoint(point, currentDriveSessionId, now));
           },
         );
   }
@@ -12982,9 +13018,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final showMissionMap = mapMode == 'mission';
     final showTargetsMap = mapMode == 'targets';
     final showCoverageMap = mapMode == 'coverage';
+    final shouldUseLightweightFollowMap =
+        isTracking && followMyLocation && !showTargetsMap;
     final shouldDrawParcelLayer =
         showTargetsMap ||
-        ((showDriveMap || showMissionMap) && currentZoom >= visibleParcelZoom);
+        (!shouldUseLightweightFollowMap &&
+            (showDriveMap || showMissionMap) &&
+            currentZoom >= visibleParcelZoom);
     final mapParcels = shouldDrawParcelLayer
         ? (showTargetsMap || showOnlyTargetsOnMap
               ? targetParcels
