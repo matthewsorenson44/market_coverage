@@ -276,6 +276,23 @@ void main() {
         100,
       );
     });
+
+    test('mission start point parses from saved coordinates', () {
+      final mission = Mission.fromMap({
+        'id': 'm1',
+        'drive_area_id': 'a1',
+        'status': 'active',
+        'target_street_ids': ['s1'],
+        'street_count': 1,
+        'mission_start_lat': 36.2695,
+        'mission_start_lng': -95.8547,
+        'mission_started_at': '2026-06-24T12:00:00Z',
+      });
+
+      expect(mission.missionStartPoint?.latitude, 36.2695);
+      expect(mission.missionStartPoint?.longitude, -95.8547);
+      expect(mission.missionStartedAt, isNotNull);
+    });
   });
 
   group('lead display dedupe', () {

@@ -1745,6 +1745,9 @@ class Mission {
   final String? driveSessionId;
   final DateTime? createdAt;
   final DateTime? startedAt;
+  final double? missionStartLat;
+  final double? missionStartLng;
+  final DateTime? missionStartedAt;
   final DateTime? completedAt;
 
   const Mission({
@@ -1766,6 +1769,9 @@ class Mission {
     required this.driveSessionId,
     required this.createdAt,
     required this.startedAt,
+    required this.missionStartLat,
+    required this.missionStartLng,
+    required this.missionStartedAt,
     required this.completedAt,
   });
 
@@ -1810,10 +1816,23 @@ class Mission {
       startedAt: map['started_at'] == null
           ? null
           : DateTime.tryParse(map['started_at'].toString()),
+      missionStartLat: parseCoordinate(map['mission_start_lat']),
+      missionStartLng: parseCoordinate(map['mission_start_lng']),
+      missionStartedAt: map['mission_started_at'] == null
+          ? null
+          : DateTime.tryParse(map['mission_started_at'].toString()),
       completedAt: map['completed_at'] == null
           ? null
           : DateTime.tryParse(map['completed_at'].toString()),
     );
+  }
+
+  LatLng? get missionStartPoint {
+    final lat = missionStartLat;
+    final lng = missionStartLng;
+    if (lat == null || lng == null) return null;
+
+    return LatLng(lat, lng);
   }
 
   bool get isActive => status == 'active';
@@ -2984,6 +3003,19 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
     });
   }
 
+  void selectTab(int index) {
+    if (index == selectedTabIndex) return;
+
+    if (selectedTabIndex == 0 && index != 0) {
+      driveScreenKey.currentState?.handleDriveTabHidden();
+    }
+    if (index == 0) {
+      driveScreenKey.currentState?.handleDriveTabVisible();
+    }
+
+    setState(() => selectedTabIndex = index);
+  }
+
   void openDrawAreaFlow() {
     openDriveTab();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -3052,7 +3084,7 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: selectedTabIndex,
         type: BottomNavigationBarType.fixed,
-        onTap: (index) => setState(() => selectedTabIndex = index),
+        onTap: selectTab,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.directions_car),
@@ -6579,6 +6611,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Position? lastKnownPosition;
   bool isFindingLocation = false;
   bool followMyLocation = false;
+  bool hasAttemptedInitialLocation = false;
+  bool showRouteToStartLine = false;
   bool isTracking = false;
   bool isLoadingCoverage = true;
   bool isLoadingStreetCoverage = true;
@@ -6669,6 +6703,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
     loadStartupData();
     loadMissionPlannerPreferences();
     loadFirstMissionTipPreference();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      locateOnDriveOpen();
+    });
   }
 
   @override
@@ -6688,6 +6725,37 @@ class _DrivingScreenState extends State<DrivingScreen> {
     positionStream?.cancel();
     customMissionTimeController.dispose();
     super.dispose();
+  }
+
+  void locateOnDriveOpen() {
+    if (!mounted || hasAttemptedInitialLocation) return;
+
+    hasAttemptedInitialLocation = true;
+    unawaited(findMyLocation(reason: 'drive_open'));
+  }
+
+  void handleDriveTabVisible() {
+    if (!mounted) return;
+
+    if (myLocation == null && !isFindingLocation) {
+      unawaited(findMyLocation(reason: 'drive_visible'));
+    }
+  }
+
+  void handleDriveTabHidden() {
+    if (!mounted) return;
+
+    if (isTracking && activeMission == null) {
+      unawaited(stopTracking());
+      return;
+    }
+
+    if (!isTracking && followMyLocation) {
+      setState(() {
+        followMyLocation = false;
+        locationMessage = 'Follow mode paused while Drive is hidden.';
+      });
+    }
   }
 
   Future<void> loadMissionPlannerPreferences() async {
@@ -7203,6 +7271,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           activeDriveArea = null;
           marketProperties = [];
           activeMission = null;
+          showRouteToStartLine = false;
         });
       }
 
@@ -7350,6 +7419,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
         completedMissions = [];
         scheduledMissions = [];
         missionLeadsById = {};
+        showRouteToStartLine = false;
         isLoadingMissions = false;
       });
       return;
@@ -7380,6 +7450,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
       setState(() {
         activeMission = openMission;
+        if (openMission == null) {
+          showRouteToStartLine = false;
+        }
         completedMissions = completedForArea;
         if (completedForArea.isNotEmpty) {
           hasCompletedMissionEver = true;
@@ -7542,6 +7615,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     Mission mission, {
     required String sessionId,
     required DateTime startedAt,
+    required LatLng startPoint,
   }) {
     return Mission(
       id: mission.id,
@@ -7562,8 +7636,60 @@ class _DrivingScreenState extends State<DrivingScreen> {
       driveSessionId: sessionId,
       createdAt: mission.createdAt,
       startedAt: startedAt,
+      missionStartLat: startPoint.latitude,
+      missionStartLng: startPoint.longitude,
+      missionStartedAt: startedAt,
       completedAt: mission.completedAt,
     );
+  }
+
+  Map<String, dynamic> missionStartFields({
+    required Position position,
+    required DateTime startedAt,
+    String? sessionId,
+  }) {
+    final row = <String, dynamic>{
+      'started_at': startedAt.toIso8601String(),
+      'mission_start_lat': position.latitude,
+      'mission_start_lng': position.longitude,
+      'mission_started_at': startedAt.toIso8601String(),
+    };
+
+    if (sessionId != null) {
+      row['drive_session_id'] = sessionId;
+    }
+
+    return row;
+  }
+
+  Future<Position?> requireMissionStartLocation() async {
+    final found = await findMyLocation(reason: 'mission_start');
+    final position = lastKnownPosition;
+
+    if (found && position != null) return position;
+
+    if (!mounted) return null;
+
+    const message = 'Current location needed to start mission.';
+    setState(() {
+      locationMessage = message;
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text(message)));
+    unawaited(FieldTestLogger.log('mission_start_location_missing'));
+    return null;
+  }
+
+  String missionStartSaveErrorMessage(Object error, String fallback) {
+    final details = error.toString().toLowerCase();
+    if (details.contains('mission_start_lat') ||
+        details.contains('mission_start_lng') ||
+        details.contains('mission_started_at')) {
+      return 'Mission start fields are missing. Run Supabase migration 0011_mission_start_location.sql.';
+    }
+
+    return fallback;
   }
 
   String? missionIdForPoint(LatLng? point) {
@@ -7799,6 +7925,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
       return;
     }
 
+    final startPosition = await requireMissionStartLocation();
+    if (startPosition == null) return;
+
+    final startedAt = DateTime.now().toUtc();
+
     setState(() {
       isSavingMission = true;
     });
@@ -7808,6 +7939,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
         missionStreets,
         status: 'active',
         timeBudgetMinutes: timeBudgetMinutes,
+      );
+      row.addAll(
+        missionStartFields(position: startPosition, startedAt: startedAt),
       );
 
       final insertedMission = await supabase
@@ -7835,16 +7969,20 @@ class _DrivingScreenState extends State<DrivingScreen> {
         missionStreets.first.street,
         message: 'Mission started. Map focused on your first street.',
       );
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
 
       setState(() {
         isSavingMission = false;
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not start mission.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            missionStartSaveErrorMessage(error, 'Could not start mission.'),
+          ),
+        ),
+      );
     }
   }
 
@@ -7941,6 +8079,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
   Future<void> startScheduledMission(Mission mission) async {
     if (isSavingMission) return;
 
+    final startPosition = await requireMissionStartLocation();
+    if (startPosition == null) return;
+
     final sessionId = 'mission-${DateTime.now().millisecondsSinceEpoch}';
     final startedAt = DateTime.now().toUtc();
 
@@ -7954,8 +8095,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .from('missions')
           .update({
             'status': 'active',
-            'started_at': startedAt.toIso8601String(),
-            'drive_session_id': sessionId,
+            ...missionStartFields(
+              position: startPosition,
+              startedAt: startedAt,
+              sessionId: sessionId,
+            ),
           })
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
@@ -7966,10 +8110,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
           mission,
           sessionId: sessionId,
           startedAt: startedAt,
+          startPoint: LatLng(startPosition.latitude, startPosition.longitude),
         );
         scheduledMissions = scheduledMissions
             .where((item) => item.id != mission.id)
             .toList(growable: false);
+        showRouteToStartLine = false;
       });
       await startTracking(sessionIdOverride: sessionId);
       unawaited(loadMissions());
@@ -7998,7 +8144,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           message: 'Mission started. Map focused on your first street.',
         );
       }
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
 
       setState(() {
@@ -8006,7 +8152,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not start planned mission.')),
+        SnackBar(
+          content: Text(
+            missionStartSaveErrorMessage(
+              error,
+              'Could not start planned mission.',
+            ),
+          ),
+        ),
       );
     }
   }
@@ -8032,6 +8185,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final mission = activeMission;
     if (mission == null || isSavingMission) return;
 
+    final startPosition = await requireMissionStartLocation();
+    if (startPosition == null) return;
+
     final sessionId = 'mission-${DateTime.now().millisecondsSinceEpoch}';
     final startedAt = mission.startedAt?.toUtc() ?? DateTime.now().toUtc();
 
@@ -8045,8 +8201,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .from('missions')
           .update({
             'status': 'active',
-            'started_at': startedAt.toIso8601String(),
-            'drive_session_id': sessionId,
+            ...missionStartFields(
+              position: startPosition,
+              startedAt: startedAt,
+              sessionId: sessionId,
+            ),
           })
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
@@ -8057,7 +8216,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
           mission,
           sessionId: sessionId,
           startedAt: startedAt,
+          startPoint: LatLng(startPosition.latitude, startPosition.longitude),
         );
+        showRouteToStartLine = false;
       });
       await startTracking(sessionIdOverride: sessionId);
       unawaited(loadMissions());
@@ -8067,7 +8228,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       setState(() {
         isSavingMission = false;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
 
       setState(() {
@@ -8075,7 +8236,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not start mission driving.')),
+        SnackBar(
+          content: Text(
+            missionStartSaveErrorMessage(
+              error,
+              'Could not start mission driving.',
+            ),
+          ),
+        ),
       );
     }
   }
@@ -8095,6 +8263,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .eq('account_id', widget.activeAccountId)
           .eq('id', mission.id);
       await clearPersistedActiveMissionId();
+      if (mounted) {
+        setState(() {
+          showRouteToStartLine = false;
+        });
+      }
       await loadMissions();
     } catch (_) {
       if (!mounted) return;
@@ -8183,6 +8356,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       setState(() {
         mapMode = 'drive';
         locationMessage = 'Mission completed.';
+        showRouteToStartLine = false;
       });
 
       if (closeContext != null && closeContext.mounted) {
@@ -9840,6 +10014,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     ),
                 ],
               ),
+              if (mission.missionStartPoint != null) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.alt_route),
+                  label: const Text('Route to Start'),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    unawaited(showRouteToMissionStart());
+                  },
+                ),
+              ],
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Show only active area'),
@@ -10327,7 +10512,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           ? Colors.white
           : const Color(0xFF111827),
       tooltip: followMyLocation ? 'Following Your Location' : 'Center On Me',
-      onPressed: isFindingLocation ? null : findMyLocation,
+      onPressed: isFindingLocation ? null : () => unawaited(findMyLocation()),
       icon: isFindingLocation
           ? SizedBox(
               width: 18,
@@ -10346,6 +10531,147 @@ class _DrivingScreenState extends State<DrivingScreen> {
             : 'Find Me',
       ),
     );
+  }
+
+  bool hasUsableHeading(Position? position) {
+    final heading = position?.heading;
+    return heading != null && heading.isFinite && heading >= 0;
+  }
+
+  Widget buildUserLocationMarker() {
+    final heading = lastKnownPosition?.heading ?? 0;
+    final markerCore = hasUsableHeading(lastKnownPosition)
+        ? Transform.rotate(
+            angle: heading * math.pi / 180,
+            child: Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                color: const Color(0xFF2196F3),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 3),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 4,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.navigation,
+                color: Colors.white,
+                size: 14,
+              ),
+            ),
+          )
+        : Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: const Color(0xFF2196F3),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 3),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 1),
+                ),
+              ],
+            ),
+          );
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: const BoxDecoration(
+            color: Color(0x332196F3),
+            shape: BoxShape.circle,
+          ),
+        ),
+        markerCore,
+      ],
+    );
+  }
+
+  Widget buildLocationStatusPill() {
+    final icon = isFindingLocation
+        ? const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(
+            followMyLocation ? Icons.gps_fixed : Icons.location_searching,
+            size: 18,
+            color: followMyLocation
+                ? const Color(0xFF2563EB)
+                : const Color(0xFF374151),
+          );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22000000),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          icon,
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              locationMessage,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> showRouteToMissionStart() async {
+    final startPoint = activeMission?.missionStartPoint;
+    if (startPoint == null) return;
+
+    if (myLocation == null) {
+      final found = await findMyLocation(reason: 'route_to_start');
+      if (!found || myLocation == null) return;
+    }
+
+    if (!mounted) return;
+
+    // TODO(routing): replace this straight-line preview with OSRM, Valhalla,
+    // or GraphHopper turn-by-turn routing when the routing engine is selected.
+    setState(() {
+      showRouteToStartLine = true;
+      locationMessage =
+          'Route to Start preview shown. Full routing engine is not connected yet.';
+    });
+
+    final current = myLocation!;
+    final midpoint = LatLng(
+      (current.latitude + startPoint.latitude) / 2,
+      (current.longitude + startPoint.longitude) / 2,
+    );
+    if (mapIsReady) {
+      mapController.move(midpoint, math.max(currentZoom, 14));
+    }
+    unawaited(FieldTestLogger.log('route_to_start_preview'));
   }
 
   Future<void> startAreaDrive() async {
@@ -12055,10 +12381,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
     return 'Could not get your location: $details';
   }
 
-  Future<void> findMyLocation() async {
-    if (!mounted) return;
+  Future<bool> findMyLocation({String reason = 'find_me'}) async {
+    if (!mounted) return false;
 
-    unawaited(FieldTestLogger.log('gps_find_start'));
+    unawaited(FieldTestLogger.log('gps_find_start', detail: reason));
     setState(() {
       isFindingLocation = true;
       locationMessage = 'Finding your location...';
@@ -12067,12 +12393,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final allowed = await checkLocationPermission();
 
     if (!allowed) {
-      if (!mounted) return;
+      if (!mounted) return false;
 
       setState(() {
         isFindingLocation = false;
       });
-      return;
+      unawaited(FieldTestLogger.log('gps_find_blocked', detail: reason));
+      return false;
     }
 
     try {
@@ -12094,7 +12421,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           ? lowAccuracyLocationMessage(position)
           : null;
 
-      if (!mounted) return;
+      if (!mounted) return false;
 
       setState(() {
         myLocation = newLocation;
@@ -12123,10 +12450,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
       } else {
         unawaited(FieldTestLogger.log('gps_follow_enabled'));
       }
+      return true;
     } catch (error) {
       unawaited(FieldTestLogger.log('gps_failed', detail: error.toString()));
 
-      if (!mounted) return;
+      if (!mounted) return false;
 
       final message = locationErrorMessage(error);
       setState(() {
@@ -12136,6 +12464,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
+      return false;
     }
   }
 
@@ -12779,6 +13108,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
               .toList(growable: false)
         : <StreetOpportunity>[];
     final shouldDrawLeads = showDriveMap || showMissionMap || showTargetsMap;
+    final routeToStartPoints =
+        showRouteToStartLine &&
+            activeMission?.missionStartPoint != null &&
+            myLocation != null
+        ? [myLocation!, activeMission!.missionStartPoint!]
+        : const <LatLng>[];
 
     final missionPercent = safePercent(missionCoveredCount, missionStreetTotal);
     final nextStreetName = nextMissionStreet?.street.streetName.isEmpty ?? true
@@ -12818,6 +13153,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final findMeButtonBottom = activeMission == null
         ? (hasNoDriveAreas ? 24.0 : planPanelHeight + 16)
         : 86.0;
+    final locationStatusTop = driveAreas.length > 1 && !isDrawAreaMode
+        ? 112.0
+        : 64.0;
     final activeCityLabel = MarketService.getActiveCity().isEmpty
         ? selectedCoverageCity
         : MarketService.getActiveCity();
@@ -12838,6 +13176,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
                   onMapReady: () {
                     mapIsReady = true;
                     currentZoom = mapController.camera.zoom;
+                    if (myLocation != null) {
+                      mapController.move(
+                        myLocation!,
+                        math.max(currentZoom, 16),
+                      );
+                    }
                     loadVisibleParcels();
                     loadVisibleCityStreets();
                   },
@@ -13029,6 +13373,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           )
                           .toList(),
                     ),
+                  if (routeToStartPoints.length == 2)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: routeToStartPoints,
+                          strokeWidth: 4,
+                          color: const Color(0xFF2563EB),
+                        ),
+                      ],
+                    ),
                   if (mapParcels.isNotEmpty)
                     MarkerLayer(
                       markers: mapParcels
@@ -13067,38 +13421,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                           point: myLocation!,
                           width: 50,
                           height: 50,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              Container(
-                                width: 44,
-                                height: 44,
-                                decoration: const BoxDecoration(
-                                  color: Color(0x332196F3),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              Container(
-                                width: 18,
-                                height: 18,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF2196F3),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 3,
-                                  ),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      color: Color(0x33000000),
-                                      blurRadius: 4,
-                                      offset: Offset(0, 1),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
+                          child: buildUserLocationMarker(),
                         ),
                       ],
                     ),
@@ -13225,7 +13548,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                       ),
                                 onPressed: isFindingLocation
                                     ? null
-                                    : findMyLocation,
+                                    : () => unawaited(findMyLocation()),
                                 label: Text(
                                   isFindingLocation
                                       ? 'Finding...'
@@ -13481,6 +13804,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               onMapReady: () {
                                 mapIsReady = true;
                                 currentZoom = mapController.camera.zoom;
+                                if (myLocation != null) {
+                                  mapController.move(
+                                    myLocation!,
+                                    math.max(currentZoom, 16),
+                                  );
+                                }
                                 loadVisibleParcels();
                                 loadVisibleCityStreets();
                               },
@@ -14946,7 +15275,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                         icon: const Icon(Icons.my_location),
                                         onPressed: isFindingLocation
                                             ? null
-                                            : findMyLocation,
+                                            : () => unawaited(findMyLocation()),
                                         label: Text(
                                           isFindingLocation
                                               ? 'Finding...'
@@ -15099,6 +15428,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
                   ),
                 ),
               ),
+            ),
+          if (!isDrawAreaMode)
+            Positioned(
+              top: locationStatusTop,
+              left: 12,
+              right: 12,
+              child: SafeArea(child: Align(child: buildLocationStatusPill())),
             ),
           if (hasNoDriveAreas && !isDrawAreaMode)
             Positioned.fill(
