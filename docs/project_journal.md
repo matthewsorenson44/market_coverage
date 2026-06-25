@@ -44,11 +44,62 @@ The app should feel dependable in the field before adding more automation:
 
 ## Current Known Issues To Watch
 
-- iPhone Drive Mode follow-me can still appear to freeze or fail to follow smoothly.
-- Some mission flows are confusing, especially when area analysis has not produced mission streets.
-- Area analysis and market map loading can feel slow on iPhone.
-- Mission completion and recap flow should stay simple and avoid stuck panels.
-- Auth/account UX is basic; logout and multi-user testing need to stay visible.
+- Open: iPhone Drive Mode follow-me can still appear to freeze or fail to follow smoothly.
+- Open: Some mission flows are confusing, especially when area analysis has not produced mission streets.
+- Open: Area analysis and market map loading can feel slow on iPhone.
+- Open: Mission completion and recap flow should stay simple and avoid stuck panels.
+- Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
+- Fix pushed, awaiting user confirmation: Quick Capture red-screen crash when adding a lead from the orange lightning button while an area is selected.
+
+## Fixed And Confirmed By User
+
+- Lead photo uploads work after Supabase Storage RLS policy fixes.
+- Lead photo display after upload works.
+- Mission manual test passed.
+- Coverage manual test passed.
+- Area Name dialog TextField crash was fixed and covered by tests.
+
+## Journal Maintenance Rules
+
+Codex should use this journal as the running memory for the project.
+
+At the start of each coding task:
+
+1. Read `AGENTS.md`.
+2. Read this file.
+3. Use the current MVP priority and known issues to avoid drifting into unrelated work.
+
+At the end of each meaningful task or bug-fix session:
+
+1. Add a new entry to `Recent Work Log`.
+2. Update `Current Known Issues To Watch`.
+3. If a bug fix was pushed but the user has not tested it yet, mark it as `Fix pushed, awaiting user confirmation`.
+4. When the user says a bug is fixed, remove it from `Current Known Issues To Watch`.
+5. Move confirmed fixes to `Fixed And Confirmed By User`.
+6. Keep old confirmed fixes brief so the journal stays useful.
+
+Bug status meanings:
+
+- `Open`: Reported or observed, not fixed yet.
+- `In progress`: Codex is actively working on it.
+- `Fix pushed, awaiting user confirmation`: Code was changed and validated, but the user has not tested on the real device yet.
+- `Confirmed fixed`: User tested and said it works.
+
+## Recent Work Log
+
+### 2026-06-25
+
+- Added `AGENTS.md` and this project journal so future Codex work starts with product context.
+- Fixed Quick Capture TextField lifecycle crash path in `lib/main.dart`.
+- Quick Capture fix details: owns a FocusNode for the quick note field, unfocuses before save/close, delays TextEditingController/FocusNode disposal until after the bottom sheet close animation, guards async lookup/save callbacks while closing, and disables save buttons during close.
+- Validation for Quick Capture fix: `dart format .`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Status: Quick Capture fix is pushed and awaiting user confirmation on iPhone.
+
+### 2026-06-24
+
+- Lead photo uploads were fixed through Supabase Storage RLS policy work.
+- User confirmed photo upload works.
+- Drive Mode GPS and mission flow received fixes, but user later reported follow-me freezing and mission confusion, so those remain open.
 
 ## Engineering Rules
 
