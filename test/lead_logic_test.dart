@@ -238,6 +238,80 @@ void main() {
     });
   });
 
+  group('mission stat safety', () {
+    test('missionStreetTotal falls back to target street ids', () {
+      final mission = Mission.fromMap({
+        'id': 'm1',
+        'drive_area_id': 'a1',
+        'status': 'active',
+        'target_street_ids': ['s1', 's2'],
+        'street_count': 0,
+      });
+
+      expect(missionStreetTotalFor(mission), 2);
+      expect(missionCoveredStreetCount(mission, {'s1'}), 1);
+      expect(safePercent(1, 2), 50);
+    });
+
+    test('mission opportunity capture is clamped to a valid range', () {
+      expect(
+        safeMissionOpportunityCaptured(
+          opportunityAtStart: 0,
+          opportunityRemaining: 20,
+        ),
+        0,
+      );
+      expect(
+        safeMissionOpportunityCaptured(
+          opportunityAtStart: 100,
+          opportunityRemaining: 120,
+        ),
+        0,
+      );
+      expect(
+        safeMissionOpportunityCaptured(
+          opportunityAtStart: 100,
+          opportunityRemaining: -5,
+        ),
+        100,
+      );
+    });
+  });
+
+  group('lead display dedupe', () {
+    test('dedupes imported parcel leads by parcel id', () {
+      final leads = [
+        _missionLead(
+          id: 'low',
+          score: 10,
+          notes: 'Tulsa County parcel import\nParcel: 12345',
+        ),
+        _missionLead(
+          id: 'high',
+          score: 90,
+          notes: 'Tulsa County parcel import\nParcel: 12345',
+        ),
+      ];
+
+      final deduped = dedupeLeadsForDisplay(leads);
+
+      expect(deduped, hasLength(1));
+      expect(deduped.single.id, 'high');
+    });
+
+    test('dedupes manual leads by normalized address', () {
+      final leads = [
+        _missionLead(id: 'a', score: 10, address: '123 North Main Street'),
+        _missionLead(id: 'b', score: 20, address: '123 n main st'),
+      ];
+
+      final deduped = dedupeLeadsForDisplay(leads);
+
+      expect(deduped, hasLength(1));
+      expect(deduped.single.id, 'b');
+    });
+  });
+
   group('route / mileage geo', () {
     final a = const LatLng(36.0, -95.0);
     final b = const LatLng(36.005, -95.0); // ~0.345 mi north of a (within gap)
@@ -295,12 +369,14 @@ Lead _missionLead({
   required int score,
   String status = 'New Lead',
   String followUpStatus = 'None',
+  String address = '',
+  String notes = '',
 }) {
   return Lead.fromMap({
     'id': id,
-    'address': '$id Main St',
+    'address': address.isEmpty ? '$id Main St' : address,
     'condition': '',
-    'notes': '',
+    'notes': notes,
     'status': status,
     'source': 'Driving For Dollars',
     'lead_score': score,

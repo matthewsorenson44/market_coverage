@@ -78,6 +78,7 @@ const int marketMapMaxParcelPages = 40;
 const Duration marketMapParcelPageTimeout = Duration(seconds: 20);
 const Duration trackingPointMinInterval = Duration(seconds: 3);
 const double trackingPointMinDistanceMiles = 0.003;
+const double maxReliableLocationAccuracyMeters = 100;
 const int visibleStreetLimit = 800;
 const int missionStreetCount = 12;
 const double streetCoverageMatchMiles = 0.035;
@@ -1460,6 +1461,115 @@ String missionNextActionSummary({
   return 'Review $priorityLeadCount open leads from this drive. Work the highest scores first, then plan the next uncovered streets.';
 }
 
+int missionStreetTotalFor(Mission? mission) {
+  if (mission == null) return 0;
+  return math.max(mission.streetCount, mission.targetStreetIds.length);
+}
+
+int missionCoveredStreetCount(Mission? mission, Set<String> coveredStreetIds) {
+  if (mission == null) return 0;
+  return mission.targetStreetIds
+      .where((streetId) => coveredStreetIds.contains(streetId))
+      .length
+      .clamp(0, missionStreetTotalFor(mission))
+      .toInt();
+}
+
+double safeMissionOpportunityCaptured({
+  required double opportunityAtStart,
+  required double opportunityRemaining,
+}) {
+  if (opportunityAtStart <= 0) return 0;
+  return (opportunityAtStart - opportunityRemaining).clamp(
+    0.0,
+    opportunityAtStart,
+  );
+}
+
+double safePercent(int part, int total) {
+  if (total <= 0) return 0;
+  return (part.clamp(0, total) / total) * 100;
+}
+
+bool isLowAccuracyPosition(Position position) {
+  return position.accuracy > maxReliableLocationAccuracyMeters;
+}
+
+String lowAccuracyLocationMessage(Position position) {
+  return 'GPS accuracy is low (${position.accuracy.toStringAsFixed(0)}m). Move outside or wait a few seconds for a better signal.';
+}
+
+String? leadParcelDedupKey(Lead lead) {
+  final notes = lead.notes;
+  final parcelMatch = RegExp(
+    r'^\s*Parcel:\s*([A-Za-z0-9_-]+)\s*$',
+    multiLine: true,
+    caseSensitive: false,
+  ).firstMatch(notes);
+
+  if (parcelMatch != null) {
+    final parcelId = parcelMatch.group(1)?.trim();
+    if (parcelId != null && parcelId.isNotEmpty) {
+      return 'parcel:${parcelId.toLowerCase()}';
+    }
+  }
+
+  final accountMatch = RegExp(
+    r'^\s*Account:\s*([A-Za-z0-9_-]+)\s*$',
+    multiLine: true,
+    caseSensitive: false,
+  ).firstMatch(notes);
+
+  if (accountMatch != null) {
+    final accountId = accountMatch.group(1)?.trim();
+    if (accountId != null && accountId.isNotEmpty) {
+      return 'account:${accountId.toLowerCase()}';
+    }
+  }
+
+  return null;
+}
+
+String leadDisplayDedupKey(Lead lead) {
+  final parcelKey = leadParcelDedupKey(lead);
+  if (parcelKey != null) return parcelKey;
+
+  final addressKey = normalizedAddressKey(lead.address);
+  if (addressKey.isNotEmpty) return 'address:$addressKey';
+
+  return 'id:${lead.id}';
+}
+
+bool shouldPreferLeadForDisplay(Lead candidate, Lead existing) {
+  if (candidate.score != existing.score) {
+    return candidate.score > existing.score;
+  }
+
+  final candidateDate = candidate.createdAt;
+  final existingDate = existing.createdAt;
+  if (candidateDate != null && existingDate != null) {
+    return candidateDate.isAfter(existingDate);
+  }
+
+  return candidateDate != null && existingDate == null;
+}
+
+List<Lead> dedupeLeadsForDisplay(Iterable<Lead> leads) {
+  final dedupedByKey = <String, Lead>{};
+
+  for (final lead in leads) {
+    final key = leadDisplayDedupKey(lead);
+    final existing = dedupedByKey[key];
+    if (existing == null || shouldPreferLeadForDisplay(lead, existing)) {
+      dedupedByKey[key] = lead;
+    }
+  }
+
+  final deduped = dedupedByKey.values.toList(growable: false);
+  deduped.sort((a, b) => b.score.compareTo(a.score));
+  return deduped;
+}
+
 String mapModeLabel(String mode) {
   return switch (mode) {
     'targets' => 'Targets',
@@ -2241,8 +2351,9 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     if (!mounted) return;
 
     setState(() {
-      leads = data.map<Lead>((item) => Lead.fromMap(item)).toList();
-      leads.sort((a, b) => b.score.compareTo(a.score));
+      leads = dedupeLeadsForDisplay(
+        data.map<Lead>((item) => Lead.fromMap(item)),
+      );
       isLoading = false;
     });
   }
@@ -2741,7 +2852,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  isSignUp ? 'Create your account' : 'Sign in to continue',
+                  isSignUp
+                      ? 'Create your account'
+                      : 'Member login - sign in to continue',
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 16),
                 ),
@@ -2931,6 +3044,7 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onRefresh: () => setState(() {}),
       ),
       const _BusinessTab(),
+      _AccountTab(activeAccountId: accountId),
     ];
 
     return Scaffold(
@@ -2950,7 +3064,82 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
             icon: Icon(Icons.bar_chart),
             label: 'Business',
           ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.account_circle),
+            label: 'Account',
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _AccountTab extends StatelessWidget {
+  final String activeAccountId;
+
+  const _AccountTab({required this.activeAccountId});
+
+  Future<void> signOut(BuildContext context) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await supabase.auth.signOut();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = supabase.auth.currentUser;
+    final email = user?.email ?? 'Signed in';
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Account')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Current Session',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(email, style: const TextStyle(fontSize: 16)),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Account ID: $activeAccountId',
+                      style: const TextStyle(color: Color(0xFF6B7280)),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.logout),
+                        label: const Text('Sign Out / Switch Account'),
+                        onPressed: () => signOut(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Text(
+                  'After signing out, use Member Login to sign into another account, or tap "Need an account? Sign up" to create a test account.',
+                  style: TextStyle(fontSize: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -6389,6 +6578,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   LatLng? myLocation;
   Position? lastKnownPosition;
   bool isFindingLocation = false;
+  bool followMyLocation = false;
   bool isTracking = false;
   bool isLoadingCoverage = true;
   bool isLoadingStreetCoverage = true;
@@ -6475,7 +6665,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   @override
   void initState() {
     super.initState();
-    drivingLeads = widget.leads;
+    drivingLeads = dedupeLeadsForDisplay(widget.leads);
     loadStartupData();
     loadMissionPlannerPreferences();
     loadFirstMissionTipPreference();
@@ -6486,7 +6676,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.leads != widget.leads) {
-      drivingLeads = widget.leads;
+      drivingLeads = dedupeLeadsForDisplay(widget.leads);
     }
   }
 
@@ -6643,9 +6833,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
           .select()
           .eq('account_id', widget.activeAccountId)
           .order('created_at', ascending: false);
-      final leads = data.map<Lead>((item) => Lead.fromMap(item)).toList();
-
-      leads.sort((a, b) => b.score.compareTo(a.score));
+      final leads = dedupeLeadsForDisplay(
+        data.map<Lead>((item) => Lead.fromMap(item)),
+      );
 
       if (!mounted) return;
 
@@ -7923,7 +8113,23 @@ class _DrivingScreenState extends State<DrivingScreen> {
     BuildContext? closeContext,
   }) async {
     final mission = activeMission;
-    if (mission == null) return;
+    if (mission == null || !mission.isOpen) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No active mission to complete.')),
+      );
+      return;
+    }
+
+    final streetTotal = missionStreetTotalFor(mission);
+    final savedStreetsCovered = streetsCovered.clamp(0, streetTotal).toInt();
+    final savedOpportunityCaptured = safeMissionOpportunityCaptured(
+      opportunityAtStart: mission.opportunityAtStart,
+      opportunityRemaining: mission.opportunityAtStart - opportunityCaptured,
+    );
+    final savedLeadsFound = math.max(0, leadsFound).toInt();
+    final savedMilesDriven = math.max(0.0, milesDriven);
 
     try {
       if (isTracking) {
@@ -7938,10 +8144,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
       final missionUpdate = <String, dynamic>{
         'status': 'completed',
         'completed_at': completedAt.toIso8601String(),
-        'leads_generated': leadsFound,
-        'miles_driven': milesDriven,
-        'streets_covered': streetsCovered,
-        'opportunity_captured': opportunityCaptured,
+        'leads_generated': savedLeadsFound,
+        'miles_driven': savedMilesDriven,
+        'streets_covered': savedStreetsCovered,
+        'opportunity_captured': savedOpportunityCaptured,
       };
       if (actualMinutes != null) {
         missionUpdate['actual_minutes'] = actualMinutes;
@@ -7955,7 +8161,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       unawaited(
         FieldTestLogger.log(
           'mission_complete',
-          detail: 'streets: $streetsCovered, leads: $leadsFound',
+          detail: 'streets: $savedStreetsCovered, leads: $savedLeadsFound',
         ),
       );
       await clearPersistedActiveMissionId();
@@ -7990,9 +8196,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
         mission: mission,
         areaName: activeDriveArea?.name ?? 'Drive Area',
         leads: attributedLeads,
-        streetsCovered: streetsCovered,
-        opportunityCaptured: opportunityCaptured,
-        milesDriven: milesDriven,
+        streetsCovered: savedStreetsCovered,
+        opportunityCaptured: savedOpportunityCaptured,
+        milesDriven: savedMilesDriven,
         actualMinutes: actualMinutes,
         areaRemainingEstimatedMinutes: remainingAreaMinutes,
       );
@@ -9580,6 +9786,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     required int missionLeadsFound,
     required double missionMiles,
     required double missionOpportunityCaptured,
+    required bool hasMissionOpportunityScore,
   }) {
     final mission = activeMission;
     if (mission == null) return;
@@ -9604,9 +9811,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ),
               const SizedBox(height: 10),
               LinearProgressIndicator(
-                value: missionStreetTotal == 0
-                    ? 0
-                    : missionCoveredCount / missionStreetTotal,
+                value:
+                    (safePercent(missionCoveredCount, missionStreetTotal) / 100)
+                        .clamp(0, 1),
               ),
               const SizedBox(height: 12),
               Text(
@@ -9625,11 +9832,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 children: [
                   Chip(label: Text('$missionLeadsFound leads')),
                   Chip(label: Text('${missionMiles.toStringAsFixed(2)} mi')),
-                  Chip(
-                    label: Text(
-                      '${missionOpportunityRemaining.toStringAsFixed(0)} opp left',
+                  if (hasMissionOpportunityScore)
+                    Chip(
+                      label: Text(
+                        '${missionOpportunityRemaining.toStringAsFixed(0)} opp left',
+                      ),
                     ),
-                  ),
                 ],
               ),
               SwitchListTile(
@@ -10079,6 +10287,67 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
+  void handleMapPositionChanged(MapCamera camera, bool hasGesture) {
+    final wasShowingHouseNumbers = currentZoom >= houseNumberLabelZoom;
+    final isShowingHouseNumbers = camera.zoom >= houseNumberLabelZoom;
+    final shouldDisableFollow = hasGesture && followMyLocation;
+
+    if (wasShowingHouseNumbers != isShowingHouseNumbers ||
+        shouldDisableFollow) {
+      setState(() {
+        currentMapCenter = camera.center;
+        currentZoom = camera.zoom;
+        if (shouldDisableFollow) {
+          followMyLocation = false;
+          locationMessage = 'Follow mode off. Tap Find Me to recenter.';
+        }
+      });
+    } else {
+      currentMapCenter = camera.center;
+      currentZoom = camera.zoom;
+    }
+
+    if (shouldDisableFollow) {
+      unawaited(
+        FieldTestLogger.log('gps_follow_disabled', detail: 'manual map move'),
+      );
+    }
+
+    scheduleVisibleParcelLoad();
+    scheduleVisibleStreetLoad();
+  }
+
+  Widget buildFindMeFab() {
+    return FloatingActionButton.extended(
+      heroTag: 'drive-center-me',
+      backgroundColor: followMyLocation
+          ? const Color(0xFF2563EB)
+          : Colors.white,
+      foregroundColor: followMyLocation
+          ? Colors.white
+          : const Color(0xFF111827),
+      tooltip: followMyLocation ? 'Following Your Location' : 'Center On Me',
+      onPressed: isFindingLocation ? null : findMyLocation,
+      icon: isFindingLocation
+          ? SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: followMyLocation ? Colors.white : null,
+              ),
+            )
+          : Icon(followMyLocation ? Icons.gps_fixed : Icons.my_location),
+      label: Text(
+        isFindingLocation
+            ? 'Finding'
+            : followMyLocation
+            ? 'Following'
+            : 'Find Me',
+      ),
+    );
+  }
+
   Future<void> startAreaDrive() async {
     final area = activeDriveArea;
     if (area == null) return;
@@ -10436,9 +10705,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   int coveredStreetCountForMission(Mission mission) {
-    return mission.targetStreetIds
-        .where((streetId) => coveredStreetIds.contains(streetId))
-        .length;
+    return missionCoveredStreetCount(mission, coveredStreetIds);
   }
 
   void handleMapTap(LatLng point) {
@@ -11697,6 +11964,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
 
     if (!serviceEnabled) {
+      unawaited(FieldTestLogger.log('gps_service_disabled'));
       if (!mounted) return false;
 
       const message = 'Location services are turned off.';
@@ -11715,6 +11983,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       permission = await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied) {
+        unawaited(FieldTestLogger.log('gps_permission_request'));
         permission = await Geolocator.requestPermission();
       }
     } catch (error) {
@@ -11731,6 +12000,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
 
     if (permission == LocationPermission.denied) {
+      unawaited(FieldTestLogger.log('gps_permission_denied'));
       if (!mounted) return false;
 
       const message = 'Location permission denied.';
@@ -11744,6 +12014,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
 
     if (permission == LocationPermission.deniedForever) {
+      unawaited(FieldTestLogger.log('gps_permission_denied_forever'));
       if (!mounted) return false;
 
       const message = 'Location permission permanently denied.';
@@ -11756,6 +12027,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       return false;
     }
 
+    unawaited(FieldTestLogger.log('gps_permission_ready'));
     return true;
   }
 
@@ -11776,12 +12048,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
       return 'Location services are turned off.';
     }
 
+    if (details.toLowerCase().contains('timeout')) {
+      return 'Location timed out. Try again outside with a clearer GPS signal.';
+    }
+
     return 'Could not get your location: $details';
   }
 
   Future<void> findMyLocation() async {
     if (!mounted) return;
 
+    unawaited(FieldTestLogger.log('gps_find_start'));
     setState(() {
       isFindingLocation = true;
       locationMessage = 'Finding your location...';
@@ -11813,6 +12090,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
       );
 
       final newLocation = LatLng(position.latitude, position.longitude);
+      final lowAccuracyMessage = isLowAccuracyPosition(position)
+          ? lowAccuracyLocationMessage(position)
+          : null;
 
       if (!mounted) return;
 
@@ -11820,12 +12100,28 @@ class _DrivingScreenState extends State<DrivingScreen> {
         myLocation = newLocation;
         lastKnownPosition = position;
         currentMapCenter = newLocation;
+        followMyLocation = true;
         isFindingLocation = false;
-        locationMessage = 'Location found.';
+        locationMessage =
+            lowAccuracyMessage ?? 'Location found. Follow mode on.';
       });
 
       if (mapIsReady) {
         mapController.move(newLocation, 16);
+      }
+
+      if (lowAccuracyMessage != null) {
+        unawaited(
+          FieldTestLogger.log(
+            'gps_low_accuracy',
+            detail: '${position.accuracy}m',
+          ),
+        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(lowAccuracyMessage)));
+      } else {
+        unawaited(FieldTestLogger.log('gps_follow_enabled'));
       }
     } catch (error) {
       unawaited(FieldTestLogger.log('gps_failed', detail: error.toString()));
@@ -11855,13 +12151,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     setState(() {
       isTracking = true;
+      followMyLocation = true;
       currentDriveSessionId = sessionId;
-      locationMessage = 'Tracking started.';
+      locationMessage = 'Tracking started. Follow mode on.';
       routePoints.clear();
       lastProcessedTrackingPoint = null;
       lastProcessedTrackingPointAt = null;
       lastMapFollowAt = null;
     });
+    unawaited(FieldTestLogger.log('gps_tracking_started', detail: sessionId));
 
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
@@ -11881,6 +12179,26 @@ class _DrivingScreenState extends State<DrivingScreen> {
                   detail: 'accuracy: ${position.accuracy}m',
                 ),
               );
+            }
+
+            if (isLowAccuracyPosition(position)) {
+              if (!mounted) return;
+
+              final message = lowAccuracyLocationMessage(position);
+              setState(() {
+                myLocation = point;
+                lastKnownPosition = position;
+                locationMessage = message;
+              });
+              if (gpsUpdateLogCounter % 5 == 0) {
+                unawaited(
+                  FieldTestLogger.log(
+                    'gps_low_accuracy',
+                    detail: '${position.accuracy}m',
+                  ),
+                );
+              }
+              return;
             }
 
             final lastPoint = lastProcessedTrackingPoint;
@@ -11921,7 +12239,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     'Tracking route... Points: ${routePoints.length}';
               });
 
-              if (mapIsReady &&
+              if (followMyLocation &&
+                  mapIsReady &&
                   (lastMapFollowAt == null ||
                       now.difference(lastMapFollowAt!) >
                           const Duration(seconds: 2))) {
@@ -12000,13 +12319,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   Future<void> stopTracking() async {
     await positionStream?.cancel();
+    positionStream = null;
 
     final savedPointCount = routePoints.length;
 
     await loadSavedDrivingPoints();
+    if (!mounted) return;
 
     setState(() {
       isTracking = false;
+      followMyLocation = false;
       currentDriveSessionId = null;
       routePoints.clear();
       isHandlingTrackingPoint = false;
@@ -12015,6 +12337,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
       lastMapFollowAt = null;
       locationMessage = 'Tracking stopped. Points saved: $savedPointCount';
     });
+    unawaited(
+      FieldTestLogger.log('gps_tracking_stopped', detail: '$savedPointCount'),
+    );
   }
 
   void openAddLeadFromLocation() {
@@ -12353,22 +12678,25 @@ class _DrivingScreenState extends State<DrivingScreen> {
         )
         .whereType<StreetOpportunity>()
         .toList(growable: false);
-    final coveredMissionOpportunities = missionOpportunities
-        .where(
-          (opportunity) => coveredStreetIds.contains(opportunity.street.id),
-        )
-        .toList(growable: false);
     final uncoveredMissionOpportunities = missionOpportunities
         .where(
           (opportunity) => !coveredStreetIds.contains(opportunity.street.id),
         )
         .toList(growable: false);
-    final missionCoveredCount = coveredMissionOpportunities.length;
-    final missionStreetTotal = activeMission?.streetCount ?? 0;
+    final missionCoveredCount = missionCoveredStreetCount(
+      activeMission,
+      coveredStreetIds,
+    );
+    final missionStreetTotal = missionStreetTotalFor(activeMission);
     final missionOpportunityRemaining = uncoveredMissionOpportunities
         .fold<double>(0, (total, opportunity) => total + opportunity.score);
-    final missionOpportunityCaptured =
-        (activeMission?.opportunityAtStart ?? 0) - missionOpportunityRemaining;
+    final missionOpportunityAtStart = activeMission?.opportunityAtStart ?? 0;
+    final missionOpportunityCaptured = safeMissionOpportunityCaptured(
+      opportunityAtStart: missionOpportunityAtStart,
+      opportunityRemaining: missionOpportunityRemaining,
+    );
+    final hasMissionOpportunityScore =
+        missionOpportunityAtStart > 0 || missionOpportunityRemaining > 0;
     final nextMissionStreet = chooseNextMissionStreet(
       uncoveredMissionOpportunities,
     );
@@ -12452,9 +12780,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
         : <StreetOpportunity>[];
     final shouldDrawLeads = showDriveMap || showMissionMap || showTargetsMap;
 
-    final missionPercent = missionStreetTotal == 0
-        ? 0.0
-        : (missionCoveredCount / missionStreetTotal) * 100;
+    final missionPercent = safePercent(missionCoveredCount, missionStreetTotal);
     final nextStreetName = nextMissionStreet?.street.streetName.isEmpty ?? true
         ? 'Unnamed street'
         : nextMissionStreet!.street.streetName;
@@ -12489,6 +12815,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final planPanelHeight = todayScheduledMission == null
         ? (showFirstMissionTip ? 172.0 : 92.0)
         : (showFirstMissionTip ? 262.0 : 182.0);
+    final findMeButtonBottom = activeMission == null
+        ? (hasNoDriveAreas ? 24.0 : planPanelHeight + 16)
+        : 86.0;
     final activeCityLabel = MarketService.getActiveCity().isEmpty
         ? selectedCoverageCity
         : MarketService.getActiveCity();
@@ -12512,25 +12841,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     loadVisibleParcels();
                     loadVisibleCityStreets();
                   },
-                  onPositionChanged: (camera, _) {
-                    final wasShowingHouseNumbers =
-                        currentZoom >= houseNumberLabelZoom;
-                    final isShowingHouseNumbers =
-                        camera.zoom >= houseNumberLabelZoom;
-
-                    if (wasShowingHouseNumbers != isShowingHouseNumbers) {
-                      setState(() {
-                        currentMapCenter = camera.center;
-                        currentZoom = camera.zoom;
-                      });
-                    } else {
-                      currentMapCenter = camera.center;
-                      currentZoom = camera.zoom;
-                    }
-
-                    scheduleVisibleParcelLoad();
-                    scheduleVisibleStreetLoad();
-                  },
+                  onPositionChanged: handleMapPositionChanged,
                   onTap: (_, point) => handleMapTap(point),
                 ),
                 children: [
@@ -12891,12 +13202,36 @@ class _DrivingScreenState extends State<DrivingScreen> {
                               width: 210,
                               height: 44,
                               child: ElevatedButton.icon(
-                                icon: const Icon(Icons.my_location),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: followMyLocation
+                                      ? const Color(0xFF2563EB)
+                                      : null,
+                                  foregroundColor: followMyLocation
+                                      ? Colors.white
+                                      : null,
+                                ),
+                                icon: isFindingLocation
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(
+                                        followMyLocation
+                                            ? Icons.gps_fixed
+                                            : Icons.my_location,
+                                      ),
                                 onPressed: isFindingLocation
                                     ? null
                                     : findMyLocation,
                                 label: Text(
-                                  isFindingLocation ? 'Finding...' : 'Find Me',
+                                  isFindingLocation
+                                      ? 'Finding...'
+                                      : followMyLocation
+                                      ? 'Following'
+                                      : 'Find Me',
                                 ),
                               ),
                             ),
@@ -13149,26 +13484,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                 loadVisibleParcels();
                                 loadVisibleCityStreets();
                               },
-                              onPositionChanged: (camera, _) {
-                                final wasShowingHouseNumbers =
-                                    currentZoom >= houseNumberLabelZoom;
-                                final isShowingHouseNumbers =
-                                    camera.zoom >= houseNumberLabelZoom;
-
-                                if (wasShowingHouseNumbers !=
-                                    isShowingHouseNumbers) {
-                                  setState(() {
-                                    currentMapCenter = camera.center;
-                                    currentZoom = camera.zoom;
-                                  });
-                                } else {
-                                  currentMapCenter = camera.center;
-                                  currentZoom = camera.zoom;
-                                }
-
-                                scheduleVisibleParcelLoad();
-                                scheduleVisibleStreetLoad();
-                              },
+                              onPositionChanged: handleMapPositionChanged,
                               onTap: (_, point) => handleMapTap(point),
                             ),
                             children: [
@@ -14008,10 +14324,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                               ),
                                               const SizedBox(height: 8),
                                               LinearProgressIndicator(
-                                                value: missionStreetTotal == 0
-                                                    ? 0
-                                                    : missionCoveredCount /
-                                                          missionStreetTotal,
+                                                value:
+                                                    (safePercent(
+                                                              missionCoveredCount,
+                                                              missionStreetTotal,
+                                                            ) /
+                                                            100)
+                                                        .clamp(0, 1),
                                               ),
                                               const SizedBox(height: 12),
                                               Container(
@@ -14060,7 +14379,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                     ),
                                                     const SizedBox(height: 4),
                                                     Text(
-                                                      'Remaining opportunity: ${missionOpportunityRemaining.toStringAsFixed(0)} pts',
+                                                      hasMissionOpportunityScore
+                                                          ? 'Remaining opportunity: ${missionOpportunityRemaining.toStringAsFixed(0)} pts'
+                                                          : 'No opportunity score for this mission yet.',
                                                       style: const TextStyle(
                                                         color: Color(
                                                           0xFF4B5563,
@@ -14093,15 +14414,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                                       '${missionMiles.toStringAsFixed(2)} mi',
                                                     ),
                                                   ),
-                                                  Chip(
-                                                    avatar: const Icon(
-                                                      Icons.bolt,
-                                                      size: 18,
+                                                  if (hasMissionOpportunityScore)
+                                                    Chip(
+                                                      avatar: const Icon(
+                                                        Icons.bolt,
+                                                        size: 18,
+                                                      ),
+                                                      label: Text(
+                                                        '${missionOpportunityCaptured.toStringAsFixed(0)} pts captured',
+                                                      ),
                                                     ),
-                                                    label: Text(
-                                                      '${missionOpportunityCaptured.toStringAsFixed(0)} pts captured',
-                                                    ),
-                                                  ),
                                                 ],
                                               ),
                                               const SizedBox(height: 10),
@@ -14963,6 +15285,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     missionLeadsFound: missionLeadsFound,
                     missionMiles: missionMiles,
                     missionOpportunityCaptured: missionOpportunityCaptured,
+                    hasMissionOpportunityScore: hasMissionOpportunityScore,
                   ),
                   child: Container(
                     height: 58,
@@ -14990,21 +15313,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ),
             ),
             Positioned(
-              left: 12,
-              bottom: 86,
-              child: SafeArea(
-                top: false,
-                child: FloatingActionButton.small(
-                  heroTag: 'drive-center-me',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF111827),
-                  tooltip: 'Center On Me',
-                  onPressed: isFindingLocation ? null : findMyLocation,
-                  child: const Icon(Icons.my_location),
-                ),
-              ),
-            ),
-            Positioned(
               right: 16,
               bottom: 22,
               child: SafeArea(
@@ -15019,6 +15327,12 @@ class _DrivingScreenState extends State<DrivingScreen> {
               ),
             ),
           ],
+          if (!isDrawAreaMode)
+            Positioned(
+              left: 12,
+              bottom: findMeButtonBottom,
+              child: SafeArea(top: false, child: buildFindMeFab()),
+            ),
           if (activeMission == null && !isDrawAreaMode)
             Positioned(
               right: 16,
