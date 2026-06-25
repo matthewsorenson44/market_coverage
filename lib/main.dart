@@ -10404,35 +10404,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
   }
 
   Future<String?> promptForDriveAreaName() {
-    final controller = TextEditingController();
-
     return showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Save drive area'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(labelText: 'Area name'),
-            onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, controller.text.trim());
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    ).whenComplete(controller.dispose);
+      builder: (dialogContext) => const AreaNameDialog(),
+    );
   }
 
   Future<String?> promptForDrawnAreaAction() {
@@ -10484,9 +10459,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
     if (drawingAreaPoints.length < 3 || isSavingDriveArea) return;
 
     final name = await promptForDriveAreaName();
+    if (!mounted) return;
     if (name == null || name.isEmpty) return;
 
     final action = await promptForDrawnAreaAction();
+    if (!mounted) return;
     if (action == null || action == 'adjust') return;
     if (action == 'cancel') {
       cancelDrawAreaMode();
@@ -14901,6 +14878,69 @@ class _DrivingScreenState extends State<DrivingScreen> {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// Dialog that names a new drive area.
+///
+/// Owns the text and focus notifiers until the dialog widget unmounts, after
+/// the close animation finishes.
+class AreaNameDialog extends StatefulWidget {
+  const AreaNameDialog({super.key});
+
+  @override
+  State<AreaNameDialog> createState() => _AreaNameDialogState();
+}
+
+class _AreaNameDialogState extends State<AreaNameDialog> {
+  final controller = TextEditingController();
+  final focusNode = FocusNode();
+  bool isClosing = false;
+
+  void closeWith(String? value) {
+    if (isClosing) return;
+    isClosing = true;
+
+    FocusScope.of(context).unfocus();
+    focusNode.unfocus();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      Navigator.of(context).pop(value);
+    });
+  }
+
+  @override
+  void dispose() {
+    focusNode.dispose();
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Save drive area'),
+      content: TextField(
+        controller: controller,
+        focusNode: focusNode,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(labelText: 'Area name'),
+        onSubmitted: (value) => closeWith(value.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => closeWith(null),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => closeWith(controller.text.trim()),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }
