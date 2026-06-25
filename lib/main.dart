@@ -1402,6 +1402,64 @@ String leadSecondaryLabel(Lead lead) {
   return normalizeLeadStage(lead.status);
 }
 
+bool leadNeedsMissionFollowUp(Lead lead) {
+  final stage = normalizeLeadStage(lead.status);
+  if (stage == 'Closed' || stage == 'Dead Lead') return false;
+
+  return lead.reminderData.followUpStatus != 'Completed';
+}
+
+List<Lead> prioritizedMissionFollowUpLeads(Iterable<Lead> leads) {
+  final prioritized = leads.where(leadNeedsMissionFollowUp).toList();
+
+  prioritized.sort((a, b) {
+    final scoreCompare = b.score.compareTo(a.score);
+    if (scoreCompare != 0) return scoreCompare;
+
+    final aHasReminder = a.reminderData.reminderDate != null;
+    final bHasReminder = b.reminderData.reminderDate != null;
+    if (aHasReminder != bHasReminder) return aHasReminder ? 1 : -1;
+
+    return leadPrimaryLabel(a).compareTo(leadPrimaryLabel(b));
+  });
+
+  return prioritized;
+}
+
+String missionLeadFollowUpLabel(Lead lead) {
+  final status = lead.reminderData.followUpStatus;
+  final reminderDate = lead.reminderData.reminderDate;
+
+  if (status == 'None' && reminderDate == null) return 'No reminder set';
+  if (reminderDate == null) return status;
+
+  return '$status - ${displayDate(reminderDate)}';
+}
+
+String missionNextActionSummary({
+  required int leadCount,
+  required int priorityLeadCount,
+  required int areaRemainingEstimatedMinutes,
+}) {
+  if (leadCount == 0 && areaRemainingEstimatedMinutes <= 0) {
+    return 'No new leads from this mission, and the area is estimated complete. Review the map or create a fresh area.';
+  }
+
+  if (leadCount == 0) {
+    return 'No leads from this mission. Start the next session or tighten the target filters before covering the remaining streets.';
+  }
+
+  if (priorityLeadCount == 0) {
+    return 'All mission leads are already closed or completed. Check the remaining area before starting the next drive.';
+  }
+
+  if (priorityLeadCount == 1) {
+    return 'Review the top lead from this drive and set a follow-up before starting another mission.';
+  }
+
+  return 'Review $priorityLeadCount open leads from this drive. Work the highest scores first, then plan the next uncovered streets.';
+}
+
 String mapModeLabel(String mode) {
   return switch (mode) {
     'targets' => 'Targets',
@@ -15141,6 +15199,23 @@ class MissionResultsSheet extends StatelessWidget {
     required this.onUpdateLeadOfferData,
   });
 
+  void openLeadDetails(BuildContext context, Lead lead) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LeadDetailsScreen(
+          lead: lead,
+          onUpdateLeadStatus: onUpdateLeadStatus,
+          onUpdateLeadSource: onUpdateLeadSource,
+          onUpdateLeadScoreData: onUpdateLeadScoreData,
+          onUpdateLeadParcelData: onUpdateLeadParcelData,
+          onUpdateLeadReminderData: onUpdateLeadReminderData,
+          onUpdateLeadOfferData: onUpdateLeadOfferData,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final leadsPerMile = milesDriven == 0 ? 0.0 : leads.length / milesDriven;
@@ -15154,6 +15229,8 @@ class MissionResultsSheet extends StatelessWidget {
     final sessionsRemaining = sessionBudget <= 0
         ? 0
         : (areaRemainingEstimatedMinutes / sessionBudget).ceil();
+    final priorityLeads = prioritizedMissionFollowUpLeads(leads);
+    final topPriorityLeads = priorityLeads.take(3).toList(growable: false);
 
     return SafeArea(
       child: FractionallySizedBox(
@@ -15359,6 +15436,90 @@ class MissionResultsSheet extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: const Color(
+                                0xFF059669,
+                              ).withValues(alpha: 0.10),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.task_alt,
+                              color: Color(0xFF059669),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Best next action',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF111827),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  missionNextActionSummary(
+                                    leadCount: leads.length,
+                                    priorityLeadCount: priorityLeads.length,
+                                    areaRemainingEstimatedMinutes:
+                                        areaRemainingEstimatedMinutes,
+                                  ),
+                                  style: const TextStyle(
+                                    color: Color(0xFF6B7280),
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (topPriorityLeads.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        ...topPriorityLeads.map(
+                          (lead) => ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: SizedBox(
+                              width: 42,
+                              child: Center(
+                                child: leadScoreBadge(lead.score, fontSize: 13),
+                              ),
+                            ),
+                            title: Text(
+                              leadPrimaryLabel(lead),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              '${normalizeLeadStage(lead.status)} - ${missionLeadFollowUpLabel(lead)}',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () => openLeadDetails(context, lead),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
                 child: ExpansionTile(
                   tilePadding: const EdgeInsets.symmetric(horizontal: 16),
                   childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -15386,26 +15547,7 @@ class MissionResultsSheet extends StatelessWidget {
                                 ),
                                 isThreeLine: true,
                                 trailing: const Icon(Icons.chevron_right),
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => LeadDetailsScreen(
-                                        lead: lead,
-                                        onUpdateLeadStatus: onUpdateLeadStatus,
-                                        onUpdateLeadSource: onUpdateLeadSource,
-                                        onUpdateLeadScoreData:
-                                            onUpdateLeadScoreData,
-                                        onUpdateLeadParcelData:
-                                            onUpdateLeadParcelData,
-                                        onUpdateLeadReminderData:
-                                            onUpdateLeadReminderData,
-                                        onUpdateLeadOfferData:
-                                            onUpdateLeadOfferData,
-                                      ),
-                                    ),
-                                  );
-                                },
+                                onTap: () => openLeadDetails(context, lead),
                               ),
                             )
                             .toList(growable: false),

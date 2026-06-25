@@ -192,6 +192,52 @@ void main() {
     });
   });
 
+  group('mission follow-up prioritization', () {
+    test('prioritizes open mission leads by score', () {
+      final leads = [
+        _missionLead(id: 'cold', score: 20),
+        _missionLead(id: 'hot', score: 90),
+        _missionLead(id: 'warm', score: 55),
+      ];
+
+      final prioritized = prioritizedMissionFollowUpLeads(leads);
+
+      expect(prioritized.map((lead) => lead.id), ['hot', 'warm', 'cold']);
+    });
+
+    test('excludes closed dead and completed follow-up leads', () {
+      final leads = [
+        _missionLead(id: 'open', score: 70),
+        _missionLead(id: 'closed', score: 100, status: 'Closed'),
+        _missionLead(id: 'dead', score: 99, status: 'Dead Lead'),
+        _missionLead(id: 'done', score: 98, followUpStatus: 'Completed'),
+      ];
+
+      final prioritized = prioritizedMissionFollowUpLeads(leads);
+
+      expect(prioritized.map((lead) => lead.id), ['open']);
+    });
+
+    test('summarizes next action from mission outcome', () {
+      expect(
+        missionNextActionSummary(
+          leadCount: 0,
+          priorityLeadCount: 0,
+          areaRemainingEstimatedMinutes: 45,
+        ),
+        contains('No leads from this mission'),
+      );
+      expect(
+        missionNextActionSummary(
+          leadCount: 3,
+          priorityLeadCount: 2,
+          areaRemainingEstimatedMinutes: 45,
+        ),
+        contains('Review 2 open leads'),
+      );
+    });
+  });
+
   group('route / mileage geo', () {
     final a = const LatLng(36.0, -95.0);
     final b = const LatLng(36.005, -95.0); // ~0.345 mi north of a (within gap)
@@ -241,5 +287,23 @@ void main() {
       expect(distanceToStreetMiles(a, empty), double.infinity);
       expect(distanceToStreetMiles(a, street), closeTo(0, 1e-6));
     });
+  });
+}
+
+Lead _missionLead({
+  required String id,
+  required int score,
+  String status = 'New Lead',
+  String followUpStatus = 'None',
+}) {
+  return Lead.fromMap({
+    'id': id,
+    'address': '$id Main St',
+    'condition': '',
+    'notes': '',
+    'status': status,
+    'source': 'Driving For Dollars',
+    'lead_score': score,
+    'follow_up_status': followUpStatus,
   });
 }
