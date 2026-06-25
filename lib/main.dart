@@ -17092,20 +17092,35 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     );
   }
 
+  Future<String> leadPhotoStorageFolder() async {
+    if (supabase.auth.currentSession == null) {
+      await supabase.auth.refreshSession();
+    }
+
+    final userId = supabase.auth.currentUser?.id;
+
+    if (userId == null || userId.isEmpty) {
+      throw StateError('You are not signed in. Sign in again, then retry.');
+    }
+
+    return '$userId/${widget.lead.id}';
+  }
+
   Future<void> loadLeadPhotos() async {
     setState(() {
       isLoadingPhotos = true;
     });
 
     try {
+      final storageFolder = await leadPhotoStorageFolder();
       final files = await supabase.storage
           .from(leadPhotosBucket)
-          .list(path: widget.lead.id);
+          .list(path: storageFolder);
 
       final loadedPhotos = files.where((file) => file.name.isNotEmpty).map((
         file,
       ) {
-        final path = '${widget.lead.id}/${file.name}';
+        final path = '$storageFolder/${file.name}';
 
         return LeadPhoto(
           path: path,
@@ -17205,14 +17220,7 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     });
 
     try {
-      if (supabase.auth.currentSession == null) {
-        await supabase.auth.refreshSession();
-      }
-
-      if (supabase.auth.currentSession == null) {
-        throw StateError('You are not signed in. Sign in again, then retry.');
-      }
-
+      final storageFolder = await leadPhotoStorageFolder();
       final photoSize = await pickedPhoto.length();
 
       if (photoSize > maxLeadPhotoBytes) {
@@ -17226,14 +17234,22 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
       );
       final extension = photoExtension(pickedPhoto.name);
       final fileName = '${DateTime.now().millisecondsSinceEpoch}$extension';
-      final storagePath = '${widget.lead.id}/$fileName';
+      final storagePath = '$storageFolder/$fileName';
       final contentType = pickedPhoto.mimeType ?? photoContentType(fileName);
+      final userId = supabase.auth.currentUser?.id ?? 'none';
+      final hasSession = supabase.auth.currentSession != null;
+
+      debugPrint(
+        'Lead photo upload start: lead=${widget.lead.id}, user=$userId, '
+        'session=$hasSession, bytes=$photoSize, type=$contentType, '
+        'path=$storagePath',
+      );
 
       unawaited(
         FieldTestLogger.log(
           'lead_photo_upload_start',
           detail:
-              'lead=${widget.lead.id}, bytes=$photoSize, type=$contentType, path=$storagePath',
+              'lead=${widget.lead.id}, user=$userId, session=$hasSession, bytes=$photoSize, type=$contentType, path=$storagePath',
         ),
       );
 
