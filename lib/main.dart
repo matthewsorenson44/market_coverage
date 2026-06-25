@@ -17058,7 +17058,7 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     final lowerDetails = details.toLowerCase();
 
     if (lowerDetails.contains('bucket') && lowerDetails.contains('not found')) {
-      return 'Missing Supabase Storage bucket "$leadPhotosBucket". Create the bucket and storage policies, then try again.';
+      return 'Photo storage is not set up yet. Run the latest Supabase photo storage migration, then try again.';
     }
 
     if (lowerDetails.contains('row-level security') ||
@@ -17066,7 +17066,7 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
         lowerDetails.contains('unauthorized') ||
         lowerDetails.contains('403') ||
         lowerDetails.contains('401')) {
-      return 'Photo upload blocked by Supabase Storage policy: $details';
+      return 'Photo upload is blocked by storage permissions. Run the latest Supabase security migration, then try again.';
     }
 
     if (lowerDetails.contains('payload too large') ||
@@ -17076,15 +17076,22 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
       return 'Photo is too large. Choose a smaller image or lower camera resolution.';
     }
 
-    return 'Photo upload failed: $details';
+    if (lowerDetails.contains('not signed in') ||
+        lowerDetails.contains('sign in again')) {
+      return 'You are not signed in. Sign in again, then retry.';
+    }
+
+    return 'Could not upload photo. Please try again.';
   }
 
   void showPhotoError(Object error) {
     final message = photoStorageErrorMessage(error);
-    debugPrint('Lead photo error: $error');
-    unawaited(
-      FieldTestLogger.log('lead_photo_error', detail: error.toString()),
-    );
+    if (kDebugMode) {
+      debugPrint('Lead photo error: $error');
+      unawaited(
+        FieldTestLogger.log('lead_photo_error', detail: error.toString()),
+      );
+    }
 
     if (!mounted) return;
 
@@ -17240,19 +17247,21 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
       final userId = supabase.auth.currentUser?.id ?? 'none';
       final hasSession = supabase.auth.currentSession != null;
 
-      debugPrint(
-        'Lead photo upload start: lead=${widget.lead.id}, user=$userId, '
-        'session=$hasSession, bytes=$photoSize, type=$contentType, '
-        'path=$storagePath',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          'Lead photo upload start: lead=${widget.lead.id}, user=$userId, '
+          'session=$hasSession, bytes=$photoSize, type=$contentType, '
+          'path=$storagePath',
+        );
 
-      unawaited(
-        FieldTestLogger.log(
-          'lead_photo_upload_start',
-          detail:
-              'lead=${widget.lead.id}, user=$userId, session=$hasSession, bytes=$photoSize, type=$contentType, path=$storagePath',
-        ),
-      );
+        unawaited(
+          FieldTestLogger.log(
+            'lead_photo_upload_start',
+            detail:
+                'lead=${widget.lead.id}, user=$userId, session=$hasSession, bytes=$photoSize, type=$contentType, path=$storagePath',
+          ),
+        );
+      }
 
       await supabase.storage
           .from(leadPhotosBucket)
