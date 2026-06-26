@@ -45,11 +45,35 @@ The app should feel dependable in the field before adding more automation:
 ## Current Known Issues To Watch
 
 - Open: iPhone Drive Mode follow-me can still appear to freeze or fail to follow smoothly.
+- Open: While sitting idle, the user marker can drift and draw a blue route line. Route tracking should avoid saving/displaying movement from GPS noise when stationary.
 - Open: Some mission flows are confusing, especially when area analysis has not produced mission streets.
+- Open: Area analysis state is unclear. Areas without street data show "No street data"; areas with street data show "Start Driving" and "Find Motivated Sellers" instead of making the analyze/ready state obvious.
 - Open: Area analysis and market map loading can feel slow on iPhone.
 - Open: Mission completion and recap flow should stay simple and avoid stuck panels.
+- Open: "Find Motivated Sellers" is unclear and may appear to do nothing. It should either clearly explain/run the target-property analysis, be moved, or be removed from the mission-start path.
+- Open: Mission coverage math can be misleading. Example to verify/fix: 1 of 2 streets should show 50%, not 0%.
+- Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
+- Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
 - Fix pushed, awaiting user confirmation: Quick Capture red-screen crash when adding a lead from the orange lightning button while an area is selected.
+- Needs confirmation: Quick Capture should close cleanly after saving.
+
+## Needs Real Driving Test
+
+- Follow mode actually follows while driving, not just says "Following."
+- User marker updates smoothly while moving.
+- App does not freeze when GPS icon changes from dot to arrow.
+- Area stats show streets driven / total streets correctly during real driving.
+- Area stats show miles covered / total miles correctly during real driving.
+- Covered streets turn green after driving.
+- Street coverage persists after app restart after a real drive.
+
+## Needs Retest Or Clarification
+
+- Owasso streets show correctly.
+- Tulsa streets show where imported.
+- Undriven streets stay red.
+- Analyze Area no longer reopens weirdly, but current empty/ready states are confusing and need UX cleanup.
 
 ## Fixed And Confirmed By User
 
@@ -94,6 +118,9 @@ Bug status meanings:
 - Quick Capture fix details: owns a FocusNode for the quick note field, unfocuses before save/close, delays TextEditingController/FocusNode disposal until after the bottom sheet close animation, guards async lookup/save callbacks while closing, and disables save buttons during close.
 - Validation for Quick Capture fix: `dart format .`, `flutter analyze`, and `flutter test` passed with 111 tests.
 - Status: Quick Capture fix is pushed and awaiting user confirmation on iPhone.
+- User began a real iPhone bug sweep and reported current open/deferred items.
+- Deferred until a real drive: follow-me behavior, smooth moving marker updates, GPS icon arrow freeze, street/mile stats while moving, covered streets turning green, and persistence after driving.
+- Newly captured open UX/data issues: idle GPS drift can draw a route line, "Find Motivated Sellers" is unclear, mission coverage math may show 0% for partial coverage, parcel/street layers need independent toggles, Lead Details can overflow on iPhone, and area analyze/ready states need clearer wording.
 
 ### 2026-06-24
 
