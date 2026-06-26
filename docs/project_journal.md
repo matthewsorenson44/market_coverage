@@ -121,6 +121,10 @@ Bug status meanings:
 - User began a real iPhone bug sweep and reported current open/deferred items.
 - Deferred until a real drive: follow-me behavior, smooth moving marker updates, GPS icon arrow freeze, street/mile stats while moving, covered streets turning green, and persistence after driving.
 - Newly captured open UX/data issues: idle GPS drift can draw a route line, "Find Motivated Sellers" is unclear, mission coverage math may show 0% for partial coverage, parcel/street layers need independent toggles, Lead Details can overflow on iPhone, and area analyze/ready states need clearer wording.
+- Built Step 1 of the Market Coverage OS 2.0 design system: color, typography, spacing, shadow, animation tokens, app theme, debug-only design-system gallery, and barrel export.
+- Wired the existing `MaterialApp` to `AppTheme.lightTheme()`, `AppTheme.darkTheme()`, and `ThemeMode.system`.
+- Added `google_fonts` for Inter and JetBrains Mono typography.
+- Validation for design-system Step 1: `dart format lib/design_system/ lib/design_system.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 
 ### 2026-06-24
 
