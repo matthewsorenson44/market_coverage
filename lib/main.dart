@@ -212,6 +212,68 @@ Future<void> appendPendingLeadRow(Map<String, dynamic> row) async {
   await savePendingLeadRows(rows);
 }
 
+String leadDeleteErrorMessage(Object error) {
+  final details = error.toString();
+  final lowerDetails = details.toLowerCase();
+
+  if (lowerDetails.contains('row-level security') ||
+      lowerDetails.contains('permission denied') ||
+      lowerDetails.contains('unauthorized') ||
+      lowerDetails.contains('403') ||
+      lowerDetails.contains('42501') ||
+      lowerDetails.contains('no lead row was deleted')) {
+    return 'Lead delete is blocked by Supabase permissions. Run migration 0012_lead_delete_policy.sql, then try again.';
+  }
+
+  if (lowerDetails.contains('foreign key') ||
+      lowerDetails.contains('still referenced') ||
+      lowerDetails.contains('violates foreign key constraint')) {
+    return 'This lead has related records blocking deletion. Send me the console error so I can add the exact cleanup.';
+  }
+
+  return kDebugMode
+      ? 'Could not delete lead: $details'
+      : 'Could not delete lead.';
+}
+
+Future<void> logLeadDeleteError(Object error) async {
+  if (!kDebugMode) return;
+
+  debugPrint('Lead delete error: $error');
+  await FieldTestLogger.log('lead_delete_error', detail: error.toString());
+}
+
+Future<void> cleanupLeadPhotoStorage(String leadId) async {
+  final userId = supabase.auth.currentUser?.id;
+  if (userId == null || userId.isEmpty) return;
+
+  final folder = '$userId/$leadId';
+
+  try {
+    final files = await supabase.storage
+        .from(leadPhotosBucket)
+        .list(path: folder);
+    final paths = files
+        .where((file) => file.name.trim().isNotEmpty)
+        .map((file) => '$folder/${file.name}')
+        .toList(growable: false);
+
+    if (paths.isNotEmpty) {
+      await supabase.storage.from(leadPhotosBucket).remove(paths);
+    }
+  } catch (error) {
+    if (kDebugMode) {
+      debugPrint('Lead photo cleanup skipped: $error');
+      unawaited(
+        FieldTestLogger.log(
+          'lead_photo_cleanup_skipped',
+          detail: error.toString(),
+        ),
+      );
+    }
+  }
+}
+
 Future<LeadSaveResult> insertLeadWithOfflineQueue(
   Map<String, dynamic> row,
 ) async {
@@ -2686,17 +2748,31 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     final accountId = activeAccountId;
     if (accountId == null) return;
 
-    await supabase
-        .from('leads')
-        .delete()
-        .eq('account_id', accountId)
-        .eq('id', leadId);
+    try {
+      final deletedRows = await supabase
+          .from('leads')
+          .delete()
+          .eq('account_id', accountId)
+          .eq('id', leadId)
+          .select('id');
 
-    if (!mounted) return;
+      if (deletedRows.isEmpty) {
+        throw StateError(
+          'No lead row was deleted. The lead may be blocked by RLS or may not belong to the active account.',
+        );
+      }
 
-    setState(() {
-      leads.removeWhere((lead) => lead.id == leadId);
-    });
+      await cleanupLeadPhotoStorage(leadId);
+
+      if (!mounted) return;
+
+      setState(() {
+        leads.removeWhere((lead) => lead.id == leadId);
+      });
+    } catch (error) {
+      await logLeadDeleteError(error);
+      rethrow;
+    }
   }
 
   @override
@@ -17491,12 +17567,13 @@ class _LeadListScreenState extends State<LeadListScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Lead deleted.')));
-    } catch (_) {
+    } catch (error) {
+      final message = leadDeleteErrorMessage(error);
       if (!mounted) return;
 
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Could not delete lead.')));
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -19132,12 +19209,13 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
 
       didPopAfterDelete = true;
       Navigator.pop(context, true);
-    } catch (_) {
+    } catch (error) {
+      final message = leadDeleteErrorMessage(error);
       if (!mounted) return;
 
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Could not delete lead.')));
+      ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted && !didPopAfterDelete) {
         setState(() {

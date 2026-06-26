@@ -58,7 +58,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
 - Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
-- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt.
+- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt. User reported the first live test was blocked, so migration `0012_lead_delete_policy.sql` and clearer delete error logging were added.
 - Fix pushed, awaiting user confirmation: Property Preview should no longer overlap the iPhone status bar and should have a sticky top-right X close button.
 - Fix pushed, awaiting user confirmation: Lead Details should have a pinned top-right X close button.
 - Fix pushed, awaiting user confirmation: Mission recap dark-mode cards/text should be readable.
@@ -154,6 +154,10 @@ Bug status meanings:
 - Added map-style-aware parcel outline colors: brighter parcel lines on satellite, lighter outlines on dark map tiles, and the existing darker outline on light tiles.
 - Added lead deletion from the Leads tab row actions and Lead Details, both protected by a confirmation dialog and scoped through the existing account-scoped Supabase lead delete.
 - Validation for map/delete fixes: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- User reported lead deletion still said "Could not delete lead" on-device.
+- Tightened lead deletion to verify Supabase actually deletes a row, log the technical delete failure in debug mode, show a clearer RLS/permission message, and clean up lead photo storage after successful deletion.
+- Added `supabase/migrations/0012_lead_delete_policy.sql`, a small RLS/grant migration for account-member lead deletes.
+- Validation for lead delete follow-up: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 
 ### 2026-06-24
 
