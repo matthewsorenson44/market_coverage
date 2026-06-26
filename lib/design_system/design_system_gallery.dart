@@ -1,6 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'components/app_badge.dart';
+import 'components/app_button.dart';
+import 'components/app_card.dart';
+import 'components/app_chip.dart';
+import 'components/app_text_field.dart';
 import 'tokens/app_animations.dart';
 import 'tokens/app_colors.dart';
 import 'tokens/app_shadows.dart';
@@ -130,6 +135,7 @@ class DesignSystemGallery extends StatelessWidget {
                   .toList(),
             ),
           ),
+          const _PrimitiveComponentsSection(),
         ],
       ),
     );
@@ -302,6 +308,309 @@ class _TokenLine extends StatelessWidget {
           Text(value, style: AppTypography.monoMedium(dark: dark)),
         ],
       ),
+    );
+  }
+}
+
+class _PrimitiveComponentsSection extends StatelessWidget {
+  const _PrimitiveComponentsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Primitive Components',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          _GalleryGroup(title: 'AppButton', child: _ButtonSamples()),
+          SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(title: 'AppCard', child: _CardSamples()),
+          SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(title: 'AppChip', child: _ChipSamples()),
+          SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(title: 'AppTextField', child: _TextFieldSamples()),
+          SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(title: 'AppBadge', child: _BadgeSamples()),
+        ],
+      ),
+    );
+  }
+}
+
+class _GalleryGroup extends StatelessWidget {
+  final String title;
+  final Widget child;
+
+  const _GalleryGroup({required this.title, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: AppTypography.headingMedium(dark: dark)),
+        const SizedBox(height: AppSpacing.md),
+        child,
+      ],
+    );
+  }
+}
+
+class _ButtonSamples extends StatelessWidget {
+  const _ButtonSamples();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: AppSpacing.md,
+      runSpacing: AppSpacing.md,
+      children: [
+        AppButton(
+          label: 'Start Mission',
+          onPressed: () {},
+          leadingIcon: Icons.flag,
+        ),
+        AppButton(
+          label: 'Open Area',
+          onPressed: () {},
+          variant: AppButtonVariant.secondary,
+          leadingIcon: Icons.open_in_new,
+        ),
+        AppButton(
+          label: 'Skip Street',
+          onPressed: () {},
+          variant: AppButtonVariant.ghost,
+        ),
+        AppButton(
+          label: 'Delete Area',
+          onPressed: () {},
+          variant: AppButtonVariant.danger,
+          leadingIcon: Icons.delete_outline,
+        ),
+        AppButton(
+          label: 'Quick Capture',
+          onPressed: () {},
+          variant: AppButtonVariant.accent,
+          leadingIcon: Icons.flash_on,
+        ),
+        AppButton(
+          label: 'Add Lead',
+          onPressed: () {},
+          size: AppButtonSize.small,
+          leadingIcon: Icons.add_location_alt,
+        ),
+        AppButton(
+          label: 'Find Motivated Sellers',
+          onPressed: () {},
+          size: AppButtonSize.large,
+          trailingIcon: Icons.arrow_forward,
+        ),
+        AppButton(label: 'Saving Mission', onPressed: () {}, isLoading: true),
+        const AppButton(
+          label: 'No Streets Ready',
+          onPressed: null,
+          variant: AppButtonVariant.secondary,
+        ),
+      ],
+    );
+  }
+}
+
+class _CardSamples extends StatelessWidget {
+  const _CardSamples();
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    return Wrap(
+      spacing: AppSpacing.md,
+      runSpacing: AppSpacing.md,
+      children: [
+        SizedBox(
+          width: AppSpacing.massive * 3,
+          child: AppCard(
+            showBorder: true,
+            child: _CardText(
+              title: 'North Owasso',
+              body: '81 streets remaining',
+              dark: dark,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: AppSpacing.massive * 3,
+          child: AppCard(
+            onTap: () {},
+            isSelected: true,
+            child: _CardText(
+              title: 'Active Mission',
+              body: '30 streets queued',
+              dark: dark,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: AppSpacing.massive * 3,
+          child: AppCard.elevated(
+            child: _CardText(
+              title: 'Mission Recap',
+              body: '12 leads captured',
+              dark: dark,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CardText extends StatelessWidget {
+  final String title;
+  final String body;
+  final bool dark;
+
+  const _CardText({
+    required this.title,
+    required this.body,
+    required this.dark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: AppTypography.headingSmall(dark: dark)),
+        const SizedBox(height: AppSpacing.sm),
+        Text(body, style: AppTypography.bodySmall(dark: dark)),
+      ],
+    );
+  }
+}
+
+class _ChipSamples extends StatelessWidget {
+  const _ChipSamples();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: AppSpacing.md,
+      runSpacing: AppSpacing.md,
+      children: [
+        AppChip(label: 'Open Streets', onTap: () {}, icon: Icons.route),
+        AppChip(
+          label: 'Covered',
+          isSelected: true,
+          onTap: () {},
+          icon: Icons.check,
+        ),
+        const AppChip(
+          label: 'Contact Needed',
+          variant: AppChipVariant.status,
+          selectedColor: AppColors.warning,
+        ),
+        AppChip(label: 'Tall Grass', variant: AppChipVariant.tag, onTap: () {}),
+        AppChip(
+          label: 'Vacant',
+          variant: AppChipVariant.tag,
+          isSelected: true,
+          onTap: () {},
+          icon: Icons.home_work_outlined,
+        ),
+      ],
+    );
+  }
+}
+
+class _TextFieldSamples extends StatefulWidget {
+  const _TextFieldSamples();
+
+  @override
+  State<_TextFieldSamples> createState() => _TextFieldSamplesState();
+}
+
+class _TextFieldSamplesState extends State<_TextFieldSamples> {
+  final TextEditingController _areaController = TextEditingController(
+    text: 'North Owasso',
+  );
+
+  @override
+  void dispose() {
+    _areaController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const AppTextField(
+          label: 'Area name',
+          hint: 'North Owasso',
+          leadingIcon: Icons.map_outlined,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        const AppTextField(
+          label: 'Owner phone',
+          hint: 'Add phone number',
+          keyboardType: TextInputType.phone,
+          errorText: 'Phone number is required before callback.',
+        ),
+        const SizedBox(height: AppSpacing.md),
+        AppTextField(
+          controller: _areaController,
+          label: 'Mission search',
+          hint: 'Search streets',
+          showClearButton: true,
+          leadingIcon: Icons.search,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        const AppTextField(
+          label: 'Parcel ID',
+          hint: 'Auto-filled from county data',
+          readOnly: true,
+          trailingIcon: Icons.lock_outline,
+        ),
+      ],
+    );
+  }
+}
+
+class _BadgeSamples extends StatelessWidget {
+  const _BadgeSamples();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: AppSpacing.sm,
+      runSpacing: AppSpacing.sm,
+      children: const [
+        AppBadge(
+          label: 'Ready',
+          variant: AppBadgeVariant.success,
+          size: AppBadgeSize.small,
+        ),
+        AppBadge(label: 'Dead Lead', variant: AppBadgeVariant.danger),
+        AppBadge(label: 'Needs Revisit', variant: AppBadgeVariant.warning),
+        AppBadge(label: 'Route Active', variant: AppBadgeVariant.info),
+        AppBadge(label: 'Planned', variant: AppBadgeVariant.neutral),
+        AppBadge(
+          label: 'Active Market',
+          variant: AppBadgeVariant.primary,
+          size: AppBadgeSize.large,
+        ),
+        AppBadge(
+          label: 'Driving For Dollars',
+          variant: AppBadgeVariant.custom,
+          customColor: AppColors.accent,
+        ),
+        AppBadge.score(20),
+        AppBadge.score(55),
+        AppBadge.score(80),
+      ],
     );
   }
 }
