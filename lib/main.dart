@@ -33,6 +33,15 @@ export 'src/lead_export.dart';
 export 'src/scoring.dart';
 
 const String themeModePrefsKey = 'theme_mode';
+const String mapStylePrefsKey = 'map_style';
+const String kTilesDark =
+    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const String kTilesLight =
+    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+const String kTilesSatellite =
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const String kTilesMinimal =
+    'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
 final themeModeNotifier = ThemeModeNotifier();
 
@@ -6589,13 +6598,16 @@ class DrivingScreen extends StatefulWidget {
   State<DrivingScreen> createState() => _DrivingScreenState();
 }
 
-class _DrivingScreenState extends State<DrivingScreen> {
+class _DrivingScreenState extends State<DrivingScreen>
+    with WidgetsBindingObserver {
   final MapController mapController = MapController();
   final GlobalKey mapWorkspaceKey = GlobalKey();
 
   LatLng currentMapCenter = const LatLng(36.2695, -95.8547);
   double currentZoom = 13;
   String selectedCoverageCity = MarketService.getActiveCity();
+  String _currentTileUrl = kTilesDark;
+  String mapStylePreference = 'auto';
   LatLng? myLocation;
   Position? lastKnownPosition;
   bool isFindingLocation = false;
@@ -6688,7 +6700,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _currentTileUrl = themeBasedTileUrl();
+    themeModeNotifier.addListener(handleThemeModeChanged);
     drivingLeads = dedupeLeadsForDisplay(widget.leads);
+    loadMapStylePreference();
     loadStartupData();
     loadMissionPlannerPreferences();
     loadFirstMissionTipPreference();
@@ -6708,12 +6724,172 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    themeModeNotifier.removeListener(handleThemeModeChanged);
     visibleParcelLoadTimer?.cancel();
     visibleStreetLoadTimer?.cancel();
     fieldTestTitleTapResetTimer?.cancel();
     positionStream?.cancel();
     customMissionTimeController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    super.didChangePlatformBrightness();
+    handleThemeModeChanged();
+  }
+
+  Brightness effectiveTileBrightness() {
+    return switch (themeModeNotifier.value) {
+      ThemeMode.dark => Brightness.dark,
+      ThemeMode.light => Brightness.light,
+      ThemeMode.system =>
+        WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    };
+  }
+
+  String themeBasedTileUrl() {
+    return effectiveTileBrightness() == Brightness.dark
+        ? kTilesDark
+        : kTilesLight;
+  }
+
+  String tileUrlForMapStyle(String style) {
+    return switch (style) {
+      'dark' => kTilesDark,
+      'minimal' => kTilesMinimal,
+      'satellite' => kTilesSatellite,
+      _ => kTilesLight,
+    };
+  }
+
+  void handleThemeModeChanged() {
+    if (!mounted || mapStylePreference != 'auto') return;
+
+    final nextTileUrl = themeBasedTileUrl();
+    if (_currentTileUrl == nextTileUrl) return;
+
+    setState(() {
+      _currentTileUrl = nextTileUrl;
+    });
+  }
+
+  Future<void> loadMapStylePreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedStyle = prefs.getString(mapStylePrefsKey) ?? 'auto';
+    if (!mounted) return;
+
+    setState(() {
+      mapStylePreference = savedStyle;
+      _currentTileUrl = savedStyle == 'auto'
+          ? themeBasedTileUrl()
+          : tileUrlForMapStyle(savedStyle);
+    });
+  }
+
+  Future<void> setMapStylePreference(String style) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (style == 'auto') {
+      await prefs.remove(mapStylePrefsKey);
+    } else {
+      await prefs.setString(mapStylePrefsKey, style);
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      mapStylePreference = style;
+      _currentTileUrl = style == 'auto'
+          ? themeBasedTileUrl()
+          : tileUrlForMapStyle(style);
+    });
+  }
+
+  String get activeMapStyle {
+    if (mapStylePreference != 'auto') return mapStylePreference;
+    return effectiveTileBrightness() == Brightness.dark ? 'dark' : 'standard';
+  }
+
+  void openMapStylePicker() {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final selectedStyle = mapStylePreference;
+    final optionColor = dark ? Colors.white : const Color(0xFF0F172A);
+    final secondaryColor = dark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
+
+    Widget option({
+      required String style,
+      required String marker,
+      required String label,
+      required String subtitle,
+    }) {
+      final selected = selectedStyle == style;
+
+      return ListTile(
+        leading: Text(marker, style: const TextStyle(fontSize: 20)),
+        title: Text(label, style: TextStyle(color: optionColor)),
+        subtitle: Text(subtitle, style: TextStyle(color: secondaryColor)),
+        trailing: selected ? const Icon(Icons.check) : null,
+        onTap: () async {
+          await setMapStylePreference(style);
+          if (!mounted || !context.mounted) return;
+
+          Navigator.pop(context);
+        },
+      );
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: false,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                option(
+                  style: 'auto',
+                  marker: 'A',
+                  label: 'Auto (follows theme)',
+                  subtitle:
+                      'Dark mode uses night tiles, light mode uses standard.',
+                ),
+                option(
+                  style: 'dark',
+                  marker: '🌑',
+                  label: 'Dark',
+                  subtitle: 'Best for night driving',
+                ),
+                option(
+                  style: 'standard',
+                  marker: '🗺',
+                  label: 'Standard',
+                  subtitle: 'Detailed streets',
+                ),
+                option(
+                  style: 'minimal',
+                  marker: '🌿',
+                  label: 'Minimal',
+                  subtitle: 'Clean, light',
+                ),
+                option(
+                  style: 'satellite',
+                  marker: '🛰',
+                  label: 'Satellite',
+                  subtitle: 'Aerial view',
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void locateOnDriveOpen() {
@@ -12071,6 +12247,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: sheetColor,
       barrierColor: Colors.black.withValues(alpha: 0.3),
       shape: const RoundedRectangleBorder(
@@ -12108,323 +12285,341 @@ class _DrivingScreenState extends State<DrivingScreen> {
             );
 
             return SafeArea(
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    20,
-                    20,
-                    20,
-                    20 + MediaQuery.of(context).viewInsets.bottom,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Property Preview',
-                        style: TextStyle(
-                          color: titleColor,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (marketProperty != null) ...[
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'Target score',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            targetScoreBadge(
-                              marketProperty.targetScore,
-                              onTap: () =>
-                                  showTargetScoreBreakdown(marketProperty),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      parcelPreviewRow(
-                        'Address',
-                        parcel.displayAddress,
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Owner',
-                        parcel.ownerName ?? 'Not set',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Mailing',
-                        parcel.mailingAddress ?? 'Not set',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Out of state',
-                        parcel.outOfStateOwner ? 'Yes' : 'No',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Type',
-                        parcel.propertyType ?? 'Not set',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Year built',
-                        parcel.yearBuilt?.toString() ?? 'Not set',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Sq ft',
-                        formatDecimal(parcel.squareFeet),
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Lot',
-                        parcel.lotSizeDisplay,
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Assessed',
-                        formatMoney(parcel.assessedValue),
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Land value',
-                        formatMoney(parcel.landValue),
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Imp value',
-                        formatMoney(parcel.improvementValue),
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Baths',
-                        formatDecimal(parcel.bathrooms),
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Stories',
-                        formatDecimal(parcel.stories),
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Sale price',
-                        formatMoney(parcel.salePrice),
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Sale date',
-                        parcel.saleDate ?? 'Not set',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Deed type',
-                        parcel.deedType ?? 'Not set',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Document date',
-                        parcel.documentDate ?? 'Not set',
-                        dark: dark,
-                      ),
-                      parcelPreviewRow(
-                        'Reception no',
-                        parcel.receptionNo ?? 'Not set',
-                        dark: dark,
-                      ),
-                      Divider(
-                        height: 32,
-                        thickness: 1,
-                        color: subtleDividerColor,
-                      ),
-                      if (existingLead != null) ...[
-                        Row(
-                          children: [
-                            const Icon(Icons.info_outline, size: 20),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Already a lead (${normalizeLeadStage(existingLead.status)}).',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+              child: Stack(
+                children: [
+                  SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      76,
+                      20,
+                      20 + MediaQuery.of(context).viewInsets.bottom,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (marketProperty != null) ...[
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'Target score',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
                               ),
-                            ),
-                            leadScoreBadge(existingLead.score, fontSize: 14),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 48,
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.pop(sheetContext);
-                              openLeadDetails(existingLead);
-                            },
-                            child: const Text('Open existing lead'),
+                              targetScoreBadge(
+                                marketProperty.targetScore,
+                                onTap: () =>
+                                    showTargetScoreBreakdown(marketProperty),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 12),
+                        ],
+                        parcelPreviewRow(
+                          'Address',
+                          parcel.displayAddress,
+                          dark: dark,
                         ),
-                      ] else ...[
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'What did you see?',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            const Text('Smart score  '),
-                            leadScoreBadge(smartScore, fontSize: 14),
-                          ],
+                        parcelPreviewRow(
+                          'Owner',
+                          parcel.ownerName ?? 'Not set',
+                          dark: dark,
                         ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          children: [
-                            FilterChip(
-                              label: const Text('Vacant'),
-                              selected: vacant,
-                              onSelected: (v) =>
-                                  setSheetState(() => vacant = v),
-                            ),
-                            FilterChip(
-                              label: const Text('Roof damage'),
-                              selected: roof,
-                              onSelected: (v) => setSheetState(() => roof = v),
-                            ),
-                            FilterChip(
-                              label: const Text('Trash in yard'),
-                              selected: trash,
-                              onSelected: (v) => setSheetState(() => trash = v),
-                            ),
-                            FilterChip(
-                              label: const Text('Broken windows'),
-                              selected: broken,
-                              onSelected: (v) =>
-                                  setSheetState(() => broken = v),
-                            ),
-                            FilterChip(
-                              label: const Text('Tall grass'),
-                              selected: grass,
-                              onSelected: (v) => setSheetState(() => grass = v),
-                            ),
-                          ],
+                        parcelPreviewRow(
+                          'Mailing',
+                          parcel.mailingAddress ?? 'Not set',
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Out of state',
+                          parcel.outOfStateOwner ? 'Yes' : 'No',
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Type',
+                          parcel.propertyType ?? 'Not set',
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Year built',
+                          parcel.yearBuilt?.toString() ?? 'Not set',
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Sq ft',
+                          formatDecimal(parcel.squareFeet),
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Lot',
+                          parcel.lotSizeDisplay,
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Assessed',
+                          formatMoney(parcel.assessedValue),
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Land value',
+                          formatMoney(parcel.landValue),
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Imp value',
+                          formatMoney(parcel.improvementValue),
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Baths',
+                          formatDecimal(parcel.bathrooms),
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Stories',
+                          formatDecimal(parcel.stories),
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Sale price',
+                          formatMoney(parcel.salePrice),
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Sale date',
+                          parcel.saleDate ?? 'Not set',
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Deed type',
+                          parcel.deedType ?? 'Not set',
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Document date',
+                          parcel.documentDate ?? 'Not set',
+                          dark: dark,
+                        ),
+                        parcelPreviewRow(
+                          'Reception no',
+                          parcel.receptionNo ?? 'Not set',
+                          dark: dark,
                         ),
                         Divider(
                           height: 32,
                           thickness: 1,
                           color: subtleDividerColor,
                         ),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 48,
-                          child: ElevatedButton(
+                        if (existingLead != null) ...[
+                          Row(
+                            children: [
+                              const Icon(Icons.info_outline, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Already a lead (${normalizeLeadStage(existingLead.status)}).',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              leadScoreBadge(existingLead.score, fontSize: 14),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.pop(sheetContext);
+                                openLeadDetails(existingLead);
+                              },
+                              child: const Text('Open existing lead'),
+                            ),
+                          ),
+                        ] else ...[
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'What did you see?',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const Text('Smart score  '),
+                              leadScoreBadge(smartScore, fontSize: 14),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              FilterChip(
+                                label: const Text('Vacant'),
+                                selected: vacant,
+                                onSelected: (v) =>
+                                    setSheetState(() => vacant = v),
+                              ),
+                              FilterChip(
+                                label: const Text('Roof damage'),
+                                selected: roof,
+                                onSelected: (v) =>
+                                    setSheetState(() => roof = v),
+                              ),
+                              FilterChip(
+                                label: const Text('Trash in yard'),
+                                selected: trash,
+                                onSelected: (v) =>
+                                    setSheetState(() => trash = v),
+                              ),
+                              FilterChip(
+                                label: const Text('Broken windows'),
+                                selected: broken,
+                                onSelected: (v) =>
+                                    setSheetState(() => broken = v),
+                              ),
+                              FilterChip(
+                                label: const Text('Tall grass'),
+                                selected: grass,
+                                onSelected: (v) =>
+                                    setSheetState(() => grass = v),
+                              ),
+                            ],
+                          ),
+                          Divider(
+                            height: 32,
+                            thickness: 1,
+                            color: subtleDividerColor,
+                          ),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: ElevatedButton(
+                              onPressed: isSaving
+                                  ? null
+                                  : () async {
+                                      setSheetState(() {
+                                        isSaving = true;
+                                      });
+
+                                      final scoreData = LeadScoreData(
+                                        brokenWindows: broken,
+                                        roofDamage: roof,
+                                        tallGrass: grass,
+                                        trashInYard: trash,
+                                        exteriorWear: false,
+                                        vacantAppearance: vacant,
+                                        score: smartScore,
+                                        scoreOverride: false,
+                                      );
+
+                                      try {
+                                        final pendingBefore =
+                                            await refreshPendingLeadsQueueCount();
+                                        await widget.onAddParcelLead(
+                                          parcel,
+                                          scoreData,
+                                          missionIdForPoint(parcel.centroid),
+                                        );
+                                        final pendingAfter =
+                                            await refreshPendingLeadsQueueCount();
+
+                                        await loadDrivingLeads();
+                                        final ledgerMissions = [
+                                          ...completedMissions,
+                                        ];
+                                        if (activeMission != null) {
+                                          ledgerMissions.insert(
+                                            0,
+                                            activeMission!,
+                                          );
+                                        }
+                                        await loadMissionLeadLedger(
+                                          ledgerMissions,
+                                        );
+
+                                        if (!mounted || !sheetContext.mounted) {
+                                          return;
+                                        }
+
+                                        Navigator.pop(sheetContext);
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              pendingAfter > pendingBefore
+                                                  ? 'Lead saved locally - will sync when connected.'
+                                                  : 'Parcel lead added.',
+                                            ),
+                                          ),
+                                        );
+                                      } catch (_) {
+                                        if (!mounted) return;
+
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Could not add parcel lead.',
+                                            ),
+                                          ),
+                                        );
+                                      } finally {
+                                        if (sheetContext.mounted) {
+                                          setSheetState(() {
+                                            isSaving = false;
+                                          });
+                                        }
+                                      }
+                                    },
+                              child: Text(isSaving ? 'Adding...' : 'Add Lead'),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      color: sheetColor,
+                      padding: const EdgeInsets.fromLTRB(20, 12, 8, 10),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Property Preview',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: titleColor,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Close',
+                            icon: Icon(Icons.close, color: titleColor),
                             onPressed: isSaving
                                 ? null
-                                : () async {
-                                    setSheetState(() {
-                                      isSaving = true;
-                                    });
-
-                                    final scoreData = LeadScoreData(
-                                      brokenWindows: broken,
-                                      roofDamage: roof,
-                                      tallGrass: grass,
-                                      trashInYard: trash,
-                                      exteriorWear: false,
-                                      vacantAppearance: vacant,
-                                      score: smartScore,
-                                      scoreOverride: false,
-                                    );
-
-                                    try {
-                                      final pendingBefore =
-                                          await refreshPendingLeadsQueueCount();
-                                      await widget.onAddParcelLead(
-                                        parcel,
-                                        scoreData,
-                                        missionIdForPoint(parcel.centroid),
-                                      );
-                                      final pendingAfter =
-                                          await refreshPendingLeadsQueueCount();
-
-                                      await loadDrivingLeads();
-                                      final ledgerMissions = [
-                                        ...completedMissions,
-                                      ];
-                                      if (activeMission != null) {
-                                        ledgerMissions.insert(
-                                          0,
-                                          activeMission!,
-                                        );
-                                      }
-                                      await loadMissionLeadLedger(
-                                        ledgerMissions,
-                                      );
-
-                                      if (!mounted || !sheetContext.mounted) {
-                                        return;
-                                      }
-
-                                      Navigator.pop(sheetContext);
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            pendingAfter > pendingBefore
-                                                ? 'Lead saved locally - will sync when connected.'
-                                                : 'Parcel lead added.',
-                                          ),
-                                        ),
-                                      );
-                                    } catch (_) {
-                                      if (!mounted) return;
-
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Could not add parcel lead.',
-                                          ),
-                                        ),
-                                      );
-                                    } finally {
-                                      if (sheetContext.mounted) {
-                                        setSheetState(() {
-                                          isSaving = false;
-                                        });
-                                      }
-                                    }
-                                  },
-                            child: Text(isSaving ? 'Adding...' : 'Add Lead'),
+                                : () => Navigator.pop(sheetContext),
                           ),
-                        ),
-                      ],
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: TextButton(
-                          onPressed: isSaving
-                              ? null
-                              : () => Navigator.pop(sheetContext),
-                          child: const Text('Close'),
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
+                ],
               ),
             );
           },
@@ -13356,12 +13551,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final findMeButtonBottom = activeMission == null
         ? (hasNoDriveAreas ? 24.0 : planPanelHeight + 16)
         : 86.0;
+    final mapStyleButtonTop = activeMission == null ? 72.0 : 126.0;
     final locationStatusTop = driveAreas.length > 1 && !isDrawAreaMode
         ? 112.0
         : 64.0;
     final activeCityLabel = MarketService.getActiveCity().isEmpty
         ? selectedCoverageCity
         : MarketService.getActiveCity();
+    final dark = Theme.of(context).brightness == Brightness.dark;
     const mapHeaderTextShadows = <Shadow>[
       Shadow(color: Colors.black54, blurRadius: 4),
     ];
@@ -13418,9 +13615,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                 ),
                 children: [
                   TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.example.market_coverage',
+                    urlTemplate: _currentTileUrl,
+                    subdomains: const ['a', 'b', 'c', 'd'],
+                    userAgentPackageName: 'com.marketcoverage.app',
                   ),
                   if (completedRouteSegments.isNotEmpty)
                     PolylineLayer(
@@ -14046,10 +14243,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             ),
                             children: [
                               TileLayer(
-                                urlTemplate:
-                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                userAgentPackageName:
-                                    'com.example.market_coverage',
+                                urlTemplate: _currentTileUrl,
+                                subdomains: const ['a', 'b', 'c', 'd'],
+                                userAgentPackageName: 'com.marketcoverage.app',
                               ),
                               if (completedRouteSegments.isNotEmpty)
                                 PolylineLayer(
@@ -15677,6 +15873,42 @@ class _DrivingScreenState extends State<DrivingScreen> {
               right: 12,
               child: SafeArea(child: Align(child: buildLocationStatusPill())),
             ),
+          if (!isDrawAreaMode)
+            Positioned(
+              top: mapStyleButtonTop,
+              right: 12,
+              child: SafeArea(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: openMapStylePicker,
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: dark
+                            ? const Color(0xCC000000)
+                            : const Color(0xCCFFFFFF),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x22000000),
+                            blurRadius: 10,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.layers_outlined,
+                        size: 20,
+                        color: dark ? Colors.white : const Color(0xFF111827),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           if (hasNoDriveAreas && !isDrawAreaMode)
             Positioned.fill(
               child: SafeArea(
@@ -16109,6 +16341,12 @@ class MissionResultsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = dark ? const Color(0xFF1C2333) : Colors.white;
+    final primaryTextColor = dark ? Colors.white : const Color(0xFF111827);
+    final secondaryTextColor = dark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF6B7280);
     final leadsPerMile = milesDriven == 0 ? 0.0 : leads.length / milesDriven;
     final completedAt = mission.completedAt?.toLocal();
     final opportunityPercent = mission.opportunityAtStart == 0
@@ -16137,9 +16375,10 @@ class MissionResultsSheet extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
+                        Text(
                           'Mission recap',
                           style: TextStyle(
+                            color: primaryTextColor,
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                           ),
@@ -16147,8 +16386,8 @@ class MissionResultsSheet extends StatelessWidget {
                         const SizedBox(height: 4),
                         Text(
                           areaName,
-                          style: const TextStyle(
-                            color: Color(0xFF6B7280),
+                          style: TextStyle(
+                            color: secondaryTextColor,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -16167,10 +16406,11 @@ class MissionResultsSheet extends StatelessWidget {
                 completedAt == null
                     ? 'Summary for this drive'
                     : 'Completed ${completedAt.month}/${completedAt.day}/${completedAt.year}',
-                style: const TextStyle(color: Color(0xFF6B7280)),
+                style: TextStyle(color: secondaryTextColor),
               ),
               const SizedBox(height: 18),
               Card(
+                color: cardColor,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -16250,6 +16490,7 @@ class MissionResultsSheet extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Card(
+                color: cardColor,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
@@ -16260,27 +16501,27 @@ class MissionResultsSheet extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: const Color(
                             0xFF111827,
-                          ).withValues(alpha: 0.08),
+                          ).withValues(alpha: dark ? 0.22 : 0.08),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Icon(Icons.bolt, color: Color(0xFF111827)),
+                        child: Icon(Icons.bolt, color: primaryTextColor),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               'Opportunity points captured',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: Color(0xFF111827),
+                                color: primaryTextColor,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               '${opportunityCaptured.toStringAsFixed(0)} pts (${opportunityPercent.clamp(0, 100).toStringAsFixed(0)}% of mission plan)',
-                              style: const TextStyle(color: Color(0xFF6B7280)),
+                              style: TextStyle(color: secondaryTextColor),
                             ),
                           ],
                         ),
@@ -16291,6 +16532,7 @@ class MissionResultsSheet extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Card(
+                color: cardColor,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
@@ -16315,9 +16557,9 @@ class MissionResultsSheet extends StatelessWidget {
                           areaRemainingEstimatedMinutes <= 0
                               ? 'This area is estimated complete.'
                               : 'Est. $sessionsRemaining more sessions at $sessionBudget min each to finish this area.',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            color: Color(0xFF111827),
+                            color: primaryTextColor,
                           ),
                         ),
                       ),
@@ -16327,6 +16569,7 @@ class MissionResultsSheet extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Card(
+                color: cardColor,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -16354,11 +16597,11 @@ class MissionResultsSheet extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
+                                Text(
                                   'Best next action',
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
-                                    color: Color(0xFF111827),
+                                    color: primaryTextColor,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
@@ -16369,8 +16612,8 @@ class MissionResultsSheet extends StatelessWidget {
                                     areaRemainingEstimatedMinutes:
                                         areaRemainingEstimatedMinutes,
                                   ),
-                                  style: const TextStyle(
-                                    color: Color(0xFF6B7280),
+                                  style: TextStyle(
+                                    color: secondaryTextColor,
                                     height: 1.3,
                                   ),
                                 ),
@@ -16411,6 +16654,7 @@ class MissionResultsSheet extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Card(
+                color: cardColor,
                 child: ExpansionTile(
                   tilePadding: const EdgeInsets.symmetric(horizontal: 16),
                   childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -16476,10 +16720,16 @@ class _MissionResultMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final primaryTextColor = dark ? Colors.white : const Color(0xFF111827);
+    final secondaryTextColor = dark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF6B7280);
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: color.withValues(alpha: dark ? 0.16 : 0.08),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -16489,13 +16739,17 @@ class _MissionResultMetric extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             value,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: primaryTextColor,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 2),
           Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFF6B7280),
+            style: TextStyle(
+              color: secondaryTextColor,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -18673,7 +18927,17 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     final offerData = currentOfferData();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Lead Details')),
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        title: const Text('Lead Details'),
+        actions: [
+          IconButton(
+            tooltip: 'Close',
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(20),

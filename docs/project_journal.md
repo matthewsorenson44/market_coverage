@@ -55,6 +55,10 @@ The app should feel dependable in the field before adding more automation:
 - Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
 - Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
+- Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Standard, Minimal, and Satellite.
+- Fix pushed, awaiting user confirmation: Property Preview should no longer overlap the iPhone status bar and should have a sticky top-right X close button.
+- Fix pushed, awaiting user confirmation: Lead Details should have a pinned top-right X close button.
+- Fix pushed, awaiting user confirmation: Mission recap dark-mode cards/text should be readable.
 - Fix pushed, awaiting user confirmation: Quick Capture red-screen crash when adding a lead from the orange lightning button while an area is selected.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
@@ -125,6 +129,12 @@ Bug status meanings:
 - Wired the existing `MaterialApp` to `AppTheme.lightTheme()`, `AppTheme.darkTheme()`, and `ThemeMode.system`.
 - Added `google_fonts` for Inter and JetBrains Mono typography.
 - Validation for design-system Step 1: `dart format lib/design_system/ lib/design_system.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Added Drive map style switching in `lib/main.dart`: Auto follows theme, Dark uses Carto Dark Matter, Standard uses Carto Voyager, Minimal uses Carto Light, and Satellite uses Esri World Imagery.
+- Added a small layers button on the Drive map to choose the map style and persist the choice in `SharedPreferences`.
+- Fixed Property Preview readability/overlap by adding a solid sticky header with a top-right X close button and scrollable content underneath.
+- Changed Lead Details to use a pinned top-right X close button.
+- Improved mission recap dark-mode contrast for cards, metric text, and summary rows.
+- Validation for map style/UI fix: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 
 ### 2026-06-24
 
