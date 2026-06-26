@@ -132,6 +132,7 @@ Bug status meanings:
 - Updated the design-system barrel export and debug gallery to preview the six domain components with realistic Lead, Mission, and ParcelProperty sample data.
 - Preserved current app screens and did not modify `lib/main.dart`.
 - Validation for domain components: `dart format lib/design_system/`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Added a temporary Settings-tab debug button that opens the Design System Gallery so the new components can be tested on device.
 
 ### 2026-06-25
 

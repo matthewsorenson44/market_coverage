@@ -3218,6 +3218,21 @@ class _SettingsTab extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const DesignSystemGallery(),
+                    ),
+                  );
+                },
+                child: const Text('Open Design Gallery'),
+              ),
+            ),
+            const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.account_circle_outlined),
               title: Text(accountLabel),
