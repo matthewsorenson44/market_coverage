@@ -3074,14 +3074,14 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onCreateNewArea: openDrawAreaFlow,
         onRefresh: () => setState(() {}),
       ),
-      const _BusinessTab(),
       const _SettingsTab(),
     ];
+    final currentTabIndex = selectedTabIndex.clamp(0, tabs.length - 1);
 
     return Scaffold(
-      body: IndexedStack(index: selectedTabIndex, children: tabs),
+      body: IndexedStack(index: currentTabIndex, children: tabs),
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: selectedTabIndex,
+        currentIndex: currentTabIndex,
         type: BottomNavigationBarType.fixed,
         onTap: selectTab,
         items: const [
@@ -3091,10 +3091,6 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
           ),
           BottomNavigationBarItem(icon: Icon(Icons.list_alt), label: 'Leads'),
           BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Areas'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
-            label: 'Business',
-          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings_outlined),
             activeIcon: Icon(Icons.settings),
@@ -3115,6 +3111,8 @@ class _SettingsTab extends StatelessWidget {
     final secondaryColor = dark
         ? const Color(0xFF94A3B8)
         : const Color(0xFF64748B);
+    final user = supabase.auth.currentUser;
+    final accountLabel = user?.email ?? user?.phone ?? 'Signed in';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -3122,6 +3120,18 @@ class _SettingsTab extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
+            ListTile(
+              leading: const Icon(Icons.account_circle_outlined),
+              title: Text(accountLabel),
+              subtitle: const Text('Member account'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Log out'),
+              subtitle: const Text('Return to the member login screen'),
+              onTap: () => supabase.auth.signOut(),
+            ),
+            const Divider(height: 1),
             ValueListenableBuilder<ThemeMode>(
               valueListenable: themeModeNotifier,
               builder: (context, themeMode, _) {
@@ -4204,6 +4214,9 @@ class _AreaListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final mutedColor = dark ? const Color(0xFFCBD5E1) : const Color(0xFF6B7280);
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -4240,10 +4253,7 @@ class _AreaListCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        area.city,
-                        style: const TextStyle(color: Color(0xFF6B7280)),
-                      ),
+                      Text(area.city, style: TextStyle(color: mutedColor)),
                     ],
                   ),
                 ),
@@ -4268,6 +4278,7 @@ class _AreaListCard extends StatelessWidget {
               milesCovered: stats.coveredMiles,
               totalMiles: stats.totalMiles,
               remainingStreets: stats.streetsRemaining,
+              dark: dark,
             ),
             const SizedBox(height: 10),
             Text(
@@ -4277,7 +4288,7 @@ class _AreaListCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               'Last mission: $lastMissionLabel',
-              style: const TextStyle(color: Color(0xFF6B7280)),
+              style: TextStyle(color: mutedColor),
             ),
             const SizedBox(height: 12),
             Wrap(
@@ -4303,7 +4314,7 @@ class _AreaListCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      const _MotivatedSellersDescription(),
+                      _MotivatedSellersDescription(dark: dark),
                     ],
                   ),
                 ),
@@ -5896,40 +5907,6 @@ String _targetSignalSummary(MarketProperty property) {
   return rows.join(' - ');
 }
 
-class _BusinessTab extends StatelessWidget {
-  const _BusinessTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final secondaryColor = dark
-        ? const Color(0xFF94A3B8)
-        : const Color(0xFF64748B);
-
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.bar_chart_rounded, size: 48, color: secondaryColor),
-              const SizedBox(height: 16),
-              Text(
-                'Business dashboard coming soon',
-                style: TextStyle(
-                  color: secondaryColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class DashboardScreen extends StatelessWidget {
   final List<Lead> leads;
   final bool isLoading;
@@ -6819,20 +6796,23 @@ class _DrivingScreenState extends State<DrivingScreen>
     final secondaryColor = dark
         ? const Color(0xFF94A3B8)
         : const Color(0xFF64748B);
+    final sheetColor = dark ? const Color(0xFF111827) : Colors.white;
 
     Widget option({
       required String style,
-      required String marker,
+      required IconData icon,
       required String label,
       required String subtitle,
     }) {
       final selected = selectedStyle == style;
 
       return ListTile(
-        leading: Text(marker, style: const TextStyle(fontSize: 20)),
+        leading: Icon(icon, color: optionColor),
         title: Text(label, style: TextStyle(color: optionColor)),
         subtitle: Text(subtitle, style: TextStyle(color: secondaryColor)),
-        trailing: selected ? const Icon(Icons.check) : null,
+        trailing: selected
+            ? Icon(Icons.check, color: dark ? Colors.white : Colors.black)
+            : null,
         onTap: () async {
           await setMapStylePreference(style);
           if (!mounted || !context.mounted) return;
@@ -6846,41 +6826,68 @@ class _DrivingScreenState extends State<DrivingScreen>
       context: context,
       isScrollControlled: false,
       barrierColor: Colors.black.withValues(alpha: 0.3),
+      backgroundColor: sheetColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
       builder: (sheetContext) {
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.fromLTRB(8, 10, 8, 12),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Container(
+                  width: 42,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: secondaryColor.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    child: Text(
+                      'Map style',
+                      style: TextStyle(
+                        color: optionColor,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
                 option(
                   style: 'auto',
-                  marker: 'A',
+                  icon: Icons.auto_mode,
                   label: 'Auto (follows theme)',
                   subtitle:
                       'Dark mode uses night tiles, light mode uses standard.',
                 ),
                 option(
                   style: 'dark',
-                  marker: '🌑',
+                  icon: Icons.dark_mode_outlined,
                   label: 'Dark',
                   subtitle: 'Best for night driving',
                 ),
                 option(
                   style: 'standard',
-                  marker: '🗺',
+                  icon: Icons.map_outlined,
                   label: 'Standard',
                   subtitle: 'Detailed streets',
                 ),
                 option(
                   style: 'minimal',
-                  marker: '🌿',
+                  icon: Icons.eco_outlined,
                   label: 'Minimal',
                   subtitle: 'Clean, light',
                 ),
                 option(
                   style: 'satellite',
-                  marker: '🛰',
+                  icon: Icons.satellite_alt_outlined,
                   label: 'Satellite',
                   subtitle: 'Aerial view',
                 ),
@@ -10844,33 +10851,50 @@ class _DrivingScreenState extends State<DrivingScreen>
   }
 
   Widget buildFindMeFab() {
-    return FloatingActionButton.extended(
-      heroTag: 'drive-center-me',
-      backgroundColor: followMyLocation
-          ? const Color(0xFF2563EB)
-          : Colors.white,
-      foregroundColor: followMyLocation
-          ? Colors.white
-          : const Color(0xFF111827),
-      tooltip: followMyLocation ? 'Following Your Location' : 'Center On Me',
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isFindingLocation
+        ? (dark ? const Color(0xFF334155) : const Color(0xFFE5E7EB))
+        : followMyLocation
+        ? const Color(0xFF2563EB)
+        : (dark ? const Color(0xE6111827) : Colors.white);
+    final foregroundColor = isFindingLocation
+        ? (dark ? Colors.white : const Color(0xFF374151))
+        : followMyLocation
+        ? Colors.white
+        : (dark ? Colors.white : const Color(0xFF111827));
+    final label = isFindingLocation
+        ? 'Finding'
+        : followMyLocation
+        ? 'Following'
+        : 'Find Me';
+
+    return ElevatedButton.icon(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: backgroundColor,
+        foregroundColor: foregroundColor,
+        elevation: 8,
+        shadowColor: Colors.black.withValues(alpha: 0.35),
+        minimumSize: const Size(0, 42),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        visualDensity: VisualDensity.compact,
+        shape: const StadiumBorder(),
+        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+      ),
       onPressed: isFindingLocation ? null : () => unawaited(findMyLocation()),
       icon: isFindingLocation
           ? SizedBox(
-              width: 18,
-              height: 18,
+              width: 16,
+              height: 16,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: followMyLocation ? Colors.white : null,
+                color: foregroundColor,
               ),
             )
-          : Icon(followMyLocation ? Icons.gps_fixed : Icons.my_location),
-      label: Text(
-        isFindingLocation
-            ? 'Finding'
-            : followMyLocation
-            ? 'Following'
-            : 'Find Me',
-      ),
+          : Icon(
+              followMyLocation ? Icons.gps_fixed : Icons.my_location,
+              size: 20,
+            ),
+      label: Text(label),
     );
   }
 
@@ -12283,6 +12307,90 @@ class _DrivingScreenState extends State<DrivingScreen>
               lastSaleDate: parcel.saleDate,
               assessedValue: parcel.assessedValue,
             );
+            final propertyInfoRows = <Widget>[
+              parcelPreviewRow('Address', parcel.displayAddress, dark: dark),
+              parcelPreviewRow(
+                'Owner',
+                parcel.ownerName ?? 'Not set',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Mailing',
+                parcel.mailingAddress ?? 'Not set',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Out of state',
+                parcel.outOfStateOwner ? 'Yes' : 'No',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Type',
+                parcel.propertyType ?? 'Not set',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Year built',
+                parcel.yearBuilt?.toString() ?? 'Not set',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Sq ft',
+                formatDecimal(parcel.squareFeet),
+                dark: dark,
+              ),
+              parcelPreviewRow('Lot', parcel.lotSizeDisplay, dark: dark),
+              parcelPreviewRow(
+                'Assessed',
+                formatMoney(parcel.assessedValue),
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Land value',
+                formatMoney(parcel.landValue),
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Imp value',
+                formatMoney(parcel.improvementValue),
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Baths',
+                formatDecimal(parcel.bathrooms),
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Stories',
+                formatDecimal(parcel.stories),
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Sale price',
+                formatMoney(parcel.salePrice),
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Sale date',
+                parcel.saleDate ?? 'Not set',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Deed type',
+                parcel.deedType ?? 'Not set',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Document date',
+                parcel.documentDate ?? 'Not set',
+                dark: dark,
+              ),
+              parcelPreviewRow(
+                'Reception no',
+                parcel.receptionNo ?? 'Not set',
+                dark: dark,
+              ),
+            ];
 
             return SafeArea(
               child: Stack(
@@ -12298,119 +12406,6 @@ class _DrivingScreenState extends State<DrivingScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (marketProperty != null) ...[
-                          Row(
-                            children: [
-                              const Expanded(
-                                child: Text(
-                                  'Target score',
-                                  style: TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                              targetScoreBadge(
-                                marketProperty.targetScore,
-                                onTap: () =>
-                                    showTargetScoreBreakdown(marketProperty),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        parcelPreviewRow(
-                          'Address',
-                          parcel.displayAddress,
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Owner',
-                          parcel.ownerName ?? 'Not set',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Mailing',
-                          parcel.mailingAddress ?? 'Not set',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Out of state',
-                          parcel.outOfStateOwner ? 'Yes' : 'No',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Type',
-                          parcel.propertyType ?? 'Not set',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Year built',
-                          parcel.yearBuilt?.toString() ?? 'Not set',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Sq ft',
-                          formatDecimal(parcel.squareFeet),
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Lot',
-                          parcel.lotSizeDisplay,
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Assessed',
-                          formatMoney(parcel.assessedValue),
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Land value',
-                          formatMoney(parcel.landValue),
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Imp value',
-                          formatMoney(parcel.improvementValue),
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Baths',
-                          formatDecimal(parcel.bathrooms),
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Stories',
-                          formatDecimal(parcel.stories),
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Sale price',
-                          formatMoney(parcel.salePrice),
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Sale date',
-                          parcel.saleDate ?? 'Not set',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Deed type',
-                          parcel.deedType ?? 'Not set',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Document date',
-                          parcel.documentDate ?? 'Not set',
-                          dark: dark,
-                        ),
-                        parcelPreviewRow(
-                          'Reception no',
-                          parcel.receptionNo ?? 'Not set',
-                          dark: dark,
-                        ),
-                        Divider(
-                          height: 32,
-                          thickness: 1,
-                          color: subtleDividerColor,
-                        ),
                         if (existingLead != null) ...[
                           Row(
                             children: [
@@ -12584,6 +12579,42 @@ class _DrivingScreenState extends State<DrivingScreen>
                             ),
                           ),
                         ],
+                        Divider(
+                          height: 32,
+                          thickness: 1,
+                          color: subtleDividerColor,
+                        ),
+                        Text(
+                          'Property information',
+                          style: TextStyle(
+                            color: titleColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        if (marketProperty != null) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Target score',
+                                  style: TextStyle(
+                                    color: titleColor,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              targetScoreBadge(
+                                marketProperty.targetScore,
+                                onTap: () =>
+                                    showTargetScoreBreakdown(marketProperty),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        ...propertyInfoRows,
                       ],
                     ),
                   ),
@@ -13552,9 +13583,6 @@ class _DrivingScreenState extends State<DrivingScreen>
         ? (hasNoDriveAreas ? 24.0 : planPanelHeight + 16)
         : 86.0;
     final mapStyleButtonTop = activeMission == null ? 72.0 : 126.0;
-    final locationStatusTop = driveAreas.length > 1 && !isDrawAreaMode
-        ? 112.0
-        : 64.0;
     final activeCityLabel = MarketService.getActiveCity().isEmpty
         ? selectedCoverageCity
         : MarketService.getActiveCity();
@@ -15868,13 +15896,6 @@ class _DrivingScreenState extends State<DrivingScreen>
             ),
           if (!isDrawAreaMode)
             Positioned(
-              top: locationStatusTop,
-              left: 12,
-              right: 12,
-              child: SafeArea(child: Align(child: buildLocationStatusPill())),
-            ),
-          if (!isDrawAreaMode)
-            Positioned(
               top: mapStyleButtonTop,
               right: 12,
               child: SafeArea(
@@ -15888,9 +15909,14 @@ class _DrivingScreenState extends State<DrivingScreen>
                       height: 40,
                       decoration: BoxDecoration(
                         color: dark
-                            ? const Color(0xCC000000)
-                            : const Color(0xCCFFFFFF),
+                            ? const Color(0xF2000000)
+                            : const Color(0xF2FFFFFF),
                         borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: dark
+                              ? const Color(0x33FFFFFF)
+                              : const Color(0x22000000),
+                        ),
                         boxShadow: const [
                           BoxShadow(
                             color: Color(0x22000000),
@@ -16053,8 +16079,12 @@ class _DrivingScreenState extends State<DrivingScreen>
                   ),
                   decoration: BoxDecoration(
                     color: isMissionOverTimeBudget
-                        ? const Color(0xFFFFF7ED)
-                        : Colors.white.withValues(alpha: 0.92),
+                        ? (dark
+                              ? const Color(0xFF451A03)
+                              : const Color(0xFFFFF7ED))
+                        : (dark
+                              ? const Color(0xE6111827)
+                              : Colors.white.withValues(alpha: 0.95)),
                     borderRadius: BorderRadius.circular(999),
                     boxShadow: const [
                       BoxShadow(
@@ -16068,8 +16098,10 @@ class _DrivingScreenState extends State<DrivingScreen>
                     '${missionPercent.toStringAsFixed(0)}% - $missionEstimatedMinutesRemaining min left',
                     style: TextStyle(
                       color: isMissionOverTimeBudget
-                          ? const Color(0xFFF59E0B)
-                          : const Color(0xFF111827),
+                          ? (dark
+                                ? const Color(0xFFFBBF24)
+                                : const Color(0xFFF59E0B))
+                          : (dark ? Colors.white : const Color(0xFF111827)),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -16100,7 +16132,9 @@ class _DrivingScreenState extends State<DrivingScreen>
                     height: 58,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.92),
+                      color: dark
+                          ? const Color(0xE6111827)
+                          : Colors.white.withValues(alpha: 0.95),
                       borderRadius: BorderRadius.circular(999),
                       boxShadow: const [
                         BoxShadow(
@@ -16115,7 +16149,10 @@ class _DrivingScreenState extends State<DrivingScreen>
                       'Next: $nextStreetName - ${nextMissionStreet == null ? 0 : calibratedStreetMinutes(nextMissionStreet.street).ceil()} min',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: dark ? Colors.white : const Color(0xFF111827),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),

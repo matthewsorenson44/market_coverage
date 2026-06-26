@@ -60,6 +60,13 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Lead Details should have a pinned top-right X close button.
 - Fix pushed, awaiting user confirmation: Mission recap dark-mode cards/text should be readable.
 - Fix pushed, awaiting user confirmation: Quick Capture red-screen crash when adding a lead from the orange lightning button while an area is selected.
+- Fix pushed, awaiting user confirmation: Drive no longer shows the hard-to-read location status strip over the map.
+- Fix pushed, awaiting user confirmation: The Find Me/Following button is smaller and color-coded by state.
+- Fix pushed, awaiting user confirmation: The mission next-road pill and progress pill should be readable in dark mode.
+- Fix pushed, awaiting user confirmation: Map style picker should open as a readable solid bottom sheet.
+- Fix pushed, awaiting user confirmation: Business tab has been removed from bottom navigation, and account/log out controls are in Settings.
+- Fix pushed, awaiting user confirmation: Areas list cards should have readable stats/text in dark mode.
+- Fix pushed, awaiting user confirmation: Property Preview now puts "What did you see?" and Add Lead above the property information.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -135,6 +142,10 @@ Bug status meanings:
 - Changed Lead Details to use a pinned top-right X close button.
 - Improved mission recap dark-mode contrast for cards, metric text, and summary rows.
 - Validation for map style/UI fix: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Removed the unreadable Drive location status strip, made the Find Me/Following control smaller and state-colored, strengthened the map layers picker contrast, and fixed dark-mode readability for mission overlay pills.
+- Removed the placeholder Business tab from bottom navigation and added account/log out controls to Settings.
+- Improved Areas card text contrast in dark mode.
+- Reordered Property Preview so lead action controls appear before property details.
 
 ### 2026-06-24
 
