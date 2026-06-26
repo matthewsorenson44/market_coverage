@@ -74,12 +74,15 @@ class MissionCardData {
     _ => 'Unknown',
   };
 
-  Color get statusColor => switch (status) {
+  Color get statusColor => statusColorFor(isDark: true);
+
+  Color statusColorFor({required bool isDark}) => switch (status) {
     'active' => AppColors.primary,
     'paused' => AppColors.warning,
     'completed' => AppColors.success,
-    'scheduled' => AppColors.textSecondaryDark,
-    _ => AppColors.textTertiaryDark,
+    'scheduled' =>
+      isDark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight,
+    _ => isDark ? AppColors.textTertiaryDark : AppColors.textTertiaryLight,
   };
 
   static DateTime? _parseDate(dynamic value) {
@@ -125,7 +128,7 @@ class MissionCard extends StatelessWidget {
               AppChip(
                 label: mission.statusLabel,
                 variant: AppChipVariant.status,
-                selectedColor: mission.statusColor,
+                selectedColor: mission.statusColorFor(isDark: dark),
               ),
             ],
           ),
@@ -240,7 +243,10 @@ class _MissionStat extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(value, style: AppTypography.monoMedium(color: valueColor)),
+        Text(
+          value,
+          style: AppTypography.monoMedium(color: valueColor, dark: dark),
+        ),
         const SizedBox(height: AppSpacing.xs),
         Text(
           label,
