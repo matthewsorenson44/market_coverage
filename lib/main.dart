@@ -31,6 +31,29 @@ export 'src/geo.dart';
 export 'src/lead_export.dart';
 export 'src/scoring.dart';
 
+const String themeModePrefsKey = 'theme_mode';
+
+final themeModeNotifier = ThemeModeNotifier();
+
+class ThemeModeNotifier extends ValueNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(ThemeMode.dark);
+
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    value = switch (prefs.getString(themeModePrefsKey)) {
+      'light' => ThemeMode.light,
+      'system' => ThemeMode.system,
+      _ => ThemeMode.dark,
+    };
+  }
+
+  Future<void> setMode(ThemeMode mode) async {
+    value = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(themeModePrefsKey, mode.name);
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -42,6 +65,7 @@ Future<void> main() async {
 
   await FieldTestLogger.load();
   unawaited(FieldTestLogger.log('app_start'));
+  await themeModeNotifier.load();
 
   runApp(const MarketCoverageApp());
 }
@@ -2650,29 +2674,34 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Market Coverage',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme(),
-      darkTheme: AppTheme.darkTheme(),
-      themeMode: ThemeMode.system,
-      home: AuthGate(
-        signedInBuilder: (context) => MarketCoverageRootScreen(
-          leads: leads,
-          isLoading: isLoading,
-          activeAccountId: activeAccountId,
-          accountBootstrapError: accountBootstrapError,
-          onAddLead: addLead,
-          onAddParcelLead: addParcelLead,
-          onUpdateLeadStatus: updateLeadStatus,
-          onUpdateLeadSource: updateLeadSource,
-          onUpdateLeadScoreData: updateLeadScoreData,
-          onUpdateLeadParcelData: updateLeadParcelData,
-          onUpdateLeadReminderData: updateLeadReminderData,
-          onUpdateLeadOfferData: updateLeadOfferData,
-          onRefreshLeads: loadLeads,
-        ),
-      ),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (context, themeMode, _) {
+        return MaterialApp(
+          title: 'Market Coverage',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme(),
+          darkTheme: AppTheme.darkTheme(),
+          themeMode: themeMode,
+          home: AuthGate(
+            signedInBuilder: (context) => MarketCoverageRootScreen(
+              leads: leads,
+              isLoading: isLoading,
+              activeAccountId: activeAccountId,
+              accountBootstrapError: accountBootstrapError,
+              onAddLead: addLead,
+              onAddParcelLead: addParcelLead,
+              onUpdateLeadStatus: updateLeadStatus,
+              onUpdateLeadSource: updateLeadSource,
+              onUpdateLeadScoreData: updateLeadScoreData,
+              onUpdateLeadParcelData: updateLeadParcelData,
+              onUpdateLeadReminderData: updateLeadReminderData,
+              onUpdateLeadOfferData: updateLeadOfferData,
+              onRefreshLeads: loadLeads,
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -5874,16 +5903,42 @@ class _BusinessTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
+    return Scaffold(
+      body: SafeArea(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.bar_chart, size: 64, color: Color(0xFF6B7280)),
-            SizedBox(height: 16),
-            Text(
-              'Business dashboard coming soon',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ValueListenableBuilder<ThemeMode>(
+              valueListenable: themeModeNotifier,
+              builder: (context, themeMode, _) {
+                final isDark = themeMode == ThemeMode.dark;
+
+                return SwitchListTile(
+                  secondary: Icon(isDark ? Icons.dark_mode : Icons.light_mode),
+                  title: const Text('Dark Mode'),
+                  value: isDark,
+                  onChanged: (value) => themeModeNotifier.setMode(
+                    value ? ThemeMode.dark : ThemeMode.light,
+                  ),
+                );
+              },
+            ),
+            const Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.bar_chart, size: 64, color: Color(0xFF6B7280)),
+                    SizedBox(height: 16),
+                    Text(
+                      'Business dashboard coming soon',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
