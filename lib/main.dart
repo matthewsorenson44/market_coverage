@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -3065,7 +3066,7 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onRefresh: () => setState(() {}),
       ),
       const _BusinessTab(),
-      _AccountTab(activeAccountId: accountId),
+      const _SettingsTab(),
     ];
 
     return Scaffold(
@@ -3086,8 +3087,9 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
             label: 'Business',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.account_circle),
-            label: 'Account',
+            icon: Icon(Icons.settings_outlined),
+            activeIcon: Icon(Icons.settings),
+            label: 'Settings',
           ),
         ],
       ),
@@ -3095,68 +3097,55 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
   }
 }
 
-class _AccountTab extends StatelessWidget {
-  final String activeAccountId;
-
-  const _AccountTab({required this.activeAccountId});
-
-  Future<void> signOut(BuildContext context) async {
-    FocusManager.instance.primaryFocus?.unfocus();
-    await supabase.auth.signOut();
-  }
+class _SettingsTab extends StatelessWidget {
+  const _SettingsTab();
 
   @override
   Widget build(BuildContext context) {
-    final user = supabase.auth.currentUser;
-    final email = user?.email ?? 'Signed in';
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final secondaryColor = dark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Account')),
+      appBar: AppBar(title: const Text('Settings')),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(20),
+          padding: EdgeInsets.zero,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Current Session',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(email, style: const TextStyle(fontSize: 16)),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Account ID: $activeAccountId',
-                      style: const TextStyle(color: Color(0xFF6B7280)),
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        icon: const Icon(Icons.logout),
-                        label: const Text('Sign Out / Switch Account'),
-                        onPressed: () => signOut(context),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            ValueListenableBuilder<ThemeMode>(
+              valueListenable: themeModeNotifier,
+              builder: (context, themeMode, _) {
+                final isDark = themeMode == ThemeMode.dark;
+
+                return SwitchListTile(
+                  secondary: const Icon(Icons.dark_mode_outlined),
+                  title: const Text('Dark Mode'),
+                  subtitle: const Text('Switch between dark and light theme'),
+                  value: isDark,
+                  onChanged: (value) => themeModeNotifier.setMode(
+                    value ? ThemeMode.dark : ThemeMode.light,
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 12),
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(18),
-                child: Text(
-                  'After signing out, use Member Login to sign into another account, or tap "Need an account? Sign up" to create a test account.',
-                  style: TextStyle(fontSize: 16),
-                ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'App Version',
+                    style: TextStyle(
+                      color: secondaryColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text('1.0.0'),
+                ],
               ),
             ),
           ],
@@ -5903,44 +5892,29 @@ class _BusinessTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final secondaryColor = dark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
+
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            ValueListenableBuilder<ThemeMode>(
-              valueListenable: themeModeNotifier,
-              builder: (context, themeMode, _) {
-                final isDark = themeMode == ThemeMode.dark;
-
-                return SwitchListTile(
-                  secondary: Icon(isDark ? Icons.dark_mode : Icons.light_mode),
-                  title: const Text('Dark Mode'),
-                  value: isDark,
-                  onChanged: (value) => themeModeNotifier.setMode(
-                    value ? ThemeMode.dark : ThemeMode.light,
-                  ),
-                );
-              },
-            ),
-            const Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.bar_chart, size: 64, color: Color(0xFF6B7280)),
-                    SizedBox(height: 16),
-                    Text(
-                      'Business dashboard coming soon',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.bar_chart_rounded, size: 48, color: secondaryColor),
+              const SizedBox(height: 16),
+              Text(
+                'Business dashboard coming soon',
+                style: TextStyle(
+                  color: secondaryColor,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -8468,22 +8442,66 @@ class _DrivingScreenState extends State<DrivingScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => MissionResultsSheet(
-        mission: mission,
-        areaName: areaName,
-        leads: leads,
-        streetsCovered: streetsCovered,
-        opportunityCaptured: opportunityCaptured,
-        milesDriven: milesDriven,
-        actualMinutes: actualMinutes,
-        areaRemainingEstimatedMinutes: areaRemainingEstimatedMinutes,
-        onUpdateLeadStatus: widget.onUpdateLeadStatus,
-        onUpdateLeadSource: widget.onUpdateLeadSource,
-        onUpdateLeadScoreData: widget.onUpdateLeadScoreData,
-        onUpdateLeadParcelData: widget.onUpdateLeadParcelData,
-        onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
-        onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (context) => driveFrostedBottomSheet(
+        context,
+        child: MissionResultsSheet(
+          mission: mission,
+          areaName: areaName,
+          leads: leads,
+          streetsCovered: streetsCovered,
+          opportunityCaptured: opportunityCaptured,
+          milesDriven: milesDriven,
+          actualMinutes: actualMinutes,
+          areaRemainingEstimatedMinutes: areaRemainingEstimatedMinutes,
+          onUpdateLeadStatus: widget.onUpdateLeadStatus,
+          onUpdateLeadSource: widget.onUpdateLeadSource,
+          onUpdateLeadScoreData: widget.onUpdateLeadScoreData,
+          onUpdateLeadParcelData: widget.onUpdateLeadParcelData,
+          onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
+          onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
+        ),
+      ),
+    );
+  }
+
+  Widget driveFrostedBottomSheet(
+    BuildContext context, {
+    required Widget child,
+  }) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: ColoredBox(
+          color: dark ? const Color(0xE6121827) : const Color(0xF0FFFFFF),
+          child: Stack(
+            children: [
+              Padding(padding: const EdgeInsets.only(top: 18), child: child),
+              Positioned(
+                top: 8,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: dark
+                          ? const Color(0x33FFFFFF)
+                          : const Color(0x33000000),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -8773,516 +8791,529 @@ class _DrivingScreenState extends State<DrivingScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          if (!fetchStarted) {
-            fetchStarted = true;
-            Future<void>(() async {
-              ParcelProperty? foundParcel;
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (sheetContext) => driveFrostedBottomSheet(
+        sheetContext,
+        child: StatefulBuilder(
+          builder: (context, setSheetState) {
+            if (!fetchStarted) {
+              fetchStarted = true;
+              Future<void>(() async {
+                ParcelProperty? foundParcel;
 
-              try {
-                foundParcel = await fetchParcelNearPoint(
-                  lookupPoint,
-                ).timeout(const Duration(seconds: 5));
-              } catch (_) {
-                foundParcel = null;
-              }
+                try {
+                  foundParcel = await fetchParcelNearPoint(
+                    lookupPoint,
+                  ).timeout(const Duration(seconds: 5));
+                } catch (_) {
+                  foundParcel = null;
+                }
 
-              if (!mounted || !sheetContext.mounted || isClosing) return;
+                if (!mounted || !sheetContext.mounted || isClosing) return;
 
-              if (foundParcel == null) {
-                unawaited(FieldTestLogger.log('qc_parcel_failed'));
-              } else {
-                unawaited(
-                  FieldTestLogger.log(
-                    'qc_parcel_found',
-                    detail: foundParcel.displayAddress,
-                  ),
-                );
-              }
+                if (foundParcel == null) {
+                  unawaited(FieldTestLogger.log('qc_parcel_failed'));
+                } else {
+                  unawaited(
+                    FieldTestLogger.log(
+                      'qc_parcel_found',
+                      detail: foundParcel.displayAddress,
+                    ),
+                  );
+                }
 
-              setSheetState(() {
-                quickParcel = foundParcel;
-                existingLead = foundParcel == null
-                    ? null
-                    : leadForParcel(foundParcel);
-                parcelLoadFailed = foundParcel == null;
-                isLoading = false;
+                setSheetState(() {
+                  quickParcel = foundParcel;
+                  existingLead = foundParcel == null
+                      ? null
+                      : leadForParcel(foundParcel);
+                  parcelLoadFailed = foundParcel == null;
+                  isLoading = false;
+                });
               });
-            });
-          }
-
-          final scoreData = currentScoreData();
-          final gpsWarningText = !usedGpsForQuickCapture
-              ? 'No GPS - using map center. Verify address.'
-              : quickCaptureAccuracyMeters != null &&
-                    quickCaptureAccuracyMeters > 30 &&
-                    quickCaptureAccuracyMeters <= 80
-              ? 'Weak GPS - nearby property may be off by a house or two. Confirm address.'
-              : null;
-          final gpsWarningColor = !usedGpsForQuickCapture
-              ? const Color(0xFFB91C1C)
-              : const Color(0xFFB45309);
-
-          Future<void> saveQuickCapture({required bool openPhotos}) async {
-            final parcel = quickParcel;
-            if (parcel == null || isSaving || isClosing) return;
-
-            FocusScope.of(sheetContext).unfocus();
-            noteFocusNode.unfocus();
-            final noteText = noteController.text.trim();
-
-            final proceed = await confirmQuickCaptureDuplicate(
-              parcel: parcel,
-              sheetContext: sheetContext,
-            );
-            if (!proceed || !mounted || !sheetContext.mounted || isClosing) {
-              return;
             }
 
-            setSheetState(() {
-              isSaving = true;
-            });
+            final scoreData = currentScoreData();
+            final gpsWarningText = !usedGpsForQuickCapture
+                ? 'No GPS - using map center. Verify address.'
+                : quickCaptureAccuracyMeters != null &&
+                      quickCaptureAccuracyMeters > 30 &&
+                      quickCaptureAccuracyMeters <= 80
+                ? 'Weak GPS - nearby property may be off by a house or two. Confirm address.'
+                : null;
+            final gpsWarningColor = !usedGpsForQuickCapture
+                ? const Color(0xFFB91C1C)
+                : const Color(0xFFB45309);
 
-            final condition = quickCaptureCondition(
-              roofDamage: roofDamage,
-              brokenWindows: brokenWindows,
-              trashInYard: trashInYard,
-              vacantAppearance: vacantAppearance,
-              exteriorWear: exteriorWear,
-              tallGrass: tallGrass,
-            );
+            Future<void> saveQuickCapture({required bool openPhotos}) async {
+              final parcel = quickParcel;
+              if (parcel == null || isSaving || isClosing) return;
 
-            try {
-              unawaited(
-                FieldTestLogger.log(
-                  'qc_save_attempt',
-                  detail: parcel.displayAddress,
-                ),
-              );
-              final saveResult = await saveQuickCaptureParcelLead(
-                parcel: parcel,
-                scoreData: currentScoreData(),
-                condition: condition,
-                notes: noteText,
-              );
-              final savedLead = saveResult.lead;
-              unawaited(
-                FieldTestLogger.log(
-                  saveResult.queuedLocally
-                      ? 'qc_save_queued'
-                      : 'qc_save_success',
-                ),
-              );
-
-              if (isClosing || !mounted || !sheetContext.mounted) return;
-
-              isClosing = true;
               FocusScope.of(sheetContext).unfocus();
               noteFocusNode.unfocus();
-              Navigator.pop(sheetContext);
-              if (openPhotos && savedLead != null) {
-                openLeadDetails(savedLead);
+              final noteText = noteController.text.trim();
+
+              final proceed = await confirmQuickCaptureDuplicate(
+                parcel: parcel,
+                sheetContext: sheetContext,
+              );
+              if (!proceed || !mounted || !sheetContext.mounted || isClosing) {
                 return;
               }
 
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 2),
-                  showCloseIcon: true,
-                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 112),
-                  content: Text(
-                    saveResult.queuedLocally
-                        ? 'Lead saved locally - will sync when connected.'
-                        : 'Lead saved - ${parcel.displayAddress}.',
-                  ),
-                  action: savedLead == null || saveResult.queuedLocally
-                      ? null
-                      : SnackBarAction(
-                          label: 'View ->',
-                          onPressed: () => openLeadDetails(savedLead),
-                        ),
-                ),
-              );
-            } catch (_) {
-              unawaited(FieldTestLogger.log('qc_save_failed'));
-              if (!mounted || !sheetContext.mounted || isClosing) return;
-
               setSheetState(() {
-                isSaving = false;
+                isSaving = true;
               });
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Couldn't save lead. Try again.")),
-              );
-            }
-          }
 
-          return SafeArea(
-            child: FractionallySizedBox(
-              heightFactor: 0.68,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: 18,
-                  right: 18,
-                  bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
-                ),
-                child: isLoading
-                    ? const Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            CircularProgressIndicator(),
-                            SizedBox(height: 14),
-                            Text('Finding nearby property...'),
-                          ],
-                        ),
-                      )
-                    : parcelLoadFailed
-                    ? Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Icon(
-                            Icons.location_on,
-                            size: 42,
-                            color: Color(0xFF6B7280),
+              final condition = quickCaptureCondition(
+                roofDamage: roofDamage,
+                brokenWindows: brokenWindows,
+                trashInYard: trashInYard,
+                vacantAppearance: vacantAppearance,
+                exteriorWear: exteriorWear,
+                tallGrass: tallGrass,
+              );
+
+              try {
+                unawaited(
+                  FieldTestLogger.log(
+                    'qc_save_attempt',
+                    detail: parcel.displayAddress,
+                  ),
+                );
+                final saveResult = await saveQuickCaptureParcelLead(
+                  parcel: parcel,
+                  scoreData: currentScoreData(),
+                  condition: condition,
+                  notes: noteText,
+                );
+                final savedLead = saveResult.lead;
+                unawaited(
+                  FieldTestLogger.log(
+                    saveResult.queuedLocally
+                        ? 'qc_save_queued'
+                        : 'qc_save_success',
+                  ),
+                );
+
+                if (isClosing || !mounted || !sheetContext.mounted) return;
+
+                isClosing = true;
+                FocusScope.of(sheetContext).unfocus();
+                noteFocusNode.unfocus();
+                Navigator.pop(sheetContext);
+                if (openPhotos && savedLead != null) {
+                  openLeadDetails(savedLead);
+                  return;
+                }
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    behavior: SnackBarBehavior.floating,
+                    duration: const Duration(seconds: 2),
+                    showCloseIcon: true,
+                    margin: const EdgeInsets.fromLTRB(12, 0, 12, 112),
+                    content: Text(
+                      saveResult.queuedLocally
+                          ? 'Lead saved locally - will sync when connected.'
+                          : 'Lead saved - ${parcel.displayAddress}.',
+                    ),
+                    action: savedLead == null || saveResult.queuedLocally
+                        ? null
+                        : SnackBarAction(
+                            label: 'View ->',
+                            onPressed: () => openLeadDetails(savedLead),
                           ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            'No property found nearby.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
+                  ),
+                );
+              } catch (_) {
+                unawaited(FieldTestLogger.log('qc_save_failed'));
+                if (!mounted || !sheetContext.mounted || isClosing) return;
+
+                setSheetState(() {
+                  isSaving = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Couldn't save lead. Try again."),
+                  ),
+                );
+              }
+            }
+
+            return SafeArea(
+              child: FractionallySizedBox(
+                heightFactor: 0.68,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 18,
+                    right: 18,
+                    bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: isLoading
+                      ? const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(height: 14),
+                              Text('Finding nearby property...'),
+                            ],
                           ),
-                          const SizedBox(height: 18),
-                          FilledButton.icon(
-                            icon: const Icon(Icons.edit_location_alt),
-                            label: const Text('Save with manual address ->'),
-                            onPressed: () {
-                              Navigator.pop(sheetContext);
-                              openManualLeadFromPoint(lookupPoint);
-                            },
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.pop(sheetContext),
-                            child: const Text('Cancel'),
-                          ),
-                        ],
-                      )
-                    : SingleChildScrollView(
-                        child: Column(
+                        )
+                      : parcelLoadFailed
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    quickParcel?.displayAddress.isNotEmpty ??
-                                            false
-                                        ? quickParcel!.displayAddress
-                                        : 'Unknown Property',
-                                    style: const TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.bold,
+                            const Icon(
+                              Icons.location_on,
+                              size: 42,
+                              color: Color(0xFF6B7280),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'No property found nearby.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            FilledButton.icon(
+                              icon: const Icon(Icons.edit_location_alt),
+                              label: const Text('Save with manual address ->'),
+                              onPressed: () {
+                                Navigator.pop(sheetContext);
+                                openManualLeadFromPoint(lookupPoint);
+                              },
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(sheetContext),
+                              child: const Text('Cancel'),
+                            ),
+                          ],
+                        )
+                      : SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      quickParcel?.displayAddress.isNotEmpty ??
+                                              false
+                                          ? quickParcel!.displayAddress
+                                          : 'Unknown Property',
+                                      style: const TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                leadScoreBadge(scoreData.score, fontSize: 16),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    quickParcel?.ownerName ?? 'Owner not set',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                if (quickParcel?.outOfStateOwner ?? false)
-                                  const Chip(
-                                    visualDensity: VisualDensity.compact,
-                                    backgroundColor: Color(0xFFFFF3CD),
-                                    label: Text('⚠ OOS'),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Built ${quickParcel?.yearBuilt?.toString() ?? 'Not set'} · Assessed ${formatMoney(quickParcel?.assessedValue)}',
-                              style: const TextStyle(
-                                color: Color(0xFF6B7280),
-                                fontSize: 13,
+                                  const SizedBox(width: 10),
+                                  leadScoreBadge(scoreData.score, fontSize: 16),
+                                ],
                               ),
-                            ),
-                            if (gpsWarningText != null) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                gpsWarningText,
-                                style: TextStyle(
-                                  color: gpsWarningColor,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 16),
-                            if (existingLead != null) ...[
+                              const SizedBox(height: 6),
                               Row(
                                 children: [
-                                  leadStageBadge(existingLead!.status),
-                                  const SizedBox(width: 10),
-                                  const Text(
-                                    'Already a lead',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
+                                  Expanded(
+                                    child: Text(
+                                      quickParcel?.ownerName ?? 'Owner not set',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
+                                  if (quickParcel?.outOfStateOwner ?? false)
+                                    const Chip(
+                                      visualDensity: VisualDensity.compact,
+                                      backgroundColor: Color(0xFFFFF3CD),
+                                      label: Text('⚠ OOS'),
+                                    ),
                                 ],
                               ),
-                              const SizedBox(height: 14),
-                              FilledButton.icon(
-                                icon: const Icon(Icons.open_in_new),
-                                label: const Text('View existing lead ->'),
-                                onPressed: () {
-                                  final lead = existingLead!;
-                                  Navigator.pop(sheetContext);
-                                  openLeadDetails(lead);
-                                },
-                              ),
-                            ] else ...[
-                              const Text(
-                                'What did you see?',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
+                              const SizedBox(height: 4),
+                              Text(
+                                'Built ${quickParcel?.yearBuilt?.toString() ?? 'Not set'} · Assessed ${formatMoney(quickParcel?.assessedValue)}',
+                                style: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                  fontSize: 13,
                                 ),
                               ),
-                              const SizedBox(height: 10),
-                              GridView.count(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                crossAxisCount: 3,
-                                mainAxisSpacing: 8,
-                                crossAxisSpacing: 8,
-                                childAspectRatio: 1.55,
-                                children: [
-                                  conditionChip(
-                                    label: '🌿 Tall Grass',
-                                    selected: tallGrass,
-                                    onTap: () => setSheetState(
-                                      () => tallGrass = !tallGrass,
-                                    ),
+                              if (gpsWarningText != null) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  gpsWarningText,
+                                  style: TextStyle(
+                                    color: gpsWarningColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                  conditionChip(
-                                    label: '🏚 Vacant',
-                                    selected: vacantAppearance,
-                                    onTap: () => setSheetState(
-                                      () =>
-                                          vacantAppearance = !vacantAppearance,
-                                    ),
-                                  ),
-                                  conditionChip(
-                                    label: '🏗 Roof Damage',
-                                    selected: roofDamage,
-                                    onTap: () => setSheetState(
-                                      () => roofDamage = !roofDamage,
-                                    ),
-                                  ),
-                                  conditionChip(
-                                    label: '🗑 Trash',
-                                    selected: trashInYard,
-                                    onTap: () => setSheetState(
-                                      () => trashInYard = !trashInYard,
-                                    ),
-                                  ),
-                                  conditionChip(
-                                    label: '🪟 Broken Windows',
-                                    selected: brokenWindows,
-                                    onTap: () => setSheetState(
-                                      () => brokenWindows = !brokenWindows,
-                                    ),
-                                  ),
-                                  conditionChip(
-                                    label: '💀 Bad Shape',
-                                    selected: exteriorWear,
-                                    onTap: () => setSheetState(
-                                      () => exteriorWear = !exteriorWear,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: noteController,
-                                focusNode: noteFocusNode,
-                                minLines: 1,
-                                maxLines: 1,
-                                decoration: const InputDecoration(
-                                  hintText: 'Quick note (optional)',
                                 ),
-                              ),
-                              const SizedBox(height: 12),
-                              FilledButton.icon(
-                                icon: const Icon(Icons.check),
-                                label: Text(
-                                  isSaving ? 'Saving...' : 'Save Lead →',
+                              ],
+                              const SizedBox(height: 16),
+                              if (existingLead != null) ...[
+                                Row(
+                                  children: [
+                                    leadStageBadge(existingLead!.status),
+                                    const SizedBox(width: 10),
+                                    const Text(
+                                      'Already a lead',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                onPressed: isSaving || isClosing
-                                    ? null
-                                    : () async {
-                                        final parcel = quickParcel;
-                                        if (parcel == null) return;
+                                const SizedBox(height: 14),
+                                FilledButton.icon(
+                                  icon: const Icon(Icons.open_in_new),
+                                  label: const Text('View existing lead ->'),
+                                  onPressed: () {
+                                    final lead = existingLead!;
+                                    Navigator.pop(sheetContext);
+                                    openLeadDetails(lead);
+                                  },
+                                ),
+                              ] else ...[
+                                const Text(
+                                  'What did you see?',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                GridView.count(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  crossAxisCount: 3,
+                                  mainAxisSpacing: 8,
+                                  crossAxisSpacing: 8,
+                                  childAspectRatio: 1.55,
+                                  children: [
+                                    conditionChip(
+                                      label: '🌿 Tall Grass',
+                                      selected: tallGrass,
+                                      onTap: () => setSheetState(
+                                        () => tallGrass = !tallGrass,
+                                      ),
+                                    ),
+                                    conditionChip(
+                                      label: '🏚 Vacant',
+                                      selected: vacantAppearance,
+                                      onTap: () => setSheetState(
+                                        () => vacantAppearance =
+                                            !vacantAppearance,
+                                      ),
+                                    ),
+                                    conditionChip(
+                                      label: '🏗 Roof Damage',
+                                      selected: roofDamage,
+                                      onTap: () => setSheetState(
+                                        () => roofDamage = !roofDamage,
+                                      ),
+                                    ),
+                                    conditionChip(
+                                      label: '🗑 Trash',
+                                      selected: trashInYard,
+                                      onTap: () => setSheetState(
+                                        () => trashInYard = !trashInYard,
+                                      ),
+                                    ),
+                                    conditionChip(
+                                      label: '🪟 Broken Windows',
+                                      selected: brokenWindows,
+                                      onTap: () => setSheetState(
+                                        () => brokenWindows = !brokenWindows,
+                                      ),
+                                    ),
+                                    conditionChip(
+                                      label: '💀 Bad Shape',
+                                      selected: exteriorWear,
+                                      onTap: () => setSheetState(
+                                        () => exteriorWear = !exteriorWear,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: noteController,
+                                  focusNode: noteFocusNode,
+                                  minLines: 1,
+                                  maxLines: 1,
+                                  decoration: const InputDecoration(
+                                    hintText: 'Quick note (optional)',
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                FilledButton.icon(
+                                  icon: const Icon(Icons.check),
+                                  label: Text(
+                                    isSaving ? 'Saving...' : 'Save Lead →',
+                                  ),
+                                  onPressed: isSaving || isClosing
+                                      ? null
+                                      : () async {
+                                          final parcel = quickParcel;
+                                          if (parcel == null) return;
 
-                                        FocusScope.of(sheetContext).unfocus();
-                                        noteFocusNode.unfocus();
-                                        final noteText = noteController.text
-                                            .trim();
-
-                                        final proceed =
-                                            await confirmQuickCaptureDuplicate(
-                                              parcel: parcel,
-                                              sheetContext: sheetContext,
-                                            );
-                                        if (!proceed ||
-                                            !mounted ||
-                                            !sheetContext.mounted ||
-                                            isClosing) {
-                                          return;
-                                        }
-
-                                        setSheetState(() {
-                                          isSaving = true;
-                                        });
-
-                                        final condition = quickCaptureCondition(
-                                          roofDamage: roofDamage,
-                                          brokenWindows: brokenWindows,
-                                          trashInYard: trashInYard,
-                                          vacantAppearance: vacantAppearance,
-                                          exteriorWear: exteriorWear,
-                                          tallGrass: tallGrass,
-                                        );
-
-                                        try {
-                                          unawaited(
-                                            FieldTestLogger.log(
-                                              'qc_save_attempt',
-                                              detail: parcel.displayAddress,
-                                            ),
-                                          );
-                                          final saveResult =
-                                              await saveQuickCaptureParcelLead(
-                                                parcel: parcel,
-                                                scoreData: currentScoreData(),
-                                                condition: condition,
-                                                notes: noteText,
-                                              );
-                                          final savedLead = saveResult.lead;
-                                          unawaited(
-                                            FieldTestLogger.log(
-                                              saveResult.queuedLocally
-                                                  ? 'qc_save_queued'
-                                                  : 'qc_save_success',
-                                            ),
-                                          );
-
-                                          if (!mounted ||
-                                              !sheetContext.mounted) {
-                                            return;
-                                          }
-
-                                          isClosing = true;
                                           FocusScope.of(sheetContext).unfocus();
                                           noteFocusNode.unfocus();
-                                          Navigator.pop(sheetContext);
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            SnackBar(
-                                              behavior:
-                                                  SnackBarBehavior.floating,
-                                              duration: const Duration(
-                                                seconds: 2,
-                                              ),
-                                              showCloseIcon: true,
-                                              margin: const EdgeInsets.fromLTRB(
-                                                12,
-                                                0,
-                                                12,
-                                                112,
-                                              ),
-                                              content: Text(
-                                                saveResult.queuedLocally
-                                                    ? 'Lead saved locally - will sync when connected.'
-                                                    : 'Lead saved - ${parcel.displayAddress}.',
-                                              ),
-                                              action:
-                                                  savedLead == null ||
-                                                      saveResult.queuedLocally
-                                                  ? null
-                                                  : SnackBarAction(
-                                                      label: 'View →',
-                                                      onPressed: () =>
-                                                          openLeadDetails(
-                                                            savedLead,
-                                                          ),
-                                                    ),
-                                            ),
-                                          );
-                                        } catch (_) {
-                                          unawaited(
-                                            FieldTestLogger.log(
-                                              'qc_save_failed',
-                                            ),
-                                          );
-                                          if (!mounted ||
+                                          final noteText = noteController.text
+                                              .trim();
+
+                                          final proceed =
+                                              await confirmQuickCaptureDuplicate(
+                                                parcel: parcel,
+                                                sheetContext: sheetContext,
+                                              );
+                                          if (!proceed ||
+                                              !mounted ||
                                               !sheetContext.mounted ||
                                               isClosing) {
                                             return;
                                           }
 
                                           setSheetState(() {
-                                            isSaving = false;
+                                            isSaving = true;
                                           });
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                "Couldn't save lead. Try again.",
+
+                                          final condition =
+                                              quickCaptureCondition(
+                                                roofDamage: roofDamage,
+                                                brokenWindows: brokenWindows,
+                                                trashInYard: trashInYard,
+                                                vacantAppearance:
+                                                    vacantAppearance,
+                                                exteriorWear: exteriorWear,
+                                                tallGrass: tallGrass,
+                                              );
+
+                                          try {
+                                            unawaited(
+                                              FieldTestLogger.log(
+                                                'qc_save_attempt',
+                                                detail: parcel.displayAddress,
                                               ),
-                                            ),
-                                          );
-                                        }
-                                      },
-                              ),
-                              const SizedBox(height: 8),
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.photo_camera),
-                                label: Text(
-                                  isSaving ? 'Saving...' : 'Save + Photos ->',
+                                            );
+                                            final saveResult =
+                                                await saveQuickCaptureParcelLead(
+                                                  parcel: parcel,
+                                                  scoreData: currentScoreData(),
+                                                  condition: condition,
+                                                  notes: noteText,
+                                                );
+                                            final savedLead = saveResult.lead;
+                                            unawaited(
+                                              FieldTestLogger.log(
+                                                saveResult.queuedLocally
+                                                    ? 'qc_save_queued'
+                                                    : 'qc_save_success',
+                                              ),
+                                            );
+
+                                            if (!mounted ||
+                                                !sheetContext.mounted) {
+                                              return;
+                                            }
+
+                                            isClosing = true;
+                                            FocusScope.of(
+                                              sheetContext,
+                                            ).unfocus();
+                                            noteFocusNode.unfocus();
+                                            Navigator.pop(sheetContext);
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(
+                                                behavior:
+                                                    SnackBarBehavior.floating,
+                                                duration: const Duration(
+                                                  seconds: 2,
+                                                ),
+                                                showCloseIcon: true,
+                                                margin:
+                                                    const EdgeInsets.fromLTRB(
+                                                      12,
+                                                      0,
+                                                      12,
+                                                      112,
+                                                    ),
+                                                content: Text(
+                                                  saveResult.queuedLocally
+                                                      ? 'Lead saved locally - will sync when connected.'
+                                                      : 'Lead saved - ${parcel.displayAddress}.',
+                                                ),
+                                                action:
+                                                    savedLead == null ||
+                                                        saveResult.queuedLocally
+                                                    ? null
+                                                    : SnackBarAction(
+                                                        label: 'View →',
+                                                        onPressed: () =>
+                                                            openLeadDetails(
+                                                              savedLead,
+                                                            ),
+                                                      ),
+                                              ),
+                                            );
+                                          } catch (_) {
+                                            unawaited(
+                                              FieldTestLogger.log(
+                                                'qc_save_failed',
+                                              ),
+                                            );
+                                            if (!mounted ||
+                                                !sheetContext.mounted ||
+                                                isClosing) {
+                                              return;
+                                            }
+
+                                            setSheetState(() {
+                                              isSaving = false;
+                                            });
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  "Couldn't save lead. Try again.",
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        },
                                 ),
-                                onPressed: isSaving || isClosing
-                                    ? null
-                                    : () => saveQuickCapture(openPhotos: true),
-                              ),
+                                const SizedBox(height: 8),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.photo_camera),
+                                  label: Text(
+                                    isSaving ? 'Saving...' : 'Save + Photos ->',
+                                  ),
+                                  onPressed: isSaving || isClosing
+                                      ? null
+                                      : () =>
+                                            saveQuickCapture(openPhotos: true),
+                                ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
-                      ),
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     ).whenComplete(
       () =>
@@ -9307,233 +9338,238 @@ class _DrivingScreenState extends State<DrivingScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          final selectedDates = plannerDates
-              .where((date) => selectedDayKeys.contains(isoDateOnly(date)))
-              .toList(growable: false);
-          final previews = weeklyPlanMissionPreviews(
-            streetOpportunities,
-            selectedDates,
-            sessionMinutes,
-          );
-          final totalMinutes = previews.fold<int>(
-            0,
-            (total, preview) => total + preview.minutes,
-          );
-          final areaStreets = activeDriveArea == null
-              ? const <CityStreet>[]
-              : streetsInsideArea(activeDriveArea!);
-          final uncoveredAreaMinutes = estimatedMinutesForStreets(
-            areaStreets.where(
-              (street) => !coveredStreetIds.contains(street.id),
-            ),
-          );
-          final sessionsToFinish = sessionMinutes <= 0
-              ? 0
-              : (uncoveredAreaMinutes / sessionMinutes).ceil();
-
-          return SafeArea(
-            child: Padding(
-              padding: EdgeInsets.only(
-                left: 18,
-                right: 18,
-                bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (sheetContext) => driveFrostedBottomSheet(
+        sheetContext,
+        child: StatefulBuilder(
+          builder: (context, setSheetState) {
+            final selectedDates = plannerDates
+                .where((date) => selectedDayKeys.contains(isoDateOnly(date)))
+                .toList(growable: false);
+            final previews = weeklyPlanMissionPreviews(
+              streetOpportunities,
+              selectedDates,
+              sessionMinutes,
+            );
+            final totalMinutes = previews.fold<int>(
+              0,
+              (total, preview) => total + preview.minutes,
+            );
+            final areaStreets = activeDriveArea == null
+                ? const <CityStreet>[]
+                : streetsInsideArea(activeDriveArea!);
+            final uncoveredAreaMinutes = estimatedMinutesForStreets(
+              areaStreets.where(
+                (street) => !coveredStreetIds.contains(street.id),
               ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'Plan my week',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    const Text(
-                      'Which days this week?',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: plannerDates.map((date) {
-                        final key = isoDateOnly(date);
-                        final selected = selectedDayKeys.contains(key);
+            );
+            final sessionsToFinish = sessionMinutes <= 0
+                ? 0
+                : (uncoveredAreaMinutes / sessionMinutes).ceil();
 
-                        return FilterChip(
-                          label: Text(shortWeekdayLabel(date)),
-                          selected: selected,
-                          onSelected: (value) {
-                            setSheetState(() {
-                              if (value) {
-                                selectedDayKeys.add(key);
-                              } else {
-                                selectedDayKeys.remove(key);
-                              }
-                              step = selectedDayKeys.isEmpty
-                                  ? 0
-                                  : math.max(step, 1);
-                            });
-                          },
-                        );
-                      }).toList(),
-                    ),
-                    if (selectedDayKeys.isEmpty) ...[
-                      const SizedBox(height: 8),
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 18,
+                  right: 18,
+                  bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                       const Text(
-                        'Pick at least one day to continue.',
-                        style: TextStyle(color: Color(0xFF6B7280)),
+                        'Plan my week',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ],
-                    if (step >= 1) ...[
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 14),
                       const Text(
-                        'How long each session?',
+                        'Which days this week?',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
-                        children: [
-                          ChoiceChip(
-                            label: const Text('30 min'),
-                            selected: sessionMinutes == 30 && !isCustom,
-                            onSelected: (_) {
+                        children: plannerDates.map((date) {
+                          final key = isoDateOnly(date);
+                          final selected = selectedDayKeys.contains(key);
+
+                          return FilterChip(
+                            label: Text(shortWeekdayLabel(date)),
+                            selected: selected,
+                            onSelected: (value) {
                               setSheetState(() {
-                                sessionMinutes = 30;
-                                isCustom = false;
+                                if (value) {
+                                  selectedDayKeys.add(key);
+                                } else {
+                                  selectedDayKeys.remove(key);
+                                }
+                                step = selectedDayKeys.isEmpty
+                                    ? 0
+                                    : math.max(step, 1);
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      if (selectedDayKeys.isEmpty) ...[
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Pick at least one day to continue.',
+                          style: TextStyle(color: Color(0xFF6B7280)),
+                        ),
+                      ],
+                      if (step >= 1) ...[
+                        const SizedBox(height: 18),
+                        const Text(
+                          'How long each session?',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ChoiceChip(
+                              label: const Text('30 min'),
+                              selected: sessionMinutes == 30 && !isCustom,
+                              onSelected: (_) {
+                                setSheetState(() {
+                                  sessionMinutes = 30;
+                                  isCustom = false;
+                                  step = 2;
+                                });
+                              },
+                            ),
+                            ChoiceChip(
+                              label: const Text('45 min'),
+                              selected: sessionMinutes == 45 && !isCustom,
+                              onSelected: (_) {
+                                setSheetState(() {
+                                  sessionMinutes = 45;
+                                  isCustom = false;
+                                  step = 2;
+                                });
+                              },
+                            ),
+                            ChoiceChip(
+                              label: const Text('1 hour'),
+                              selected: sessionMinutes == 60 && !isCustom,
+                              onSelected: (_) {
+                                setSheetState(() {
+                                  sessionMinutes = 60;
+                                  isCustom = false;
+                                  step = 2;
+                                });
+                              },
+                            ),
+                            ChoiceChip(
+                              label: const Text('Custom'),
+                              selected: isCustom,
+                              onSelected: (_) {
+                                setSheetState(() {
+                                  isCustom = true;
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                        if (isCustom) ...[
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: customController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Minutes',
+                              suffixText: 'min',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          FilledButton(
+                            onPressed: () {
+                              final customMinutes = int.tryParse(
+                                customController.text.trim(),
+                              );
+                              if (customMinutes == null || customMinutes <= 0) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Enter a valid session length.',
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+
+                              setSheetState(() {
+                                sessionMinutes = customMinutes;
                                 step = 2;
                               });
                             },
-                          ),
-                          ChoiceChip(
-                            label: const Text('45 min'),
-                            selected: sessionMinutes == 45 && !isCustom,
-                            onSelected: (_) {
-                              setSheetState(() {
-                                sessionMinutes = 45;
-                                isCustom = false;
-                                step = 2;
-                              });
-                            },
-                          ),
-                          ChoiceChip(
-                            label: const Text('1 hour'),
-                            selected: sessionMinutes == 60 && !isCustom,
-                            onSelected: (_) {
-                              setSheetState(() {
-                                sessionMinutes = 60;
-                                isCustom = false;
-                                step = 2;
-                              });
-                            },
-                          ),
-                          ChoiceChip(
-                            label: const Text('Custom'),
-                            selected: isCustom,
-                            onSelected: (_) {
-                              setSheetState(() {
-                                isCustom = true;
-                              });
-                            },
+                            child: const Text('Use custom time'),
                           ),
                         ],
-                      ),
-                      if (isCustom) ...[
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: customController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Minutes',
-                            suffixText: 'min',
-                          ),
+                      ],
+                      if (step >= 2) ...[
+                        const SizedBox(height: 18),
+                        const Text(
+                          'Plan preview',
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
-                        const SizedBox(height: 10),
-                        FilledButton(
-                          onPressed: () {
-                            final customMinutes = int.tryParse(
-                              customController.text.trim(),
-                            );
-                            if (customMinutes == null || customMinutes <= 0) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Enter a valid session length.',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            setSheetState(() {
-                              sessionMinutes = customMinutes;
-                              step = 2;
-                            });
-                          },
-                          child: const Text('Use custom time'),
+                        const SizedBox(height: 8),
+                        if (previews.isEmpty)
+                          const Text('No days selected.')
+                        else
+                          ...previews.map(
+                            (preview) => ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(shortPlannerDateLabel(preview.date)),
+                              subtitle: Text(
+                                '${preview.streets.length} streets - ~${preview.minutes} min',
+                              ),
+                            ),
+                          ),
+                        const Divider(),
+                        Text(
+                          '$totalMinutes total planned minutes - about $sessionsToFinish sessions to finish this area',
+                          style: const TextStyle(color: Color(0xFF6B7280)),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          icon: const Icon(Icons.arrow_forward),
+                          label: const Text('Create This Plan ->'),
+                          onPressed: isSavingMission
+                              ? null
+                              : () async {
+                                  final created = await createWeeklyPlan(
+                                    selectedDates: selectedDates,
+                                    sessionMinutes: sessionMinutes,
+                                    previews: previews,
+                                  );
+                                  if (created && sheetContext.mounted) {
+                                    Navigator.pop(sheetContext);
+                                  }
+                                },
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: const Text('Cancel'),
                         ),
                       ],
                     ],
-                    if (step >= 2) ...[
-                      const SizedBox(height: 18),
-                      const Text(
-                        'Plan preview',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      if (previews.isEmpty)
-                        const Text('No days selected.')
-                      else
-                        ...previews.map(
-                          (preview) => ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(shortPlannerDateLabel(preview.date)),
-                            subtitle: Text(
-                              '${preview.streets.length} streets - ~${preview.minutes} min',
-                            ),
-                          ),
-                        ),
-                      const Divider(),
-                      Text(
-                        '$totalMinutes total planned minutes - about $sessionsToFinish sessions to finish this area',
-                        style: const TextStyle(color: Color(0xFF6B7280)),
-                      ),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        icon: const Icon(Icons.arrow_forward),
-                        label: const Text('Create This Plan ->'),
-                        onPressed: isSavingMission
-                            ? null
-                            : () async {
-                                final created = await createWeeklyPlan(
-                                  selectedDates: selectedDates,
-                                  sessionMinutes: sessionMinutes,
-                                  previews: previews,
-                                );
-                                if (created && sheetContext.mounted) {
-                                  Navigator.pop(sheetContext);
-                                }
-                              },
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     ).whenComplete(() => disposeModalTextController(customController));
   }
@@ -9572,492 +9608,501 @@ class _DrivingScreenState extends State<DrivingScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          final areaStreets = activeDriveArea == null
-              ? const <CityStreet>[]
-              : streetsInsideArea(activeDriveArea!);
-          final areaCoveredStreetCount = areaStreets
-              .where((street) => coveredStreetIds.contains(street.id))
-              .length;
-          final areaUncoveredStreets = areaStreets
-              .where((street) => !coveredStreetIds.contains(street.id))
-              .toList(growable: false);
-          final areaCoveragePercent = areaStreets.isEmpty
-              ? 0.0
-              : (areaCoveredStreetCount / areaStreets.length) * 100;
-          final areaRemainingMinutes = estimatedMinutesForStreets(
-            areaUncoveredStreets,
-          );
-          final sessionBudgetForEstimate =
-              selectedBudget ?? defaultSessionMinutes ?? 30;
-          final sessionsToFinish = sessionBudgetForEstimate <= 0
-              ? 0
-              : (areaRemainingMinutes / sessionBudgetForEstimate).ceil();
-          final hasAreaStreetData = areaStreets.isNotEmpty;
-          final hasUncoveredAreaStreets = areaUncoveredStreets.isNotEmpty;
-          final areaMarketProperties = activeDriveArea == null
-              ? const <MarketProperty>[]
-              : _marketPropertiesForArea(this, activeDriveArea!);
-          final currentStreetOpportunities = sheetStreetOpportunities(
-            areaStreets,
-            areaMarketProperties,
-          );
-          final hasMarketMapData = areaMarketProperties.isNotEmpty;
-          final includeUnscoredMissionStreets = hasAreaStreetData;
-          final previewStreets = timeMissionsEnabled && selectedBudget != null
-              ? selectMissionStreetsForBudget(
-                  currentStreetOpportunities,
-                  selectedBudget!,
-                  includeUnscored: includeUnscoredMissionStreets,
-                )
-              : defaultMissionStreets(
-                  currentStreetOpportunities,
-                  includeUnscored: includeUnscoredMissionStreets,
-                );
-          final forcedBestAvailableStreets =
-              timeMissionsEnabled && selectedBudget != null
-              ? selectMissionStreetsForBudget(
-                  currentStreetOpportunities,
-                  selectedBudget!,
-                  includeUnscored: includeUnscoredMissionStreets,
-                  forceAtLeastOne: true,
-                )
-              : const <StreetOpportunity>[];
-          final previewMinutes = estimatedMinutesForMissionStreets(
-            previewStreets,
-          );
-          final missionRemainingCoveragePercent = areaUncoveredStreets.isEmpty
-              ? 0.0
-              : (previewStreets.length / areaUncoveredStreets.length) * 100;
-          final shouldSuggestMarketMap =
-              hasAreaStreetData && hasUncoveredAreaStreets && !hasMarketMapData;
-          final noTimeFit =
-              timeMissionsEnabled &&
-              selectedBudget != null &&
-              hasAreaStreetData &&
-              hasUncoveredAreaStreets &&
-              previewStreets.isEmpty;
-          final noUncoveredStreets =
-              hasAreaStreetData && !hasUncoveredAreaStreets;
-          final availableTimeLabel = selectedBudget == null
-              ? 'Default mission'
-              : '$selectedBudget min available';
-          final previewTitle = !hasAreaStreetData
-              ? 'No available mission streets.'
-              : noTimeFit
-              ? 'No streets fit this time window.'
-              : noUncoveredStreets
-              ? 'Area streets are already covered.'
-              : previewStreets.isEmpty
-              ? 'No available mission streets.'
-              : '${previewStreets.length} streets - ~$previewMinutes min';
-          final previewHelper = !hasAreaStreetData
-              ? 'Street data is needed before this area can become a mission.'
-              : noTimeFit
-              ? 'Increase your time or start a default mission.'
-              : shouldSuggestMarketMap
-              ? 'Using street coverage now. Find motivated sellers later to rank properties.'
-              : calibrationMissionCount >= 3
-              ? 'Based on your driving history'
-              : 'Estimated at 10 mph scouting speed';
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (sheetContext) => driveFrostedBottomSheet(
+        sheetContext,
+        child: StatefulBuilder(
+          builder: (context, setSheetState) {
+            final areaStreets = activeDriveArea == null
+                ? const <CityStreet>[]
+                : streetsInsideArea(activeDriveArea!);
+            final areaCoveredStreetCount = areaStreets
+                .where((street) => coveredStreetIds.contains(street.id))
+                .length;
+            final areaUncoveredStreets = areaStreets
+                .where((street) => !coveredStreetIds.contains(street.id))
+                .toList(growable: false);
+            final areaCoveragePercent = areaStreets.isEmpty
+                ? 0.0
+                : (areaCoveredStreetCount / areaStreets.length) * 100;
+            final areaRemainingMinutes = estimatedMinutesForStreets(
+              areaUncoveredStreets,
+            );
+            final sessionBudgetForEstimate =
+                selectedBudget ?? defaultSessionMinutes ?? 30;
+            final sessionsToFinish = sessionBudgetForEstimate <= 0
+                ? 0
+                : (areaRemainingMinutes / sessionBudgetForEstimate).ceil();
+            final hasAreaStreetData = areaStreets.isNotEmpty;
+            final hasUncoveredAreaStreets = areaUncoveredStreets.isNotEmpty;
+            final areaMarketProperties = activeDriveArea == null
+                ? const <MarketProperty>[]
+                : _marketPropertiesForArea(this, activeDriveArea!);
+            final currentStreetOpportunities = sheetStreetOpportunities(
+              areaStreets,
+              areaMarketProperties,
+            );
+            final hasMarketMapData = areaMarketProperties.isNotEmpty;
+            final includeUnscoredMissionStreets = hasAreaStreetData;
+            final previewStreets = timeMissionsEnabled && selectedBudget != null
+                ? selectMissionStreetsForBudget(
+                    currentStreetOpportunities,
+                    selectedBudget!,
+                    includeUnscored: includeUnscoredMissionStreets,
+                  )
+                : defaultMissionStreets(
+                    currentStreetOpportunities,
+                    includeUnscored: includeUnscoredMissionStreets,
+                  );
+            final forcedBestAvailableStreets =
+                timeMissionsEnabled && selectedBudget != null
+                ? selectMissionStreetsForBudget(
+                    currentStreetOpportunities,
+                    selectedBudget!,
+                    includeUnscored: includeUnscoredMissionStreets,
+                    forceAtLeastOne: true,
+                  )
+                : const <StreetOpportunity>[];
+            final previewMinutes = estimatedMinutesForMissionStreets(
+              previewStreets,
+            );
+            final missionRemainingCoveragePercent = areaUncoveredStreets.isEmpty
+                ? 0.0
+                : (previewStreets.length / areaUncoveredStreets.length) * 100;
+            final shouldSuggestMarketMap =
+                hasAreaStreetData &&
+                hasUncoveredAreaStreets &&
+                !hasMarketMapData;
+            final noTimeFit =
+                timeMissionsEnabled &&
+                selectedBudget != null &&
+                hasAreaStreetData &&
+                hasUncoveredAreaStreets &&
+                previewStreets.isEmpty;
+            final noUncoveredStreets =
+                hasAreaStreetData && !hasUncoveredAreaStreets;
+            final availableTimeLabel = selectedBudget == null
+                ? 'Default mission'
+                : '$selectedBudget min available';
+            final previewTitle = !hasAreaStreetData
+                ? 'No available mission streets.'
+                : noTimeFit
+                ? 'No streets fit this time window.'
+                : noUncoveredStreets
+                ? 'Area streets are already covered.'
+                : previewStreets.isEmpty
+                ? 'No available mission streets.'
+                : '${previewStreets.length} streets - ~$previewMinutes min';
+            final previewHelper = !hasAreaStreetData
+                ? 'Street data is needed before this area can become a mission.'
+                : noTimeFit
+                ? 'Increase your time or start a default mission.'
+                : shouldSuggestMarketMap
+                ? 'Using street coverage now. Find motivated sellers later to rank properties.'
+                : calibrationMissionCount >= 3
+                ? 'Based on your driving history'
+                : 'Estimated at 10 mph scouting speed';
 
-          return SafeArea(
-            child: Padding(
-              padding: EdgeInsets.only(
-                left: 18,
-                right: 18,
-                bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    step == 0
-                        ? 'How much time?'
-                        : step == 1
-                        ? 'Drive Area'
-                        : 'Mission preview',
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  if (step == 0) ...[
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('30 min'),
-                          selected: selectedBudget == 30 && !isCustom,
-                          onSelected: (_) async {
-                            if (rememberAsDefault) {
-                              await saveDefaultSessionMinutes(30);
-                            }
-                            if (!mounted) return;
-                            setSheetState(() {
-                              selectedBudget = 30;
-                              isCustom = false;
-                              step = 1;
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('1 hour'),
-                          selected: selectedBudget == 60 && !isCustom,
-                          onSelected: (_) async {
-                            if (rememberAsDefault) {
-                              await saveDefaultSessionMinutes(60);
-                            }
-                            if (!mounted) return;
-                            setSheetState(() {
-                              selectedBudget = 60;
-                              isCustom = false;
-                              step = 1;
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('2 hours'),
-                          selected: selectedBudget == 120 && !isCustom,
-                          onSelected: (_) async {
-                            if (rememberAsDefault) {
-                              await saveDefaultSessionMinutes(120);
-                            }
-                            if (!mounted) return;
-                            setSheetState(() {
-                              selectedBudget = 120;
-                              isCustom = false;
-                              step = 1;
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Custom'),
-                          selected: isCustom,
-                          onSelected: (_) {
-                            setSheetState(() {
-                              isCustom = true;
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      title: const Text('Remember as my default'),
-                      value: rememberAsDefault,
-                      onChanged: (value) {
-                        setSheetState(() {
-                          rememberAsDefault = value ?? false;
-                        });
-                      },
-                    ),
-                    if (isCustom) ...[
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: customController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Minutes',
-                          suffixText: 'min',
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      FilledButton(
-                        onPressed: () async {
-                          final customMinutes = int.tryParse(
-                            customController.text.trim(),
-                          );
-                          if (customMinutes == null || customMinutes <= 0) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Enter a valid minute budget.'),
-                              ),
-                            );
-                            return;
-                          }
-                          if (rememberAsDefault) {
-                            await saveDefaultSessionMinutes(customMinutes);
-                          }
-                          if (!mounted) return;
-                          setSheetState(() {
-                            selectedBudget = customMinutes;
-                            step = 1;
-                          });
-                        },
-                        child: const Text('Continue'),
-                      ),
-                    ],
-                  ] else if (step == 1) ...[
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(activeDriveArea?.name ?? 'No active area'),
-                      subtitle: Text(activeDriveArea?.city ?? 'Pick an area'),
-                      trailing: TextButton(
-                        onPressed: () {
-                          setSheetState(() {
-                            showAreaList = !showAreaList;
-                          });
-                        },
-                        child: const Text('Change'),
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 18,
+                  right: 18,
+                  bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      step == 0
+                          ? 'How much time?'
+                          : step == 1
+                          ? 'Drive Area'
+                          : 'Mission preview',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    if (showAreaList)
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 220),
-                        child: ListView(
-                          shrinkWrap: true,
-                          children: driveAreas
-                              .map(
-                                (area) => ListTile(
-                                  title: Text(area.name),
-                                  subtitle: Text(area.city),
-                                  onTap: () async {
-                                    await setActiveDriveArea(area);
-                                    if (!mounted) return;
-                                    setSheetState(() {
-                                      showAreaList = false;
-                                    });
-                                  },
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: activeDriveArea == null
-                          ? null
-                          : () => setSheetState(() => step = 2),
-                      child: const Text('Continue'),
-                    ),
-                  ] else ...[
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    activeDriveArea?.name ?? 'Mission',
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                Text(
-                                  '${areaCoveragePercent.toStringAsFixed(0)}%',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF2563EB),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            LinearProgressIndicator(
-                              value: areaCoveragePercent / 100,
-                              minHeight: 4,
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              previewTitle,
-                              style: const TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              previewHelper,
-                              style: const TextStyle(
-                                color: Color(0xFF6B7280),
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                Chip(label: Text(availableTimeLabel)),
-                                Chip(
-                                  label: Text(
-                                    '${previewStreets.length} streets selected',
-                                  ),
-                                ),
-                                Chip(
-                                  label: Text(
-                                    '${missionRemainingCoveragePercent.toStringAsFixed(0)}% coverage gain',
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (!noTimeFit &&
-                                hasAreaStreetData &&
-                                previewStreets.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                '~$sessionsToFinish more sessions to finish this area.',
-                                style: const TextStyle(
-                                  color: Color(0xFF6B7280),
-                                ),
-                              ),
-                            ],
-                            if (!hasAreaStreetData) ...[
-                              const SizedBox(height: 8),
-                              const Text(
-                                'This area has no loaded streets. Try a larger area or import street data for this market.',
-                                style: TextStyle(color: Color(0xFF6B7280)),
-                              ),
-                            ] else if (shouldSuggestMarketMap) ...[
-                              const SizedBox(height: 8),
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.analytics),
-                                label: Text(
-                                  isBuildingMarketMap
-                                      ? 'Analyzing area...'
-                                      : 'Find Motivated Sellers',
-                                ),
-                                onPressed:
-                                    isBuildingMarketMap ||
-                                        activeDriveArea == null
-                                    ? null
-                                    : () async {
-                                        await buildMarketMap();
-                                        if (!sheetContext.mounted) return;
-                                        setSheetState(() {});
-                                      },
-                              ),
-                              const SizedBox(height: 4),
-                              const _MotivatedSellersDescription(),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (noTimeFit) ...[
-                      TextButton(
-                        onPressed: () {
-                          setSheetState(() {
-                            rememberAsDefault = false;
-                            isCustom = false;
-                            step = 0;
-                          });
-                        },
-                        child: const Text('Change time'),
-                      ),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.route),
-                        label: const Text('Start default mission'),
-                        onPressed: isSavingMission || activeDriveArea == null
-                            ? null
-                            : () async {
-                                Navigator.pop(sheetContext);
-                                await generateMission(
-                                  currentStreetOpportunities,
-                                  includeUnscored:
-                                      includeUnscoredMissionStreets,
-                                );
-                              },
-                      ),
-                      FilledButton.icon(
-                        icon: const Icon(Icons.arrow_forward),
-                        label: const Text('Use best available streets anyway'),
-                        onPressed:
-                            isSavingMission ||
-                                activeDriveArea == null ||
-                                forcedBestAvailableStreets.isEmpty
-                            ? null
-                            : () async {
-                                Navigator.pop(sheetContext);
-                                setState(() {
-                                  selectedMissionTimeBudgetMinutes =
-                                      selectedBudget;
-                                });
-                                await generateMission(
-                                  currentStreetOpportunities,
-                                  timeBudgetMinutes: selectedBudget,
-                                  includeUnscored:
-                                      includeUnscoredMissionStreets,
-                                  forceAtLeastOne: true,
-                                );
-                              },
-                      ),
-                    ] else ...[
-                      FilledButton.icon(
-                        icon: const Icon(Icons.arrow_forward),
-                        label: const Text('Start Driving ->'),
-                        onPressed:
-                            previewStreets.isEmpty ||
-                                isSavingMission ||
-                                activeDriveArea == null
-                            ? null
-                            : () async {
-                                Navigator.pop(sheetContext);
-                                setState(() {
-                                  selectedMissionTimeBudgetMinutes =
-                                      selectedBudget;
-                                });
-                                await generateMission(
-                                  currentStreetOpportunities,
-                                  timeBudgetMinutes: timeMissionsEnabled
-                                      ? selectedBudget
-                                      : null,
-                                  includeUnscored:
-                                      includeUnscoredMissionStreets,
-                                );
-                              },
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                    const SizedBox(height: 14),
+                    if (step == 0) ...[
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
-                          if (timeMissionsEnabled)
-                            TextButton(
-                              onPressed: () {
-                                setSheetState(() {
-                                  rememberAsDefault = false;
-                                  isCustom = false;
-                                  step = 0;
-                                });
-                              },
-                              child: const Text('Change time'),
-                            ),
-                          if (timeMissionsEnabled)
-                            const Text(
-                              '-',
-                              style: TextStyle(color: Color(0xFF6B7280)),
-                            ),
-                          TextButton(
-                            onPressed: () {
-                              Navigator.pop(sheetContext);
-                              openWeeklyPlannerSheet(
-                                currentStreetOpportunities,
-                              );
+                          ChoiceChip(
+                            label: const Text('30 min'),
+                            selected: selectedBudget == 30 && !isCustom,
+                            onSelected: (_) async {
+                              if (rememberAsDefault) {
+                                await saveDefaultSessionMinutes(30);
+                              }
+                              if (!mounted) return;
+                              setSheetState(() {
+                                selectedBudget = 30;
+                                isCustom = false;
+                                step = 1;
+                              });
                             },
-                            child: const Text('Plan my week'),
+                          ),
+                          ChoiceChip(
+                            label: const Text('1 hour'),
+                            selected: selectedBudget == 60 && !isCustom,
+                            onSelected: (_) async {
+                              if (rememberAsDefault) {
+                                await saveDefaultSessionMinutes(60);
+                              }
+                              if (!mounted) return;
+                              setSheetState(() {
+                                selectedBudget = 60;
+                                isCustom = false;
+                                step = 1;
+                              });
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text('2 hours'),
+                            selected: selectedBudget == 120 && !isCustom,
+                            onSelected: (_) async {
+                              if (rememberAsDefault) {
+                                await saveDefaultSessionMinutes(120);
+                              }
+                              if (!mounted) return;
+                              setSheetState(() {
+                                selectedBudget = 120;
+                                isCustom = false;
+                                step = 1;
+                              });
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text('Custom'),
+                            selected: isCustom,
+                            onSelected: (_) {
+                              setSheetState(() {
+                                isCustom = true;
+                              });
+                            },
                           ),
                         ],
                       ),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text('Remember as my default'),
+                        value: rememberAsDefault,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            rememberAsDefault = value ?? false;
+                          });
+                        },
+                      ),
+                      if (isCustom) ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: customController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Minutes',
+                            suffixText: 'min',
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        FilledButton(
+                          onPressed: () async {
+                            final customMinutes = int.tryParse(
+                              customController.text.trim(),
+                            );
+                            if (customMinutes == null || customMinutes <= 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Enter a valid minute budget.'),
+                                ),
+                              );
+                              return;
+                            }
+                            if (rememberAsDefault) {
+                              await saveDefaultSessionMinutes(customMinutes);
+                            }
+                            if (!mounted) return;
+                            setSheetState(() {
+                              selectedBudget = customMinutes;
+                              step = 1;
+                            });
+                          },
+                          child: const Text('Continue'),
+                        ),
+                      ],
+                    ] else if (step == 1) ...[
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(activeDriveArea?.name ?? 'No active area'),
+                        subtitle: Text(activeDriveArea?.city ?? 'Pick an area'),
+                        trailing: TextButton(
+                          onPressed: () {
+                            setSheetState(() {
+                              showAreaList = !showAreaList;
+                            });
+                          },
+                          child: const Text('Change'),
+                        ),
+                      ),
+                      if (showAreaList)
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 220),
+                          child: ListView(
+                            shrinkWrap: true,
+                            children: driveAreas
+                                .map(
+                                  (area) => ListTile(
+                                    title: Text(area.name),
+                                    subtitle: Text(area.city),
+                                    onTap: () async {
+                                      await setActiveDriveArea(area);
+                                      if (!mounted) return;
+                                      setSheetState(() {
+                                        showAreaList = false;
+                                      });
+                                    },
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: activeDriveArea == null
+                            ? null
+                            : () => setSheetState(() => step = 2),
+                        child: const Text('Continue'),
+                      ),
+                    ] else ...[
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      activeDriveArea?.name ?? 'Mission',
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${areaCoveragePercent.toStringAsFixed(0)}%',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF2563EB),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              LinearProgressIndicator(
+                                value: areaCoveragePercent / 100,
+                                minHeight: 4,
+                              ),
+                              const SizedBox(height: 14),
+                              Text(
+                                previewTitle,
+                                style: const TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                previewHelper,
+                                style: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  Chip(label: Text(availableTimeLabel)),
+                                  Chip(
+                                    label: Text(
+                                      '${previewStreets.length} streets selected',
+                                    ),
+                                  ),
+                                  Chip(
+                                    label: Text(
+                                      '${missionRemainingCoveragePercent.toStringAsFixed(0)}% coverage gain',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (!noTimeFit &&
+                                  hasAreaStreetData &&
+                                  previewStreets.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  '~$sessionsToFinish more sessions to finish this area.',
+                                  style: const TextStyle(
+                                    color: Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ],
+                              if (!hasAreaStreetData) ...[
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'This area has no loaded streets. Try a larger area or import street data for this market.',
+                                  style: TextStyle(color: Color(0xFF6B7280)),
+                                ),
+                              ] else if (shouldSuggestMarketMap) ...[
+                                const SizedBox(height: 8),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.analytics),
+                                  label: Text(
+                                    isBuildingMarketMap
+                                        ? 'Analyzing area...'
+                                        : 'Find Motivated Sellers',
+                                  ),
+                                  onPressed:
+                                      isBuildingMarketMap ||
+                                          activeDriveArea == null
+                                      ? null
+                                      : () async {
+                                          await buildMarketMap();
+                                          if (!sheetContext.mounted) return;
+                                          setSheetState(() {});
+                                        },
+                                ),
+                                const SizedBox(height: 4),
+                                const _MotivatedSellersDescription(),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (noTimeFit) ...[
+                        TextButton(
+                          onPressed: () {
+                            setSheetState(() {
+                              rememberAsDefault = false;
+                              isCustom = false;
+                              step = 0;
+                            });
+                          },
+                          child: const Text('Change time'),
+                        ),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.route),
+                          label: const Text('Start default mission'),
+                          onPressed: isSavingMission || activeDriveArea == null
+                              ? null
+                              : () async {
+                                  Navigator.pop(sheetContext);
+                                  await generateMission(
+                                    currentStreetOpportunities,
+                                    includeUnscored:
+                                        includeUnscoredMissionStreets,
+                                  );
+                                },
+                        ),
+                        FilledButton.icon(
+                          icon: const Icon(Icons.arrow_forward),
+                          label: const Text(
+                            'Use best available streets anyway',
+                          ),
+                          onPressed:
+                              isSavingMission ||
+                                  activeDriveArea == null ||
+                                  forcedBestAvailableStreets.isEmpty
+                              ? null
+                              : () async {
+                                  Navigator.pop(sheetContext);
+                                  setState(() {
+                                    selectedMissionTimeBudgetMinutes =
+                                        selectedBudget;
+                                  });
+                                  await generateMission(
+                                    currentStreetOpportunities,
+                                    timeBudgetMinutes: selectedBudget,
+                                    includeUnscored:
+                                        includeUnscoredMissionStreets,
+                                    forceAtLeastOne: true,
+                                  );
+                                },
+                        ),
+                      ] else ...[
+                        FilledButton.icon(
+                          icon: const Icon(Icons.arrow_forward),
+                          label: const Text('Start Driving ->'),
+                          onPressed:
+                              previewStreets.isEmpty ||
+                                  isSavingMission ||
+                                  activeDriveArea == null
+                              ? null
+                              : () async {
+                                  Navigator.pop(sheetContext);
+                                  setState(() {
+                                    selectedMissionTimeBudgetMinutes =
+                                        selectedBudget;
+                                  });
+                                  await generateMission(
+                                    currentStreetOpportunities,
+                                    timeBudgetMinutes: timeMissionsEnabled
+                                        ? selectedBudget
+                                        : null,
+                                    includeUnscored:
+                                        includeUnscoredMissionStreets,
+                                  );
+                                },
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (timeMissionsEnabled)
+                              TextButton(
+                                onPressed: () {
+                                  setSheetState(() {
+                                    rememberAsDefault = false;
+                                    isCustom = false;
+                                    step = 0;
+                                  });
+                                },
+                                child: const Text('Change time'),
+                              ),
+                            if (timeMissionsEnabled)
+                              const Text(
+                                '-',
+                                style: TextStyle(color: Color(0xFF6B7280)),
+                              ),
+                            TextButton(
+                              onPressed: () {
+                                Navigator.pop(sheetContext);
+                                openWeeklyPlannerSheet(
+                                  currentStreetOpportunities,
+                                );
+                              },
+                              child: const Text('Plan my week'),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ],
-                ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     ).whenComplete(() => disposeModalTextController(customController));
   }
@@ -10078,116 +10123,122 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
       isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                activeDriveArea?.name ?? 'Mission',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (context) => driveFrostedBottomSheet(
+        context,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  activeDriveArea?.name ?? 'Mission',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              LinearProgressIndicator(
-                value:
-                    (safePercent(missionCoveredCount, missionStreetTotal) / 100)
-                        .clamp(0, 1),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '$missionCoveredCount of $missionStreetTotal streets - ${missionEstimatedMinutesRemaining}m left',
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                nextMissionStreet == null
-                    ? 'Mission streets complete'
-                    : 'Next: ${nextMissionStreet.street.streetName.isEmpty ? 'Unnamed street' : nextMissionStreet.street.streetName}',
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  Chip(label: Text('$missionLeadsFound leads')),
-                  Chip(label: Text('${missionMiles.toStringAsFixed(2)} mi')),
-                  if (hasMissionOpportunityScore)
-                    Chip(
-                      label: Text(
-                        '${missionOpportunityRemaining.toStringAsFixed(0)} opp left',
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value:
+                      (safePercent(missionCoveredCount, missionStreetTotal) /
+                              100)
+                          .clamp(0, 1),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '$missionCoveredCount of $missionStreetTotal streets - ${missionEstimatedMinutesRemaining}m left',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  nextMissionStreet == null
+                      ? 'Mission streets complete'
+                      : 'Next: ${nextMissionStreet.street.streetName.isEmpty ? 'Unnamed street' : nextMissionStreet.street.streetName}',
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    Chip(label: Text('$missionLeadsFound leads')),
+                    Chip(label: Text('${missionMiles.toStringAsFixed(2)} mi')),
+                    if (hasMissionOpportunityScore)
+                      Chip(
+                        label: Text(
+                          '${missionOpportunityRemaining.toStringAsFixed(0)} opp left',
+                        ),
+                      ),
+                  ],
+                ),
+                if (mission.missionStartPoint != null) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.alt_route),
+                    label: const Text('Route to Start'),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      unawaited(showRouteToMissionStart());
+                    },
+                  ),
+                ],
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Show only active area'),
+                  value: showOnlyActiveArea,
+                  onChanged: (value) {
+                    setState(() {
+                      showOnlyActiveArea = value;
+                    });
+                    Navigator.pop(context);
+                  },
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      icon: Icon(
+                        isTracking ? Icons.navigation : Icons.play_arrow,
+                      ),
+                      label: Text(isTracking ? 'Driving' : 'Start Driving'),
+                      onPressed: isTracking ? null : startMissionDriving,
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.pause),
+                      label: const Text('Pause'),
+                      onPressed: pauseMission,
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.check),
+                      label: const Text('Complete'),
+                      onPressed: () => completeMission(
+                        streetsCovered: missionCoveredCount,
+                        opportunityCaptured: missionOpportunityCaptured,
+                        leadsFound: missionLeadsFound,
+                        milesDriven: missionMiles,
+                        closeContext: context,
                       ),
                     ),
-                ],
-              ),
-              if (mission.missionStartPoint != null) ...[
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.alt_route),
-                  label: const Text('Route to Start'),
-                  onPressed: () {
+                  ],
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Time-based missions'),
+                  value: timeMissionsEnabled,
+                  onChanged: (value) async {
+                    await saveTimeMissionsEnabled(value);
+                    if (!context.mounted) return;
                     Navigator.pop(context);
-                    unawaited(showRouteToMissionStart());
                   },
                 ),
               ],
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Show only active area'),
-                value: showOnlyActiveArea,
-                onChanged: (value) {
-                  setState(() {
-                    showOnlyActiveArea = value;
-                  });
-                  Navigator.pop(context);
-                },
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.icon(
-                    icon: Icon(
-                      isTracking ? Icons.navigation : Icons.play_arrow,
-                    ),
-                    label: Text(isTracking ? 'Driving' : 'Start Driving'),
-                    onPressed: isTracking ? null : startMissionDriving,
-                  ),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.pause),
-                    label: const Text('Pause'),
-                    onPressed: pauseMission,
-                  ),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.check),
-                    label: const Text('Complete'),
-                    onPressed: () => completeMission(
-                      streetsCovered: missionCoveredCount,
-                      opportunityCaptured: missionOpportunityCaptured,
-                      leadsFound: missionLeadsFound,
-                      milesDriven: missionMiles,
-                      closeContext: context,
-                    ),
-                  ),
-                ],
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Time-based missions'),
-                value: timeMissionsEnabled,
-                onChanged: (value) async {
-                  await saveTimeMissionsEnabled(value);
-                  if (!context.mounted) return;
-                  Navigator.pop(context);
-                },
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -11989,7 +12040,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
-  Widget parcelPreviewRow(String label, String value) {
+  Widget parcelPreviewRow(String label, String value, {required bool dark}) {
+    final labelColor = dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final valueColor = dark ? Colors.white : const Color(0xFF0F172A);
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -11999,19 +12053,29 @@ class _DrivingScreenState extends State<DrivingScreen> {
             width: 128,
             child: Text(
               label,
-              style: const TextStyle(fontWeight: FontWeight.bold),
+              style: TextStyle(color: labelColor, fontWeight: FontWeight.bold),
             ),
           ),
-          Expanded(child: Text(value)),
+          Expanded(
+            child: Text(value, style: TextStyle(color: valueColor)),
+          ),
         ],
       ),
     );
   }
 
   void showParcelPreview(ParcelProperty parcel) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final sheetColor = dark ? const Color(0xFF1C2333) : Colors.white;
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: sheetColor,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
       builder: (sheetContext) {
         var isSaving = false;
         // Distress flags captured live while looking at the property.
@@ -12025,6 +12089,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            final dark = Theme.of(context).brightness == Brightness.dark;
+            final titleColor = dark ? Colors.white : const Color(0xFF0F172A);
+            final subtleDividerColor = dark
+                ? const Color(0x1AFFFFFF)
+                : const Color(0x1A000000);
             final smartScore = calculateSmartLeadScore(
               vacantAppearance: vacant,
               roofDamage: roof,
@@ -12051,9 +12120,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text(
+                      Text(
                         'Property Preview',
                         style: TextStyle(
+                          color: titleColor,
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
                         ),
@@ -12077,70 +12147,101 @@ class _DrivingScreenState extends State<DrivingScreen> {
                         ),
                         const SizedBox(height: 12),
                       ],
-                      parcelPreviewRow('Address', parcel.displayAddress),
-                      parcelPreviewRow('Owner', parcel.ownerName ?? 'Not set'),
+                      parcelPreviewRow(
+                        'Address',
+                        parcel.displayAddress,
+                        dark: dark,
+                      ),
+                      parcelPreviewRow(
+                        'Owner',
+                        parcel.ownerName ?? 'Not set',
+                        dark: dark,
+                      ),
                       parcelPreviewRow(
                         'Mailing',
                         parcel.mailingAddress ?? 'Not set',
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Out of state',
                         parcel.outOfStateOwner ? 'Yes' : 'No',
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Type',
                         parcel.propertyType ?? 'Not set',
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Year built',
                         parcel.yearBuilt?.toString() ?? 'Not set',
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Sq ft',
                         formatDecimal(parcel.squareFeet),
+                        dark: dark,
                       ),
-                      parcelPreviewRow('Lot', parcel.lotSizeDisplay),
+                      parcelPreviewRow(
+                        'Lot',
+                        parcel.lotSizeDisplay,
+                        dark: dark,
+                      ),
                       parcelPreviewRow(
                         'Assessed',
                         formatMoney(parcel.assessedValue),
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Land value',
                         formatMoney(parcel.landValue),
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Imp value',
                         formatMoney(parcel.improvementValue),
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Baths',
                         formatDecimal(parcel.bathrooms),
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Stories',
                         formatDecimal(parcel.stories),
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Sale price',
                         formatMoney(parcel.salePrice),
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Sale date',
                         parcel.saleDate ?? 'Not set',
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Deed type',
                         parcel.deedType ?? 'Not set',
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Document date',
                         parcel.documentDate ?? 'Not set',
+                        dark: dark,
                       ),
                       parcelPreviewRow(
                         'Reception no',
                         parcel.receptionNo ?? 'Not set',
+                        dark: dark,
                       ),
-                      const Divider(height: 32),
+                      Divider(
+                        height: 32,
+                        thickness: 1,
+                        color: subtleDividerColor,
+                      ),
                       if (existingLead != null) ...[
                         Row(
                           children: [
@@ -12219,7 +12320,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 16),
+                        Divider(
+                          height: 32,
+                          thickness: 1,
+                          color: subtleDividerColor,
+                        ),
                         SizedBox(
                           width: double.infinity,
                           height: 48,
@@ -12815,123 +12920,130 @@ class _DrivingScreenState extends State<DrivingScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
       builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            void apply(VoidCallback change) {
-              setSheetState(change);
-              setState(() {});
-            }
+        return driveFrostedBottomSheet(
+          sheetContext,
+          child: StatefulBuilder(
+            builder: (sheetContext, setSheetState) {
+              void apply(VoidCallback change) {
+                setSheetState(change);
+                setState(() {});
+              }
 
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: 20,
-                  right: 20,
-                  top: 20,
-                  bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Lead Map Filters',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+              return SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 20,
+                    right: 20,
+                    top: 20,
+                    bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Lead Map Filters',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Show leads on map'),
-                        value: showLeadsOnMap,
-                        onChanged: (value) =>
-                            apply(() => showLeadsOnMap = value),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Pipeline stage',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 4,
-                        children: leadStatusOptions.map((stage) {
-                          final selected = selectedLeadStages.contains(stage);
-                          return FilterChip(
-                            label: Text(stage),
-                            selected: selected,
-                            onSelected: (value) => apply(() {
-                              if (value) {
-                                selectedLeadStages.add(stage);
-                              } else {
-                                selectedLeadStages.remove(stage);
-                              }
-                            }),
-                          );
-                        }).toList(),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          TextButton(
-                            onPressed: () => apply(
-                              () => selectedLeadStages = {...leadStatusOptions},
+                        const SizedBox(height: 12),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Show leads on map'),
+                          value: showLeadsOnMap,
+                          onChanged: (value) =>
+                              apply(() => showLeadsOnMap = value),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Pipeline stage',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: leadStatusOptions.map((stage) {
+                            final selected = selectedLeadStages.contains(stage);
+                            return FilterChip(
+                              label: Text(stage),
+                              selected: selected,
+                              onSelected: (value) => apply(() {
+                                if (value) {
+                                  selectedLeadStages.add(stage);
+                                } else {
+                                  selectedLeadStages.remove(stage);
+                                }
+                              }),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: () => apply(
+                                () =>
+                                    selectedLeadStages = {...leadStatusOptions},
+                              ),
+                              child: const Text('Select all'),
                             ),
-                            child: const Text('Select all'),
-                          ),
-                          TextButton(
-                            onPressed: () =>
-                                apply(() => selectedLeadStages = {}),
-                            child: const Text('Clear'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Filter by minimum lead score'),
-                        value: useMinLeadScore,
-                        onChanged: (value) =>
-                            apply(() => useMinLeadScore = value),
-                      ),
-                      Text(
-                        'Minimum lead score: ${minLeadScore.round()}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: useMinLeadScore
-                              ? null
-                              : Theme.of(sheetContext).disabledColor,
+                            TextButton(
+                              onPressed: () =>
+                                  apply(() => selectedLeadStages = {}),
+                              child: const Text('Clear'),
+                            ),
+                          ],
                         ),
-                      ),
-                      Slider(
-                        min: 0,
-                        max: 100,
-                        divisions: 100,
-                        label: minLeadScore.round().toString(),
-                        value: minLeadScore,
-                        onChanged: useMinLeadScore
-                            ? (value) => apply(() => minLeadScore = value)
-                            : null,
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: () => Navigator.pop(sheetContext),
-                          child: const Text('Done'),
+                        const SizedBox(height: 8),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Filter by minimum lead score'),
+                          value: useMinLeadScore,
+                          onChanged: (value) =>
+                              apply(() => useMinLeadScore = value),
                         ),
-                      ),
-                    ],
+                        Text(
+                          'Minimum lead score: ${minLeadScore.round()}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: useMinLeadScore
+                                ? null
+                                : Theme.of(sheetContext).disabledColor,
+                          ),
+                        ),
+                        Slider(
+                          min: 0,
+                          max: 100,
+                          divisions: 100,
+                          label: minLeadScore.round().toString(),
+                          value: minLeadScore,
+                          onChanged: useMinLeadScore
+                              ? (value) => apply(() => minLeadScore = value)
+                              : null,
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.pop(sheetContext),
+                            child: const Text('Done'),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );
@@ -13250,8 +13362,33 @@ class _DrivingScreenState extends State<DrivingScreen> {
     final activeCityLabel = MarketService.getActiveCity().isEmpty
         ? selectedCoverageCity
         : MarketService.getActiveCity();
+    const mapHeaderTextShadows = <Shadow>[
+      Shadow(color: Colors.black54, blurRadius: 4),
+    ];
+
+    Widget mapHeaderPill({
+      required Widget child,
+      VoidCallback? onTap,
+      String? tooltip,
+    }) {
+      final pill = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0x66000000),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: child,
+        ),
+      );
+
+      return tooltip == null ? pill : Tooltip(message: tooltip, child: pill);
+    }
 
     return Scaffold(
+      extendBodyBehindAppBar: true,
       body: Stack(
         children: [
           Positioned.fill(
@@ -15426,15 +15563,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
               child: Container(
                 height: 56,
                 padding: const EdgeInsets.symmetric(horizontal: 18),
-                color: const Color(0xE6111827),
+                color: Colors.transparent,
                 child: Row(
                   children: [
                     Expanded(
                       child: Row(
                         children: [
                           Flexible(
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
+                            child: mapHeaderPill(
                               onTap: handleFieldTestTitleTap,
                               child: Text(
                                 activeDriveArea?.name ?? 'Market Coverage',
@@ -15444,43 +15580,57 @@ class _DrivingScreenState extends State<DrivingScreen> {
                                   color: Colors.white,
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
+                                  shadows: mapHeaderTextShadows,
                                 ),
                               ),
                             ),
                           ),
                           const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 6),
+                            padding: EdgeInsets.zero,
                             child: Text(
                               '·',
                               style: TextStyle(
-                                color: Color(0xFFCBD5E1),
-                                fontSize: 18,
+                                color: Colors.transparent,
+                                fontSize: 0,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
-                          Tooltip(
-                            message: isTracking
-                                ? 'Stop tracking before changing markets'
-                                : 'Search markets',
-                            child: TextButton.icon(
-                              icon: const Icon(Icons.search, size: 16),
-                              label: Text(
-                                activeCityLabel,
-                                overflow: TextOverflow.ellipsis,
+                          Flexible(
+                            child: mapHeaderPill(
+                              tooltip: isTracking
+                                  ? 'Stop tracking before changing markets'
+                                  : 'Search markets',
+                              onTap: isTracking ? null : openMarketPicker,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.search,
+                                    size: 18,
+                                    color: isTracking
+                                        ? const Color(0xFF9CA3AF)
+                                        : Colors.white,
+                                    shadows: mapHeaderTextShadows,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      activeCityLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: isTracking
+                                            ? const Color(0xFF9CA3AF)
+                                            : Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        shadows: mapHeaderTextShadows,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              style: TextButton.styleFrom(
-                                foregroundColor: Colors.white,
-                                disabledForegroundColor: const Color(
-                                  0xFF9CA3AF,
-                                ),
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 6,
-                                ),
-                              ),
-                              onPressed: isTracking ? null : openMarketPicker,
                             ),
                           ),
                         ],
@@ -17663,6 +17813,16 @@ class _LeadListRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = dark ? const Color(0xFF1C2333) : Colors.white;
+    final primaryTextColor = dark ? Colors.white : const Color(0xFF0F172A);
+    final secondaryTextColor = dark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
+    final chevronColor = dark
+        ? const Color(0xFF64748B)
+        : const Color(0xFF9CA3AF);
+    final scoreColor = leadScoreColor(lead.score);
     final stage = normalizeLeadStage(lead.status);
     final lastSaleDate = lead.saleData.lastSaleDate.isEmpty
         ? 'No sale date'
@@ -17688,16 +17848,13 @@ class _LeadListRow extends StatelessWidget {
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        color: leadScoreColor(lead.score).withValues(alpha: 0.12),
+        color: scoreColor.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Center(
         child: Text(
           lead.score.toString(),
-          style: TextStyle(
-            color: leadScoreColor(lead.score),
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: scoreColor, fontWeight: FontWeight.bold),
         ),
       ),
     );
@@ -17708,8 +17865,8 @@ class _LeadListRow extends StatelessWidget {
           primaryLabel,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF111827),
+          style: TextStyle(
+            color: primaryTextColor,
             fontSize: 16,
             fontWeight: FontWeight.bold,
           ),
@@ -17719,60 +17876,68 @@ class _LeadListRow extends StatelessWidget {
           detailLine,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Color(0xFF6B7280)),
+          style: TextStyle(color: secondaryTextColor),
         ),
       ],
     );
 
     return Card(
+      color: cardColor,
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final isCompact = constraints.maxWidth < 520;
-            final chips = Wrap(spacing: 8, runSpacing: 8, children: infoChips);
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border(left: BorderSide(color: scoreColor, width: 3)),
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isCompact = constraints.maxWidth < 520;
+              final chips = Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: infoChips,
+              );
 
-            if (isCompact) {
+              if (isCompact) {
+                return Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          scoreBox,
+                          const SizedBox(width: 12),
+                          Expanded(child: titleBlock),
+                          const SizedBox(width: 8),
+                          Icon(Icons.chevron_right, color: chevronColor),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      chips,
+                    ],
+                  ),
+                );
+              }
+
               return Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                padding: const EdgeInsets.all(16),
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        scoreBox,
-                        const SizedBox(width: 12),
-                        Expanded(child: titleBlock),
-                        const SizedBox(width: 8),
-                        const Icon(
-                          Icons.chevron_right,
-                          color: Color(0xFF9CA3AF),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    chips,
+                    scoreBox,
+                    const SizedBox(width: 14),
+                    Expanded(flex: 3, child: titleBlock),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 2, child: chips),
+                    const SizedBox(width: 8),
+                    Icon(Icons.chevron_right, color: chevronColor),
                   ],
                 ),
               );
-            }
-
-            return Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  scoreBox,
-                  const SizedBox(width: 14),
-                  Expanded(flex: 3, child: titleBlock),
-                  const SizedBox(width: 12),
-                  Expanded(flex: 2, child: chips),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF)),
-                ],
-              ),
-            );
-          },
+            },
+          ),
         ),
       ),
     );
@@ -17787,25 +17952,31 @@ class _MiniInfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final chipColor = dark ? const Color(0xFF1E293B) : const Color(0xFFF3F4F6);
+    final contentColor = dark
+        ? const Color(0xFF64748B)
+        : const Color(0xFF374151);
+
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 190),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
-          color: const Color(0xFFF3F4F6),
+          color: chipColor,
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: const Color(0xFF6B7280)),
+            Icon(icon, size: 14, color: contentColor),
             const SizedBox(width: 4),
             Flexible(
               child: Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFF374151), fontSize: 12),
+                style: TextStyle(color: contentColor, fontSize: 12),
               ),
             ),
           ],
