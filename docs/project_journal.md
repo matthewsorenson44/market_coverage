@@ -125,6 +125,14 @@ Bug status meanings:
 
 ## Recent Work Log
 
+### 2026-06-26
+
+- Built Step 3 of the Market Coverage OS 2.0 design system: domain components for future screen redesigns.
+- Added new design-system components only under `lib/design_system/components/`: `LeadCard`, `MissionCard`, `PropertyCard`, `EmptyState`, `LoadingState`, and `ErrorState`.
+- Updated the design-system barrel export and debug gallery to preview the six domain components with realistic Lead, Mission, and ParcelProperty sample data.
+- Preserved current app screens and did not modify `lib/main.dart`.
+- Validation for domain components: `dart format lib/design_system/`, `flutter analyze`, and `flutter test` passed with 111 tests.
+
 ### 2026-06-25
 
 - Added `AGENTS.md` and this project journal so future Codex work starts with product context.

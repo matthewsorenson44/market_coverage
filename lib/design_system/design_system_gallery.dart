@@ -1,11 +1,19 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 
+import '../main.dart';
 import 'components/app_badge.dart';
 import 'components/app_button.dart';
 import 'components/app_card.dart';
 import 'components/app_chip.dart';
 import 'components/app_text_field.dart';
+import 'components/empty_state.dart';
+import 'components/error_state.dart';
+import 'components/lead_card.dart';
+import 'components/loading_state.dart';
+import 'components/mission_card.dart';
+import 'components/property_card.dart';
 import 'tokens/app_animations.dart';
 import 'tokens/app_colors.dart';
 import 'tokens/app_shadows.dart';
@@ -136,6 +144,7 @@ class DesignSystemGallery extends StatelessWidget {
             ),
           ),
           const _PrimitiveComponentsSection(),
+          const _DomainComponentsSection(),
         ],
       ),
     );
@@ -615,6 +624,109 @@ class _BadgeSamples extends StatelessWidget {
   }
 }
 
+class _DomainComponentsSection extends StatelessWidget {
+  const _DomainComponentsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Domain Components',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _GalleryGroup(
+            title: 'LeadCard',
+            child: Column(
+              children: [
+                LeadCard(
+                  lead: _galleryLead,
+                  showMissionBadge: true,
+                  onTap: () {},
+                  onLongPress: () {},
+                ),
+                const SizedBox(height: AppSpacing.md),
+                LeadCard(lead: _galleryLead, isCompact: true, onTap: () {}),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(
+            title: 'MissionCard',
+            child: Column(
+              children: [
+                MissionCard(mission: _activeMission, onTap: () {}),
+                const SizedBox(height: AppSpacing.md),
+                MissionCard(mission: _completedMission, onTap: () {}),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(
+            title: 'PropertyCard',
+            child: Column(
+              children: [
+                PropertyCard(
+                  property: _galleryProperty,
+                  targetScore: _galleryProperty.targetScore?.round(),
+                  onAddLead: () {},
+                  onDismiss: () {},
+                ),
+                const SizedBox(height: AppSpacing.md),
+                PropertyCard(
+                  property: _galleryProperty,
+                  targetScore: _galleryProperty.targetScore?.round(),
+                  variant: PropertyCardVariant.target,
+                  onAddLead: () {},
+                ),
+                const SizedBox(height: AppSpacing.md),
+                PropertyCard(
+                  property: _galleryProperty,
+                  targetScore: _galleryProperty.targetScore?.round(),
+                  variant: PropertyCardVariant.compact,
+                  onAddLead: () {},
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(
+            title: 'EmptyState',
+            child: Column(
+              children: [
+                EmptyState.noLeads(),
+                const SizedBox(height: AppSpacing.md),
+                EmptyState.searchEmpty(query: 'vacant house on maple'),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+          const _GalleryGroup(
+            title: 'LoadingState',
+            child: Column(
+              children: [
+                LoadingState.parcels(),
+                SizedBox(height: AppSpacing.md),
+                LoadingState(message: 'Loading market coverage...'),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+          _GalleryGroup(
+            title: 'ErrorState',
+            child: Column(
+              children: [
+                ErrorState.parcelLookup(onRetry: () {}),
+                const SizedBox(height: AppSpacing.md),
+                const ErrorState.syncFailed(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ColorToken {
   final String name;
   final Color color;
@@ -737,3 +849,116 @@ final List<_TextToken> _animationTokens = [
   _TextToken('exitCurve', AppAnimations.exitCurve.toString()),
   _TextToken('springCurve', AppAnimations.springCurve.toString()),
 ];
+
+final Lead _galleryLead = Lead(
+  id: 'gallery-lead',
+  address: '4612 S 178 AV E',
+  condition: 'Exterior wear',
+  notes: 'Tall grass, deferred maintenance, and vacant appearance.',
+  status: 'New Lead',
+  source: 'Driving For Dollars',
+  scoreData: const LeadScoreData(
+    brokenWindows: false,
+    roofDamage: true,
+    tallGrass: true,
+    trashInYard: false,
+    exteriorWear: true,
+    vacantAppearance: true,
+    score: 70,
+    scoreOverride: false,
+  ),
+  parcelData: const LeadParcelData(
+    ownerName: 'CARRASCO, ROSLY M',
+    mailingAddress: 'PO BOX 1122, DALLAS, TX 75201',
+    outOfStateOwner: true,
+    assessedValue: 190000,
+    propertyType: 'Residential',
+    lotSize: '0.19 acres',
+    yearBuilt: 1978,
+  ),
+  reminderData: LeadReminderData(
+    lastVisitedDate: DateTime(2026, 6, 24),
+    reminderDate: DateTime(2026, 7, 1),
+    followUpStatus: 'Needs Revisit',
+  ),
+  offerData: const LeadOfferData(
+    arv: 245000,
+    repairCost: 35000,
+    assignmentFee: 10000,
+  ),
+  saleData: const LeadSaleData(
+    lastSaleDate: '09-01-2020',
+    lastSalePrice: 190000,
+    deedType: 'WD',
+    documentDate: '09-04-2020',
+    receptionNo: '2020090101',
+  ),
+  createdAt: DateTime(2026, 6, 24),
+  latitude: 36.26927,
+  longitude: -95.85838,
+);
+
+final MissionCardData _activeMission = MissionCardData(
+  id: 'mission-active',
+  areaName: 'North Owasso',
+  status: 'active',
+  streetCount: 200,
+  coveredStreetCount: 47,
+  timeBudgetMinutes: 58,
+  actualMinutes: null,
+  opportunityAtStart: 153,
+  leadsFound: 3,
+  createdAt: DateTime(2026, 6, 24),
+  completedAt: null,
+  scheduledDate: DateTime(2026, 6, 26),
+);
+
+final MissionCardData _completedMission = MissionCardData(
+  id: 'mission-completed',
+  areaName: 'North Owasso',
+  status: 'completed',
+  streetCount: 120,
+  coveredStreetCount: 120,
+  timeBudgetMinutes: 60,
+  actualMinutes: 54,
+  opportunityAtStart: 88,
+  leadsFound: 6,
+  createdAt: DateTime(2026, 6, 20),
+  completedAt: DateTime(2026, 6, 20),
+  scheduledDate: DateTime(2026, 6, 20),
+);
+
+final ParcelProperty _galleryProperty = ParcelProperty(
+  accountNo: 'R61400143007690',
+  parcelNo: '61400143007690',
+  propertyAddress: '13314 E 89 ST N',
+  ownerName: 'SLANKARD, PHILLIP D TRUSTEE',
+  mailingAddress: '7812 N 146TH E AVE, OWASSO, OK 74055',
+  mailingState: 'OK',
+  propertyType: 'Residential',
+  yearBuilt: 1997,
+  squareFeet: 1788,
+  lotAcres: 0.21,
+  assessedValue: 264400,
+  landValue: 23000,
+  improvementValue: 241400,
+  taxableValue: 170171,
+  saleDate: '06-01-2004',
+  salePrice: 137000,
+  deedType: 'HIST S',
+  documentDate: '',
+  receptionNo: '2000165732',
+  bathrooms: 2,
+  stories: 1,
+  centroid: const LatLng(36.26927, -95.85838),
+  rings: [
+    const [
+      LatLng(36.2691, -95.8586),
+      LatLng(36.2691, -95.8581),
+      LatLng(36.2695, -95.8581),
+      LatLng(36.2695, -95.8586),
+    ],
+  ],
+  targetScore: 34,
+  scoreBreakdown: const {'out_of_state_owner': false},
+);
