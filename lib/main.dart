@@ -2682,6 +2682,23 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     });
   }
 
+  Future<void> deleteLead(String leadId) async {
+    final accountId = activeAccountId;
+    if (accountId == null) return;
+
+    await supabase
+        .from('leads')
+        .delete()
+        .eq('account_id', accountId)
+        .eq('id', leadId);
+
+    if (!mounted) return;
+
+    setState(() {
+      leads.removeWhere((lead) => lead.id == leadId);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
@@ -2707,6 +2724,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
               onUpdateLeadParcelData: updateLeadParcelData,
               onUpdateLeadReminderData: updateLeadReminderData,
               onUpdateLeadOfferData: updateLeadOfferData,
+              onDeleteLead: deleteLead,
               onRefreshLeads: loadLeads,
             ),
           ),
@@ -2962,6 +2980,7 @@ class MarketCoverageRootScreen extends StatefulWidget {
   onUpdateLeadReminderData;
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
+  final Future<void> Function(String leadId) onDeleteLead;
   final Future<void> Function() onRefreshLeads;
 
   const MarketCoverageRootScreen({
@@ -2978,6 +2997,7 @@ class MarketCoverageRootScreen extends StatefulWidget {
     required this.onUpdateLeadParcelData,
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
+    required this.onDeleteLead,
     required this.onRefreshLeads,
   });
 
@@ -3055,6 +3075,7 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onUpdateLeadParcelData: widget.onUpdateLeadParcelData,
         onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
         onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
+        onDeleteLead: widget.onDeleteLead,
         onRefreshLeads: widget.onRefreshLeads,
         onOpenAreas: openAreasTab,
       ),
@@ -3067,6 +3088,7 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onUpdateLeadParcelData: widget.onUpdateLeadParcelData,
         onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
         onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
+        onDeleteLead: widget.onDeleteLead,
       ),
       _AreasTab(
         driveScreenKey: driveScreenKey,
@@ -6075,6 +6097,7 @@ class DashboardScreen extends StatelessWidget {
                                               onUpdateLeadReminderData,
                                           onUpdateLeadOfferData:
                                               onUpdateLeadOfferData,
+                                          onDeleteLead: (leadId) async {},
                                           onRefreshLeads: () async {},
                                           onOpenAreas: () {},
                                         ),
@@ -6287,6 +6310,7 @@ class DashboardScreen extends StatelessWidget {
                                                   onUpdateLeadReminderData,
                                               onUpdateLeadOfferData:
                                                   onUpdateLeadOfferData,
+                                              onDeleteLead: (leadId) async {},
                                               onRefreshLeads: () async {},
                                               onOpenAreas: () {},
                                             ),
@@ -6552,6 +6576,7 @@ class DrivingScreen extends StatefulWidget {
   onUpdateLeadReminderData;
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
+  final Future<void> Function(String leadId) onDeleteLead;
   final Future<void> Function() onRefreshLeads;
   final VoidCallback onOpenAreas;
 
@@ -6567,6 +6592,7 @@ class DrivingScreen extends StatefulWidget {
     required this.onUpdateLeadParcelData,
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
+    required this.onDeleteLead,
     required this.onRefreshLeads,
     required this.onOpenAreas,
   });
@@ -6754,7 +6780,11 @@ class _DrivingScreenState extends State<DrivingScreen>
 
   Future<void> loadMapStylePreference() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedStyle = prefs.getString(mapStylePrefsKey) ?? 'auto';
+    var savedStyle = prefs.getString(mapStylePrefsKey) ?? 'auto';
+    if (savedStyle == 'standard') {
+      await prefs.remove(mapStylePrefsKey);
+      savedStyle = 'auto';
+    }
     if (!mounted) return;
 
     setState(() {
@@ -6786,7 +6816,7 @@ class _DrivingScreenState extends State<DrivingScreen>
 
   String get activeMapStyle {
     if (mapStylePreference != 'auto') return mapStylePreference;
-    return effectiveTileBrightness() == Brightness.dark ? 'dark' : 'standard';
+    return 'auto';
   }
 
   void openMapStylePicker() {
@@ -6865,19 +6895,13 @@ class _DrivingScreenState extends State<DrivingScreen>
                   icon: Icons.auto_mode,
                   label: 'Auto (follows theme)',
                   subtitle:
-                      'Dark mode uses night tiles, light mode uses standard.',
+                      'Dark mode uses night tiles, light mode uses street tiles.',
                 ),
                 option(
                   style: 'dark',
                   icon: Icons.dark_mode_outlined,
                   label: 'Dark',
                   subtitle: 'Best for night driving',
-                ),
-                option(
-                  style: 'standard',
-                  icon: Icons.map_outlined,
-                  label: 'Standard',
-                  subtitle: 'Detailed streets',
                 ),
                 option(
                   style: 'minimal',
@@ -12121,6 +12145,28 @@ class _DrivingScreenState extends State<DrivingScreen>
     return leadStatusColor(lead.status);
   }
 
+  Color get parcelBoundaryColor {
+    if (_currentTileUrl == kTilesSatellite) return const Color(0xE6FFFFFF);
+    if (_currentTileUrl == kTilesDark) return const Color(0xB3CBD5E1);
+    return const Color(0xCC4F5257);
+  }
+
+  Color get selectedParcelBoundaryColor {
+    if (_currentTileUrl == kTilesSatellite) return const Color(0xFFFFD54F);
+    if (_currentTileUrl == kTilesDark) return const Color(0xFF60A5FA);
+    return const Color(0xFF1565C0);
+  }
+
+  Color get selectedParcelFillColor {
+    if (_currentTileUrl == kTilesSatellite) return const Color(0x33FACC15);
+    if (_currentTileUrl == kTilesDark) return const Color(0x262196F3);
+    return const Color(0x262196F3);
+  }
+
+  double get parcelBoundaryStrokeWidth {
+    return _currentTileUrl == kTilesSatellite ? 2.2 : 1.6;
+  }
+
   void openParcelPreview(ParcelProperty parcel) {
     setState(() {
       selectedParcel = parcel;
@@ -12131,8 +12177,8 @@ class _DrivingScreenState extends State<DrivingScreen>
   }
 
   /// Opens the full lead details screen, refreshing this screen after any edit.
-  void openLeadDetails(Lead lead) {
-    Navigator.push(
+  Future<void> openLeadDetails(Lead lead) async {
+    final deleted = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => LeadDetailsScreen(
@@ -12161,9 +12207,23 @@ class _DrivingScreenState extends State<DrivingScreen>
             await widget.onUpdateLeadOfferData(leadId, offerData);
             if (mounted) setState(() {});
           },
+          onDeleteLead: (leadId) async {
+            await widget.onDeleteLead(leadId);
+            if (!mounted) return;
+
+            setState(() {
+              drivingLeads.removeWhere((item) => item.id == leadId);
+            });
+          },
         ),
       ),
     );
+
+    if (!mounted || deleted != true) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Lead deleted.')));
   }
 
   /// Returns the parcel under [point] from the already-loaded visible parcels
@@ -13408,7 +13468,7 @@ class _DrivingScreenState extends State<DrivingScreen>
     final showTargetsMap = mapMode == 'targets';
     final showCoverageMap = mapMode == 'coverage';
     final shouldUseLightweightFollowMap =
-        isTracking && followMyLocation && !showTargetsMap;
+        isTracking && followMyLocation && showDriveMap && !showTargetsMap;
     final shouldDrawParcelLayer =
         showTargetsMap ||
         (!shouldUseLightweightFollowMap &&
@@ -13793,8 +13853,8 @@ class _DrivingScreenState extends State<DrivingScreen>
                               (ring) => Polygon(
                                 points: ring,
                                 color: Colors.transparent,
-                                borderColor: const Color(0xCC4F5257),
-                                borderStrokeWidth: 1.6,
+                                borderColor: parcelBoundaryColor,
+                                borderStrokeWidth: parcelBoundaryStrokeWidth,
                               ),
                             ),
                           )
@@ -13807,9 +13867,10 @@ class _DrivingScreenState extends State<DrivingScreen>
                           .map(
                             (ring) => Polygon(
                               points: ring,
-                              color: const Color(0x262196F3),
-                              borderColor: const Color(0xFF1565C0),
-                              borderStrokeWidth: 4,
+                              color: selectedParcelFillColor,
+                              borderColor: selectedParcelBoundaryColor,
+                              borderStrokeWidth:
+                                  _currentTileUrl == kTilesSatellite ? 4.5 : 4,
                             ),
                           )
                           .toList(),
@@ -14433,10 +14494,9 @@ class _DrivingScreenState extends State<DrivingScreen>
                                           (ring) => Polygon(
                                             points: ring,
                                             color: Colors.transparent,
-                                            borderColor: const Color(
-                                              0xCC4F5257,
-                                            ),
-                                            borderStrokeWidth: 1.6,
+                                            borderColor: parcelBoundaryColor,
+                                            borderStrokeWidth:
+                                                parcelBoundaryStrokeWidth,
                                           ),
                                         ),
                                       )
@@ -14449,9 +14509,13 @@ class _DrivingScreenState extends State<DrivingScreen>
                                       .map(
                                         (ring) => Polygon(
                                           points: ring,
-                                          color: const Color(0x262196F3),
-                                          borderColor: const Color(0xFF1565C0),
-                                          borderStrokeWidth: 4,
+                                          color: selectedParcelFillColor,
+                                          borderColor:
+                                              selectedParcelBoundaryColor,
+                                          borderStrokeWidth:
+                                              _currentTileUrl == kTilesSatellite
+                                              ? 4.5
+                                              : 4,
                                         ),
                                       )
                                       .toList(),
@@ -17231,6 +17295,7 @@ class LeadListScreen extends StatefulWidget {
   onUpdateLeadReminderData;
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
+  final Future<void> Function(String leadId)? onDeleteLead;
 
   const LeadListScreen({
     super.key,
@@ -17242,6 +17307,7 @@ class LeadListScreen extends StatefulWidget {
     required this.onUpdateLeadParcelData,
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
+    this.onDeleteLead,
   });
 
   @override
@@ -17330,8 +17396,8 @@ class _LeadListScreenState extends State<LeadListScreen> {
     );
   }
 
-  void openLeadDetails(Lead lead) {
-    Navigator.push(
+  Future<void> openLeadDetails(Lead lead) async {
+    final deleted = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => LeadDetailsScreen(
@@ -17378,9 +17444,60 @@ class _LeadListScreenState extends State<LeadListScreen> {
               setState(() {});
             }
           },
+          onDeleteLead: widget.onDeleteLead,
         ),
       ),
     );
+
+    if (!mounted || deleted != true) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Lead deleted.')));
+  }
+
+  Future<void> confirmDeleteLead(Lead lead) async {
+    final deleteLead = widget.onDeleteLead;
+    if (deleteLead == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete lead?'),
+        content: Text(
+          'This will permanently delete ${leadPrimaryLabel(lead)} from your leads.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await deleteLead(lead.id);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Lead deleted.')));
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not delete lead.')));
+    }
   }
 
   Widget leadResultsList(List<Lead> filteredLeads, {required bool scroll}) {
@@ -17421,6 +17538,9 @@ class _LeadListScreenState extends State<LeadListScreen> {
             _LeadListRow(
               lead: filteredLeads[index],
               onTap: () => openLeadDetails(filteredLeads[index]),
+              onDelete: widget.onDeleteLead == null
+                  ? null
+                  : () => confirmDeleteLead(filteredLeads[index]),
             ),
             if (index != filteredLeads.length - 1) const SizedBox(height: 10),
           ],
@@ -17435,7 +17555,13 @@ class _LeadListScreenState extends State<LeadListScreen> {
       itemBuilder: (context, index) {
         final lead = filteredLeads[index];
 
-        return _LeadListRow(lead: lead, onTap: () => openLeadDetails(lead));
+        return _LeadListRow(
+          lead: lead,
+          onTap: () => openLeadDetails(lead),
+          onDelete: widget.onDeleteLead == null
+              ? null
+              : () => confirmDeleteLead(lead),
+        );
       },
     );
   }
@@ -18099,8 +18225,9 @@ class _LeadSummaryCard extends StatelessWidget {
 class _LeadListRow extends StatelessWidget {
   final Lead lead;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
 
-  const _LeadListRow({required this.lead, required this.onTap});
+  const _LeadListRow({required this.lead, required this.onTap, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -18171,6 +18298,15 @@ class _LeadListRow extends StatelessWidget {
         ),
       ],
     );
+    final deleteButton = onDelete == null
+        ? null
+        : IconButton(
+            tooltip: 'Delete lead',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.delete_outline),
+            color: const Color(0xFFDC2626),
+            onPressed: onDelete,
+          );
 
     return Card(
       color: cardColor,
@@ -18203,6 +18339,7 @@ class _LeadListRow extends StatelessWidget {
                           const SizedBox(width: 12),
                           Expanded(child: titleBlock),
                           const SizedBox(width: 8),
+                          ?deleteButton,
                           Icon(Icons.chevron_right, color: chevronColor),
                         ],
                       ),
@@ -18223,6 +18360,7 @@ class _LeadListRow extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(flex: 2, child: chips),
                     const SizedBox(width: 8),
+                    ?deleteButton,
                     Icon(Icons.chevron_right, color: chevronColor),
                   ],
                 ),
@@ -18289,6 +18427,7 @@ class LeadDetailsScreen extends StatefulWidget {
   onUpdateLeadReminderData;
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
+  final Future<void> Function(String leadId)? onDeleteLead;
 
   const LeadDetailsScreen({
     super.key,
@@ -18299,6 +18438,7 @@ class LeadDetailsScreen extends StatefulWidget {
     required this.onUpdateLeadParcelData,
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
+    this.onDeleteLead,
   });
 
   @override
@@ -18329,6 +18469,7 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
   bool isSavingParcel = false;
   bool isSavingReminder = false;
   bool isSavingOffer = false;
+  bool isDeletingLead = false;
   bool isLoadingPhotos = true;
   bool isUploadingPhoto = false;
   String? missionAttributionLabel;
@@ -18951,6 +19092,61 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     }
   }
 
+  Future<void> confirmDeleteLead() async {
+    final deleteLead = widget.onDeleteLead;
+    if (deleteLead == null || isDeletingLead) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete lead?'),
+        content: Text(
+          'This will permanently delete ${leadPrimaryLabel(widget.lead)} from your leads.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      isDeletingLead = true;
+    });
+
+    var didPopAfterDelete = false;
+
+    try {
+      await deleteLead(widget.lead.id);
+
+      if (!mounted) return;
+
+      didPopAfterDelete = true;
+      Navigator.pop(context, true);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not delete lead.')));
+    } finally {
+      if (mounted && !didPopAfterDelete) {
+        setState(() {
+          isDeletingLead = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasLocation =
@@ -18968,6 +19164,19 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
         automaticallyImplyLeading: false,
         title: const Text('Lead Details'),
         actions: [
+          if (widget.onDeleteLead != null)
+            IconButton(
+              tooltip: 'Delete lead',
+              icon: isDeletingLead
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_outline),
+              color: const Color(0xFFDC2626),
+              onPressed: isDeletingLead ? null : confirmDeleteLead,
+            ),
           IconButton(
             tooltip: 'Close',
             icon: const Icon(Icons.close),

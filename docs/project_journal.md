@@ -55,7 +55,10 @@ The app should feel dependable in the field before adding more automation:
 - Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
 - Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
-- Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Standard, Minimal, and Satellite.
+- Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
+- Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
+- Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
+- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt.
 - Fix pushed, awaiting user confirmation: Property Preview should no longer overlap the iPhone status bar and should have a sticky top-right X close button.
 - Fix pushed, awaiting user confirmation: Lead Details should have a pinned top-right X close button.
 - Fix pushed, awaiting user confirmation: Mission recap dark-mode cards/text should be readable.
@@ -136,7 +139,7 @@ Bug status meanings:
 - Wired the existing `MaterialApp` to `AppTheme.lightTheme()`, `AppTheme.darkTheme()`, and `ThemeMode.system`.
 - Added `google_fonts` for Inter and JetBrains Mono typography.
 - Validation for design-system Step 1: `dart format lib/design_system/ lib/design_system.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
-- Added Drive map style switching in `lib/main.dart`: Auto follows theme, Dark uses Carto Dark Matter, Standard uses Carto Voyager, Minimal uses Carto Light, and Satellite uses Esri World Imagery.
+- Added Drive map style switching in `lib/main.dart`: Auto follows theme, Dark uses Carto Dark Matter, light/Auto uses Carto Voyager, Minimal uses Carto Light, and Satellite uses Esri World Imagery.
 - Added a small layers button on the Drive map to choose the map style and persist the choice in `SharedPreferences`.
 - Fixed Property Preview readability/overlap by adding a solid sticky header with a top-right X close button and scrollable content underneath.
 - Changed Lead Details to use a pinned top-right X close button.
@@ -146,6 +149,11 @@ Bug status meanings:
 - Removed the placeholder Business tab from bottom navigation and added account/log out controls to Settings.
 - Improved Areas card text contrast in dark mode.
 - Reordered Property Preview so lead action controls appear before property details.
+- Removed the manual Standard map style option from the Drive map picker and made any old saved Standard preference fall back to Auto.
+- Changed mission map parcel rendering so active missions can still draw parcel boundaries while tracking/follow mode is active.
+- Added map-style-aware parcel outline colors: brighter parcel lines on satellite, lighter outlines on dark map tiles, and the existing darker outline on light tiles.
+- Added lead deletion from the Leads tab row actions and Lead Details, both protected by a confirmation dialog and scoped through the existing account-scoped Supabase lead delete.
+- Validation for map/delete fixes: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 
 ### 2026-06-24
 
