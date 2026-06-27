@@ -4564,74 +4564,6 @@ class _CoverageStatBlock extends StatelessWidget {
   }
 }
 
-class _FirstDriveAreaWelcomeCard extends StatelessWidget {
-  final VoidCallback onDrawArea;
-
-  const _FirstDriveAreaWelcomeCard({required this.onDrawArea});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 8,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Welcome to Market Coverage OS',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Start by drawing your first Drive Area - tap the button below to outline the neighborhood you want to cover.',
-                style: TextStyle(color: Color(0xFF6B7280)),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                icon: const Icon(Icons.edit_location_alt),
-                label: const Text('Draw My First Area ->'),
-                onPressed: onDrawArea,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FirstMissionTipCard extends StatelessWidget {
-  final VoidCallback onDismiss;
-
-  const _FirstMissionTipCard({required this.onDismiss});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFFEFF6FF),
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onDismiss,
-        child: const Padding(
-          padding: EdgeInsets.all(12),
-          child: Text(
-            "Tip: Tap Plan Today's Drive to create your first mission. Streets will turn green as you drive them.",
-            style: TextStyle(
-              color: Color(0xFF1E3A8A),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class MarketsOverviewSection extends StatelessWidget {
   final List<CityReadiness> cities;
   final String activeCity;
@@ -9073,16 +9005,11 @@ class _DrivingScreenState extends State<DrivingScreen>
       required bool selected,
       required VoidCallback onTap,
     }) {
-      final child = FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(label, textAlign: TextAlign.center),
-      );
-
-      return SizedBox(
-        height: 56,
-        child: selected
-            ? FilledButton(onPressed: onTap, child: child)
-            : OutlinedButton(onPressed: onTap, child: child),
+      return AppChip(
+        label: label,
+        isSelected: selected,
+        onTap: onTap,
+        variant: AppChipVariant.tag,
       );
     }
 
@@ -9096,6 +9023,7 @@ class _DrivingScreenState extends State<DrivingScreen>
         sheetContext,
         child: StatefulBuilder(
           builder: (context, setSheetState) {
+            final dark = Theme.of(context).brightness == Brightness.dark;
             if (!fetchStarted) {
               fetchStarted = true;
               Future<void>(() async {
@@ -9251,47 +9179,33 @@ class _DrivingScreenState extends State<DrivingScreen>
                     bottom: 18 + MediaQuery.of(context).viewInsets.bottom,
                   ),
                   child: isLoading
-                      ? const Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              CircularProgressIndicator(),
-                              SizedBox(height: 14),
-                              Text('Finding nearby property...'),
-                            ],
-                          ),
-                        )
+                      ? const Center(child: LoadingState.parcels())
                       : parcelLoadFailed
                       ? Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            const Icon(
-                              Icons.location_on,
-                              size: 42,
-                              color: Color(0xFF6B7280),
+                            const EmptyState(
+                              icon: Icons.location_off_outlined,
+                              title: 'No property found nearby',
+                              subtitle: 'Check GPS signal or save manually.',
                             ),
-                            const SizedBox(height: 10),
-                            const Text(
-                              'No property found nearby.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            FilledButton.icon(
-                              icon: const Icon(Icons.edit_location_alt),
-                              label: const Text('Save with manual address ->'),
+                            AppButton(
+                              label: 'Save with manual address ->',
+                              leadingIcon: Icons.edit_location_alt,
+                              variant: AppButtonVariant.secondary,
+                              fullWidth: true,
                               onPressed: () {
                                 Navigator.pop(sheetContext);
                                 openManualLeadFromPoint(lookupPoint);
                               },
                             ),
-                            TextButton(
+                            const SizedBox(height: AppSpacing.sm),
+                            AppButton(
+                              label: 'Cancel',
+                              variant: AppButtonVariant.ghost,
+                              fullWidth: true,
                               onPressed: () => Navigator.pop(sheetContext),
-                              child: const Text('Cancel'),
                             ),
                           ],
                         )
@@ -9381,11 +9295,12 @@ class _DrivingScreenState extends State<DrivingScreen>
                                   },
                                 ),
                               ] else ...[
-                                const Text(
+                                Text(
                                   'What did you see?',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
+                                  style: AppTypography.labelMedium(
+                                    color: dark
+                                        ? AppColors.textSecondaryDark
+                                        : AppColors.textSecondaryLight,
                                   ),
                                 ),
                                 const SizedBox(height: 10),
@@ -9443,14 +9358,10 @@ class _DrivingScreenState extends State<DrivingScreen>
                                   ],
                                 ),
                                 const SizedBox(height: 12),
-                                TextField(
+                                AppTextField(
                                   controller: noteController,
-                                  focusNode: noteFocusNode,
-                                  minLines: 1,
                                   maxLines: 1,
-                                  decoration: const InputDecoration(
-                                    hintText: 'Quick note (optional)',
-                                  ),
+                                  hint: 'Quick note (optional)',
                                 ),
                                 const SizedBox(height: 12),
                                 FilledButton.icon(
@@ -9593,11 +9504,12 @@ class _DrivingScreenState extends State<DrivingScreen>
                                         },
                                 ),
                                 const SizedBox(height: 8),
-                                OutlinedButton.icon(
-                                  icon: const Icon(Icons.photo_camera),
-                                  label: Text(
-                                    isSaving ? 'Saving...' : 'Save + Photos ->',
-                                  ),
+                                AppButton(
+                                  label: 'Save + Photos',
+                                  leadingIcon: Icons.photo_camera,
+                                  variant: AppButtonVariant.secondary,
+                                  fullWidth: true,
+                                  isLoading: isSaving,
                                   onPressed: isSaving || isClosing
                                       ? null
                                       : () =>
@@ -9913,6 +9825,7 @@ class _DrivingScreenState extends State<DrivingScreen>
         sheetContext,
         child: StatefulBuilder(
           builder: (context, setSheetState) {
+            final dark = Theme.of(context).brightness == Brightness.dark;
             final areaStreets = activeDriveArea == null
                 ? const <CityStreet>[]
                 : streetsInsideArea(activeDriveArea!);
@@ -10020,21 +9933,19 @@ class _DrivingScreenState extends State<DrivingScreen>
                           : step == 1
                           ? 'Drive Area'
                           : 'Mission preview',
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: AppTypography.headingMedium(dark: dark),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: AppSpacing.lg),
                     if (step == 0) ...[
                       Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                        spacing: AppSpacing.sm,
+                        runSpacing: AppSpacing.sm,
                         children: [
-                          ChoiceChip(
-                            label: const Text('30 min'),
-                            selected: selectedBudget == 30 && !isCustom,
-                            onSelected: (_) async {
+                          AppChip(
+                            label: '30 min',
+                            isSelected: selectedBudget == 30 && !isCustom,
+                            selectedColor: AppColors.primary,
+                            onTap: () async {
                               if (rememberAsDefault) {
                                 await saveDefaultSessionMinutes(30);
                               }
@@ -10046,10 +9957,27 @@ class _DrivingScreenState extends State<DrivingScreen>
                               });
                             },
                           ),
-                          ChoiceChip(
-                            label: const Text('1 hour'),
-                            selected: selectedBudget == 60 && !isCustom,
-                            onSelected: (_) async {
+                          AppChip(
+                            label: '45 min',
+                            isSelected: selectedBudget == 45 && !isCustom,
+                            selectedColor: AppColors.primary,
+                            onTap: () async {
+                              if (rememberAsDefault) {
+                                await saveDefaultSessionMinutes(45);
+                              }
+                              if (!mounted) return;
+                              setSheetState(() {
+                                selectedBudget = 45;
+                                isCustom = false;
+                                step = 1;
+                              });
+                            },
+                          ),
+                          AppChip(
+                            label: '1 hour',
+                            isSelected: selectedBudget == 60 && !isCustom,
+                            selectedColor: AppColors.primary,
+                            onTap: () async {
                               if (rememberAsDefault) {
                                 await saveDefaultSessionMinutes(60);
                               }
@@ -10061,10 +9989,11 @@ class _DrivingScreenState extends State<DrivingScreen>
                               });
                             },
                           ),
-                          ChoiceChip(
-                            label: const Text('2 hours'),
-                            selected: selectedBudget == 120 && !isCustom,
-                            onSelected: (_) async {
+                          AppChip(
+                            label: '2 hours',
+                            isSelected: selectedBudget == 120 && !isCustom,
+                            selectedColor: AppColors.primary,
+                            onTap: () async {
                               if (rememberAsDefault) {
                                 await saveDefaultSessionMinutes(120);
                               }
@@ -10076,10 +10005,11 @@ class _DrivingScreenState extends State<DrivingScreen>
                               });
                             },
                           ),
-                          ChoiceChip(
-                            label: const Text('Custom'),
-                            selected: isCustom,
-                            onSelected: (_) {
+                          AppChip(
+                            label: 'Custom',
+                            isSelected: isCustom,
+                            selectedColor: AppColors.primary,
+                            onTap: () {
                               setSheetState(() {
                                 isCustom = true;
                               });
@@ -10090,7 +10020,14 @@ class _DrivingScreenState extends State<DrivingScreen>
                       CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
-                        title: const Text('Remember as my default'),
+                        title: Text(
+                          'Remember as my default',
+                          style: AppTypography.bodySmall(
+                            color: dark
+                                ? AppColors.textSecondaryDark
+                                : AppColors.textSecondaryLight,
+                          ),
+                        ),
                         value: rememberAsDefault,
                         onChanged: (value) {
                           setSheetState(() {
@@ -10109,7 +10046,8 @@ class _DrivingScreenState extends State<DrivingScreen>
                           ),
                         ),
                         const SizedBox(height: 10),
-                        FilledButton(
+                        AppButton(
+                          label: 'Continue',
                           onPressed: () async {
                             final customMinutes = int.tryParse(
                               customController.text.trim(),
@@ -10131,7 +10069,6 @@ class _DrivingScreenState extends State<DrivingScreen>
                               step = 1;
                             });
                           },
-                          child: const Text('Continue'),
                         ),
                       ],
                     ] else if (step == 1) ...[
@@ -10178,115 +10115,122 @@ class _DrivingScreenState extends State<DrivingScreen>
                         child: const Text('Continue'),
                       ),
                     ] else ...[
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      activeDriveArea?.name ?? 'Mission',
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                      AppCard(
+                        showBorder: true,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    activeDriveArea?.name ?? 'Mission',
+                                    style: AppTypography.headingSmall(
+                                      dark: dark,
                                     ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  Text(
-                                    '${areaCoveragePercent.toStringAsFixed(0)}%',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF2563EB),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              LinearProgressIndicator(
-                                value: areaCoveragePercent / 100,
-                                minHeight: 4,
-                              ),
-                              const SizedBox(height: 14),
-                              Text(
-                                previewTitle,
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
                                 ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                previewHelper,
-                                style: const TextStyle(
-                                  color: Color(0xFF6B7280),
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  Chip(label: Text(availableTimeLabel)),
-                                  Chip(
-                                    label: Text(
-                                      '${previewStreets.length} streets selected',
-                                    ),
-                                  ),
-                                  Chip(
-                                    label: Text(
-                                      '${missionRemainingCoveragePercent.toStringAsFixed(0)}% coverage gain',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (!noTimeFit &&
-                                  hasAreaStreetData &&
-                                  previewStreets.isNotEmpty) ...[
-                                const SizedBox(height: 8),
                                 Text(
-                                  '~$sessionsToFinish more sessions to finish this area.',
-                                  style: const TextStyle(
-                                    color: Color(0xFF6B7280),
+                                  '${areaCoveragePercent.toStringAsFixed(0)}%',
+                                  style: AppTypography.labelLarge(
+                                    color: AppColors.primary,
                                   ),
                                 ),
                               ],
-                              if (!hasAreaStreetData) ...[
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'This area has no loaded streets. Try a larger area or import street data for this market.',
-                                  style: TextStyle(color: Color(0xFF6B7280)),
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(3),
+                              child: LinearProgressIndicator(
+                                value: areaCoveragePercent / 100,
+                                minHeight: 6,
+                                color: AppColors.success,
+                                backgroundColor: dark
+                                    ? AppColors.borderDark
+                                    : AppColors.borderLight,
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.lg),
+                            Text(
+                              previewTitle,
+                              style: AppTypography.displayMedium(dark: dark),
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            Text(
+                              previewHelper,
+                              style: AppTypography.bodySmall(
+                                color: dark
+                                    ? AppColors.textTertiaryDark
+                                    : AppColors.textTertiaryLight,
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.md),
+                            Wrap(
+                              spacing: AppSpacing.sm,
+                              runSpacing: AppSpacing.sm,
+                              children: [
+                                AppChip(label: availableTimeLabel),
+                                AppChip(
+                                  label:
+                                      '${previewStreets.length} streets selected',
                                 ),
-                              ] else if (shouldSuggestMarketMap) ...[
-                                const SizedBox(height: 8),
-                                OutlinedButton.icon(
-                                  icon: const Icon(Icons.analytics),
-                                  label: Text(
-                                    isBuildingMarketMap
-                                        ? 'Analyzing area...'
-                                        : 'Find Motivated Sellers',
-                                  ),
-                                  onPressed:
-                                      isBuildingMarketMap ||
-                                          activeDriveArea == null
-                                      ? null
-                                      : () async {
-                                          await buildMarketMap();
-                                          if (!sheetContext.mounted) return;
-                                          setSheetState(() {});
-                                        },
+                                AppChip(
+                                  label:
+                                      '${missionRemainingCoveragePercent.toStringAsFixed(0)}% coverage gain',
                                 ),
-                                const SizedBox(height: 4),
-                                const _MotivatedSellersDescription(),
                               ],
+                            ),
+                            if (!noTimeFit &&
+                                hasAreaStreetData &&
+                                previewStreets.isNotEmpty) ...[
+                              const SizedBox(height: AppSpacing.md),
+                              Text(
+                                '~$sessionsToFinish more sessions to finish this area.',
+                                style: AppTypography.bodySmall(
+                                  color: dark
+                                      ? AppColors.textSecondaryDark
+                                      : AppColors.textSecondaryLight,
+                                ),
+                              ),
                             ],
-                          ),
+                            if (!hasAreaStreetData) ...[
+                              const SizedBox(height: AppSpacing.md),
+                              Text(
+                                'This area has no loaded streets. Try a larger area or import street data for this market.',
+                                style: AppTypography.bodySmall(
+                                  color: dark
+                                      ? AppColors.textSecondaryDark
+                                      : AppColors.textSecondaryLight,
+                                ),
+                              ),
+                            ] else if (shouldSuggestMarketMap) ...[
+                              const SizedBox(height: AppSpacing.md),
+                              AppButton(
+                                label: isBuildingMarketMap
+                                    ? 'Analyzing area...'
+                                    : 'Find Motivated Sellers',
+                                leadingIcon: Icons.analytics,
+                                variant: AppButtonVariant.secondary,
+                                isLoading: isBuildingMarketMap,
+                                onPressed:
+                                    isBuildingMarketMap ||
+                                        activeDriveArea == null
+                                    ? null
+                                    : () async {
+                                        await buildMarketMap();
+                                        if (!sheetContext.mounted) return;
+                                        setSheetState(() {});
+                                      },
+                              ),
+                              const SizedBox(height: AppSpacing.xs),
+                              const _MotivatedSellersDescription(),
+                            ],
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md),
                       if (noTimeFit) ...[
                         TextButton(
                           onPressed: () {
@@ -10298,9 +10242,10 @@ class _DrivingScreenState extends State<DrivingScreen>
                           },
                           child: const Text('Change time'),
                         ),
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.route),
-                          label: const Text('Start default mission'),
+                        AppButton(
+                          label: 'Start default mission',
+                          leadingIcon: Icons.route,
+                          variant: AppButtonVariant.secondary,
                           onPressed: isSavingMission || activeDriveArea == null
                               ? null
                               : () async {
@@ -10312,11 +10257,9 @@ class _DrivingScreenState extends State<DrivingScreen>
                                   );
                                 },
                         ),
-                        FilledButton.icon(
-                          icon: const Icon(Icons.arrow_forward),
-                          label: const Text(
-                            'Use best available streets anyway',
-                          ),
+                        AppButton(
+                          label: 'Use best available streets anyway',
+                          leadingIcon: Icons.arrow_forward,
                           onPressed:
                               isSavingMission ||
                                   activeDriveArea == null ||
@@ -10338,9 +10281,10 @@ class _DrivingScreenState extends State<DrivingScreen>
                                 },
                         ),
                       ] else ...[
-                        FilledButton.icon(
-                          icon: const Icon(Icons.arrow_forward),
-                          label: const Text('Start Driving ->'),
+                        AppButton(
+                          label: 'Start Driving ->',
+                          leadingIcon: Icons.directions_car_rounded,
+                          fullWidth: true,
                           onPressed:
                               previewStreets.isEmpty ||
                                   isSavingMission ||
@@ -10425,121 +10369,227 @@ class _DrivingScreenState extends State<DrivingScreen>
       showDragHandle: false,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.3),
-      builder: (context) => driveFrostedBottomSheet(
-        context,
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
+      builder: (context) {
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        final progressValue =
+            (safePercent(missionCoveredCount, missionStreetTotal) / 100).clamp(
+              0.0,
+              1.0,
+            );
+        final missionStatusLabel = switch (mission.status) {
+          'active' => 'In Progress',
+          'paused' => 'Paused',
+          'completed' => 'Completed',
+          'scheduled' => 'Scheduled',
+          _ => 'Mission',
+        };
+        final missionStatusColor = switch (mission.status) {
+          'paused' => AppColors.warning,
+          'completed' => AppColors.success,
+          'scheduled' =>
+            dark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight,
+          _ => AppColors.primary,
+        };
+
+        Widget statColumn({
+          required String value,
+          required String label,
+          Color? valueColor,
+        }) {
+          return Expanded(
             child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  activeDriveArea?.name ?? 'Mission',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  value,
+                  style: AppTypography.monoLarge(color: valueColor, dark: dark),
                 ),
-                const SizedBox(height: 10),
-                LinearProgressIndicator(
-                  value:
-                      (safePercent(missionCoveredCount, missionStreetTotal) /
-                              100)
-                          .clamp(0, 1),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
-                  '$missionCoveredCount of $missionStreetTotal streets - ${missionEstimatedMinutesRemaining}m left',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  nextMissionStreet == null
-                      ? 'Mission streets complete'
-                      : 'Next: ${nextMissionStreet.street.streetName.isEmpty ? 'Unnamed street' : nextMissionStreet.street.streetName}',
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    Chip(label: Text('$missionLeadsFound leads')),
-                    Chip(label: Text('${missionMiles.toStringAsFixed(2)} mi')),
-                    if (hasMissionOpportunityScore)
-                      Chip(
-                        label: Text(
-                          '${missionOpportunityRemaining.toStringAsFixed(0)} opp left',
-                        ),
-                      ),
-                  ],
-                ),
-                if (mission.missionStartPoint != null) ...[
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.alt_route),
-                    label: const Text('Route to Start'),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      unawaited(showRouteToMissionStart());
-                    },
+                  label,
+                  style: AppTypography.labelSmall(
+                    color: dark
+                        ? AppColors.textTertiaryDark
+                        : AppColors.textTertiaryLight,
                   ),
-                ],
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Show only active area'),
-                  value: showOnlyActiveArea,
-                  onChanged: (value) {
-                    setState(() {
-                      showOnlyActiveArea = value;
-                    });
-                    Navigator.pop(context);
-                  },
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.icon(
-                      icon: Icon(
-                        isTracking ? Icons.navigation : Icons.play_arrow,
-                      ),
-                      label: Text(isTracking ? 'Driving' : 'Start Driving'),
-                      onPressed: isTracking ? null : startMissionDriving,
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.pause),
-                      label: const Text('Pause'),
-                      onPressed: pauseMission,
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.check),
-                      label: const Text('Complete'),
-                      onPressed: () => completeMission(
-                        streetsCovered: missionCoveredCount,
-                        opportunityCaptured: missionOpportunityCaptured,
-                        leadsFound: missionLeadsFound,
-                        milesDriven: missionMiles,
-                        closeContext: context,
-                      ),
-                    ),
-                  ],
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Time-based missions'),
-                  value: timeMissionsEnabled,
-                  onChanged: (value) async {
-                    await saveTimeMissionsEnabled(value);
-                    if (!context.mounted) return;
-                    Navigator.pop(context);
-                  },
                 ),
               ],
             ),
+          );
+        }
+
+        return driveFrostedBottomSheet(
+          context,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          activeDriveArea?.name ?? 'Mission',
+                          style: AppTypography.headingMedium(dark: dark),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      AppChip(
+                        label: missionStatusLabel,
+                        variant: AppChipVariant.status,
+                        selectedColor: missionStatusColor,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: progressValue,
+                      minHeight: 6,
+                      color: AppColors.success,
+                      backgroundColor: AppColors.borderDark,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    '$missionCoveredCount of $missionStreetTotal streets covered',
+                    style: AppTypography.bodySmall(
+                      color: dark
+                          ? AppColors.textSecondaryDark
+                          : AppColors.textSecondaryLight,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Row(
+                    children: [
+                      statColumn(
+                        value: '$missionCoveredCount/$missionStreetTotal',
+                        label: 'Streets',
+                      ),
+                      statColumn(
+                        value: '${missionEstimatedMinutesRemaining}m',
+                        label: 'Time',
+                      ),
+                      statColumn(
+                        value: '$missionLeadsFound',
+                        label: 'Leads',
+                        valueColor: AppColors.accent,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    nextMissionStreet == null
+                        ? 'Mission streets complete'
+                        : 'Next: ${nextMissionStreet.street.streetName.isEmpty ? 'Unnamed street' : nextMissionStreet.street.streetName}',
+                    style: AppTypography.bodyMedium(dark: dark),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      AppChip(label: '${missionMiles.toStringAsFixed(2)} mi'),
+                      if (hasMissionOpportunityScore)
+                        AppChip(
+                          label:
+                              '${missionOpportunityRemaining.toStringAsFixed(0)} opp left',
+                        ),
+                    ],
+                  ),
+                  if (mission.missionStartPoint != null) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    AppButton(
+                      label: 'Route to Start',
+                      leadingIcon: Icons.alt_route,
+                      variant: AppButtonVariant.secondary,
+                      onPressed: () {
+                        Navigator.pop(context);
+                        unawaited(showRouteToMissionStart());
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: AppSpacing.lg),
+                  Divider(
+                    color: dark ? AppColors.borderDark : AppColors.borderLight,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppButton(
+                          label: 'Pause',
+                          leadingIcon: Icons.pause,
+                          variant: AppButtonVariant.ghost,
+                          onPressed: pauseMission,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: AppButton(
+                          label: 'Complete Mission',
+                          leadingIcon: Icons.check,
+                          variant: AppButtonVariant.danger,
+                          onPressed: () => completeMission(
+                            streetsCovered: missionCoveredCount,
+                            opportunityCaptured: missionOpportunityCaptured,
+                            leadsFound: missionLeadsFound,
+                            milesDriven: missionMiles,
+                            closeContext: context,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppButton(
+                    label: isTracking ? 'Driving' : 'Start Driving',
+                    leadingIcon: isTracking
+                        ? Icons.navigation
+                        : Icons.play_arrow,
+                    variant: AppButtonVariant.secondary,
+                    onPressed: isTracking ? null : startMissionDriving,
+                    fullWidth: true,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      'Show only active area',
+                      style: AppTypography.bodyMedium(dark: dark),
+                    ),
+                    value: showOnlyActiveArea,
+                    onChanged: (value) {
+                      setState(() {
+                        showOnlyActiveArea = value;
+                      });
+                      Navigator.pop(context);
+                    },
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      'Time-based missions',
+                      style: AppTypography.bodyMedium(dark: dark),
+                    ),
+                    value: timeMissionsEnabled,
+                    onChanged: (value) async {
+                      await saveTimeMissionsEnabled(value);
+                      if (!context.mounted) return;
+                      Navigator.pop(context);
+                    },
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -11010,6 +11060,128 @@ class _DrivingScreenState extends State<DrivingScreen>
               size: 20,
             ),
       label: Text(label),
+    );
+  }
+
+  Widget buildQuickCaptureFab() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppSpacing.lg),
+        onTap: openQuickCaptureSheet,
+        child: Ink(
+          width: AppSpacing.fabSize,
+          height: AppSpacing.fabSize,
+          decoration: BoxDecoration(
+            color: AppColors.accent,
+            borderRadius: BorderRadius.circular(AppSpacing.lg),
+            boxShadow: AppShadows.elevated,
+          ),
+          child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 28),
+        ),
+      ),
+    );
+  }
+
+  Widget buildMapHudPill({required Widget child, EdgeInsetsGeometry? padding}) {
+    return Container(
+      padding:
+          padding ??
+          const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg,
+            vertical: AppSpacing.sm,
+          ),
+      decoration: BoxDecoration(
+        color: AppColors.mapOverlayDark,
+        borderRadius: BorderRadius.circular(AppSpacing.chipBorderRadius),
+        border: Border.all(color: AppColors.borderDark.withValues(alpha: 0.3)),
+        boxShadow: AppShadows.elevatedDark,
+      ),
+      child: child,
+    );
+  }
+
+  Widget buildMissionProgressPill({
+    required double percent,
+    required int minutesRemaining,
+    required bool isOverBudget,
+  }) {
+    final timeColor = isOverBudget
+        ? AppColors.danger
+        : minutesRemaining < 5
+        ? AppColors.accent
+        : Colors.white;
+
+    return buildMapHudPill(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${percent.toStringAsFixed(0)}%',
+            style: AppTypography.hudDisplay(color: Colors.white),
+          ),
+          Text(
+            ' · ',
+            style: AppTypography.bodyMedium(color: AppColors.textTertiaryDark),
+          ),
+          Text(
+            '$minutesRemaining min left',
+            style: AppTypography.monoMedium(color: timeColor),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildNextStreetPill({
+    required String streetName,
+    required int minutes,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppSpacing.chipBorderRadius),
+        onTap: onTap,
+        child: buildMapHudPill(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg,
+            vertical: AppSpacing.md,
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.arrow_forward_rounded,
+                color: AppColors.primary,
+                size: AppSpacing.lg,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  streetName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.bodyMedium(color: Colors.white),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                '·',
+                style: AppTypography.bodyMedium(
+                  color: AppColors.textTertiaryDark,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                '$minutes min',
+                style: AppTypography.labelMedium(
+                  color: AppColors.textSecondaryDark,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -13728,8 +13900,8 @@ class _DrivingScreenState extends State<DrivingScreen>
         !hasCompletedMissionEver &&
         !firstMissionTipDismissed;
     final planPanelHeight = todayScheduledMission == null
-        ? (showFirstMissionTip ? 172.0 : 92.0)
-        : (showFirstMissionTip ? 262.0 : 182.0);
+        ? (showFirstMissionTip ? 206.0 : 152.0)
+        : (showFirstMissionTip ? 246.0 : 176.0);
     final findMeButtonBottom = activeMission == null
         ? (hasNoDriveAreas ? 24.0 : planPanelHeight + 16)
         : 86.0;
@@ -13753,8 +13925,8 @@ class _DrivingScreenState extends State<DrivingScreen>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
-            color: const Color(0x66000000),
-            borderRadius: BorderRadius.circular(999),
+            color: AppColors.mapOverlayDark,
+            borderRadius: BorderRadius.circular(AppSpacing.chipBorderRadius),
           ),
           child: child,
         ),
@@ -15955,12 +16127,9 @@ class _DrivingScreenState extends State<DrivingScreen>
                                 activeDriveArea?.name ?? 'Market Coverage',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: AppTypography.headingSmall(
                                   color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  shadows: mapHeaderTextShadows,
-                                ),
+                                ).copyWith(shadows: mapHeaderTextShadows),
                               ),
                             ),
                           ),
@@ -15985,8 +16154,8 @@ class _DrivingScreenState extends State<DrivingScreen>
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
-                                    Icons.search,
-                                    size: 18,
+                                    Icons.tune_rounded,
+                                    size: 20,
                                     color: isTracking
                                         ? const Color(0xFF9CA3AF)
                                         : Colors.white,
@@ -15998,14 +16167,11 @@ class _DrivingScreenState extends State<DrivingScreen>
                                       activeCityLabel,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
+                                      style: AppTypography.labelMedium(
                                         color: isTracking
                                             ? const Color(0xFF9CA3AF)
                                             : Colors.white,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        shadows: mapHeaderTextShadows,
-                                      ),
+                                      ).copyWith(shadows: mapHeaderTextShadows),
                                     ),
                                   ),
                                 ],
@@ -16095,11 +16261,7 @@ class _DrivingScreenState extends State<DrivingScreen>
               child: SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(18, 86, 18, 24),
-                  child: Center(
-                    child: _FirstDriveAreaWelcomeCard(
-                      onDrawArea: enterDrawAreaMode,
-                    ),
-                  ),
+                  child: Center(child: EmptyState.noStreetData()),
                 ),
               ),
             ),
@@ -16110,114 +16272,154 @@ class _DrivingScreenState extends State<DrivingScreen>
               bottom: 0,
               child: SafeArea(
                 top: false,
-                child: Container(
+                child: SizedBox(
                   height: planPanelHeight,
-                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(18),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.lg,
+                      0,
+                      AppSpacing.lg,
+                      AppSpacing.lg,
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Color(0x22000000),
-                        blurRadius: 18,
-                        offset: Offset(0, -4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (showFirstMissionTip) ...[
-                        _FirstMissionTipCard(onDismiss: dismissFirstMissionTip),
-                        const SizedBox(height: 10),
-                      ],
-                      Expanded(
-                        child: todayScheduledMission == null
-                            ? FilledButton.icon(
-                                icon: const Icon(Icons.arrow_forward),
-                                label: const Text("Plan Today's Drive"),
-                                onPressed: () => openPlanTodayDriveSheet(
-                                  streetOpportunities,
-                                ),
-                              )
-                            : Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Row(
+                    child: AppCard.elevated(
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (showFirstMissionTip) ...[
+                            Text(
+                              'Ready to drive',
+                              style: AppTypography.headingSmall(dark: dark),
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            Text(
+                              "Tap Plan Today's Drive to create your first mission",
+                              style: AppTypography.bodySmall(
+                                color: dark
+                                    ? AppColors.textSecondaryDark
+                                    : AppColors.textSecondaryLight,
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                          ],
+                          Expanded(
+                            child: todayScheduledMission == null
+                                ? Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
                                     children: [
-                                      const Expanded(
-                                        child: Text(
-                                          "Today's Planned Mission",
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
+                                      AppButton(
+                                        label: "-> Plan Today's Drive",
+                                        leadingIcon: Icons.arrow_forward,
+                                        fullWidth: true,
+                                        onPressed: () =>
+                                            openPlanTodayDriveSheet(
+                                              streetOpportunities,
+                                            ),
                                       ),
-                                      Text(
-                                        shortPlannerDateLabel(today),
-                                        style: const TextStyle(
-                                          color: Color(0xFF6B7280),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${activeDriveArea?.name ?? 'Drive Area'} - ${todayScheduledMission.streetCount} streets - ~$todayScheduledEstimatedMinutes min',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Color(0xFF374151),
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  FilledButton.icon(
-                                    icon: const Icon(Icons.arrow_forward),
-                                    label: const Text('Start Driving ->'),
-                                    onPressed: isSavingMission
-                                        ? null
-                                        : () => startScheduledMission(
-                                            todayScheduledMission,
-                                          ),
-                                  ),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      TextButton(
-                                        onPressed: () => skipScheduledMission(
-                                          todayScheduledMission,
-                                        ),
-                                        child: const Text('Skip today'),
-                                      ),
-                                      const Text(
-                                        '-',
-                                        style: TextStyle(
-                                          color: Color(0xFF6B7280),
-                                        ),
-                                      ),
-                                      TextButton(
-                                        onPressed: () {
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'Adjust coming soon',
+                                      const SizedBox(height: AppSpacing.sm),
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                openPlanTodayDriveSheet(
+                                                  streetOpportunities,
+                                                ),
+                                            child: Text(
+                                              'Change time',
+                                              style: AppTypography.labelMedium(
+                                                color: AppColors.primary,
                                               ),
                                             ),
-                                          );
-                                        },
-                                        child: const Text('Adjust'),
+                                          ),
+                                          Text(
+                                            '-',
+                                            style: AppTypography.labelMedium(
+                                              color: dark
+                                                  ? AppColors.textTertiaryDark
+                                                  : AppColors.textTertiaryLight,
+                                            ),
+                                          ),
+                                          TextButton(
+                                            onPressed: () =>
+                                                openWeeklyPlannerSheet(
+                                                  streetOpportunities,
+                                                ),
+                                            child: Text(
+                                              'Plan my week',
+                                              style: AppTypography.labelMedium(
+                                                color: AppColors.primary,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  )
+                                : Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              "Today's Mission",
+                                              style: AppTypography.labelMedium(
+                                                color: AppColors.primary,
+                                              ),
+                                            ),
+                                          ),
+                                          Text(
+                                            shortPlannerDateLabel(today),
+                                            style: AppTypography.bodySmall(
+                                              color: dark
+                                                  ? AppColors.textSecondaryDark
+                                                  : AppColors
+                                                        .textSecondaryLight,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: AppSpacing.xs),
+                                      Text(
+                                        activeDriveArea?.name ?? 'Drive Area',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: AppTypography.headingMedium(
+                                          dark: dark,
+                                        ),
+                                      ),
+                                      const SizedBox(height: AppSpacing.xs),
+                                      Text(
+                                        '${todayScheduledMission.streetCount} streets - ~$todayScheduledEstimatedMinutes min',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: AppTypography.bodyMedium(
+                                          color: dark
+                                              ? AppColors.textSecondaryDark
+                                              : AppColors.textSecondaryLight,
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      AppButton(
+                                        label: 'Start Driving ->',
+                                        leadingIcon: Icons.arrow_forward,
+                                        fullWidth: true,
+                                        onPressed: isSavingMission
+                                            ? null
+                                            : () => startScheduledMission(
+                                                todayScheduledMission,
+                                              ),
                                       ),
                                     ],
                                   ),
-                                ],
-                              ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -16227,39 +16429,10 @@ class _DrivingScreenState extends State<DrivingScreen>
               top: 72,
               right: 12,
               child: SafeArea(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isMissionOverTimeBudget
-                        ? (dark
-                              ? const Color(0xFF451A03)
-                              : const Color(0xFFFFF7ED))
-                        : (dark
-                              ? const Color(0xE6111827)
-                              : Colors.white.withValues(alpha: 0.95)),
-                    borderRadius: BorderRadius.circular(999),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x22000000),
-                        blurRadius: 12,
-                        offset: Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Text(
-                    '${missionPercent.toStringAsFixed(0)}% - $missionEstimatedMinutesRemaining min left',
-                    style: TextStyle(
-                      color: isMissionOverTimeBudget
-                          ? (dark
-                                ? const Color(0xFFFBBF24)
-                                : const Color(0xFFF59E0B))
-                          : (dark ? Colors.white : const Color(0xFF111827)),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                child: buildMissionProgressPill(
+                  percent: missionPercent,
+                  minutesRemaining: missionEstimatedMinutesRemaining,
+                  isOverBudget: isMissionOverTimeBudget,
                 ),
               ),
             ),
@@ -16269,8 +16442,13 @@ class _DrivingScreenState extends State<DrivingScreen>
               bottom: 16,
               child: SafeArea(
                 top: false,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(999),
+                child: buildNextStreetPill(
+                  streetName: nextStreetName,
+                  minutes: nextMissionStreet == null
+                      ? 0
+                      : calibratedStreetMinutes(
+                          nextMissionStreet.street,
+                        ).ceil(),
                   onTap: () => openMissionDetailSheet(
                     missionCoveredCount: missionCoveredCount,
                     missionStreetTotal: missionStreetTotal,
@@ -16283,49 +16461,13 @@ class _DrivingScreenState extends State<DrivingScreen>
                     missionOpportunityCaptured: missionOpportunityCaptured,
                     hasMissionOpportunityScore: hasMissionOpportunityScore,
                   ),
-                  child: Container(
-                    height: 58,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: dark
-                          ? const Color(0xE6111827)
-                          : Colors.white.withValues(alpha: 0.95),
-                      borderRadius: BorderRadius.circular(999),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x22000000),
-                          blurRadius: 12,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Next: $nextStreetName - ${nextMissionStreet == null ? 0 : calibratedStreetMinutes(nextMissionStreet.street).ceil()} min',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: dark ? Colors.white : const Color(0xFF111827),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
                 ),
               ),
             ),
             Positioned(
               right: 16,
               bottom: 22,
-              child: SafeArea(
-                top: false,
-                child: FloatingActionButton(
-                  backgroundColor: const Color(0xFFF97316),
-                  foregroundColor: Colors.white,
-                  tooltip: 'Quick Capture',
-                  onPressed: openQuickCaptureSheet,
-                  child: const Icon(Icons.bolt),
-                ),
-              ),
+              child: SafeArea(top: false, child: buildQuickCaptureFab()),
             ),
           ],
           if (!isDrawAreaMode)
@@ -16338,17 +16480,7 @@ class _DrivingScreenState extends State<DrivingScreen>
             Positioned(
               right: 16,
               bottom: todayScheduledMission == null ? 108 : 198,
-              child: SafeArea(
-                top: false,
-                child: FloatingActionButton(
-                  heroTag: 'drive-quick-capture-idle',
-                  backgroundColor: const Color(0xFFF97316),
-                  foregroundColor: Colors.white,
-                  tooltip: 'Quick Capture',
-                  onPressed: openQuickCaptureSheet,
-                  child: const Icon(Icons.bolt),
-                ),
-              ),
+              child: SafeArea(top: false, child: buildQuickCaptureFab()),
             ),
           if (isDrawAreaMode)
             Positioned(

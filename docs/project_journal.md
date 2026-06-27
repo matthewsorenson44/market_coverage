@@ -70,6 +70,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Business tab has been removed from bottom navigation, and account/log out controls are in Settings.
 - Fix pushed, awaiting user confirmation: Areas list cards should have readable stats/text in dark mode.
 - Fix pushed, awaiting user confirmation: Property Preview now puts "What did you see?" and Add Lead above the property information.
+- Fix pushed, awaiting user confirmation: Drive tab visual pass now uses design-system cards, buttons, chips, typography, and HUD treatments for planning, mission preview, active mission controls, Quick Capture, and first-run empty states.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -124,6 +125,15 @@ Bug status meanings:
 - `Confirmed fixed`: User tested and said it works.
 
 ## Recent Work Log
+
+### 2026-06-27
+
+- Applied the Drive tab design-system Step 4 visual pass in `lib/main.dart`.
+- Updated Drive map HUD elements, first-run empty state, Plan Today's Drive panel, mission planning bottom sheet, mission preview content, active mission pills, mission detail sheet, Quick Capture FAB, and Quick Capture bottom sheet styling to use the existing design-system tokens/components where safe.
+- Preserved the existing Drive business logic: GPS/follow state, route tracking, mission lifecycle, Supabase saves, parcel lookup, lead creation, coverage writing, photos, scoring, CRM, ARV/MAO, and map data loading were not intentionally changed.
+- Component caveat: the mission preview still uses a custom `AppCard` composition instead of the domain `MissionCard` because it is built from transient planning estimates, not a saved `Mission` model.
+- Validation for Drive tab design pass: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Status: awaiting user confirmation on iPhone for visual clarity, button placement, and bottom-sheet behavior.
 
 ### 2026-06-26
 
