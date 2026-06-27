@@ -60,7 +60,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
 - Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
-- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt. User reported the first live test was blocked, so migration `0012_lead_delete_policy.sql` and clearer delete error logging were added.
+- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt. User reported the first live test was still blocked after `0012_lead_delete_policy.sql`, so the app now uses secure RPC migration `0013_delete_lead_rpc.sql` and cleans related lead photo rows/storage before deleting.
 - Fix pushed, awaiting user confirmation: Property Preview should no longer overlap the iPhone status bar and should have a sticky top-right X close button.
 - Fix pushed, awaiting user confirmation: Lead Details should have a pinned top-right X close button.
 - Fix pushed, awaiting user confirmation: Mission recap dark-mode cards/text should be readable.
@@ -159,6 +159,9 @@ Bug status meanings:
 - Validation for CSV export: `dart format .`, `flutter analyze`, and `flutter test` passed with 114 tests.
 - Fixed skip-tracing export sheet readability. The sheet now uses an opaque theme-aware Material panel, explicit dark/light text and surface colors, a solid checklist card, and a darker scrim so the Leads page no longer bleeds through behind the export controls.
 - Validation for export sheet readability: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 114 tests.
+- Reworked lead deletion after the user confirmed it still did not work on-device. The app now cleans lead photo storage and optional `lead_photos` rows before deleting, calls a new secure Supabase RPC `delete_lead_for_current_user`, and falls back to a verified direct delete only if the RPC has not been installed yet.
+- Added `supabase/migrations/0013_delete_lead_rpc.sql`, which verifies the authenticated user can access the lead through account membership, `user_id`, or `created_by`, deletes known lead-related rows that can block deletion, then deletes the lead.
+- Validation for lead delete RPC fix: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 114 tests.
 
 ### 2026-06-26
 

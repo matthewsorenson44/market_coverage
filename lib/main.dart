@@ -313,7 +313,7 @@ String leadDeleteErrorMessage(Object error) {
       lowerDetails.contains('403') ||
       lowerDetails.contains('42501') ||
       lowerDetails.contains('no lead row was deleted')) {
-    return 'Lead delete is blocked by Supabase permissions. Run migration 0012_lead_delete_policy.sql, then try again.';
+    return 'Lead delete is blocked by Supabase permissions. Run migration 0013_delete_lead_rpc.sql, then try again.';
   }
 
   if (lowerDetails.contains('foreign key') ||
@@ -332,6 +332,44 @@ Future<void> logLeadDeleteError(Object error) async {
 
   debugPrint('Lead delete error: $error');
   await FieldTestLogger.log('lead_delete_error', detail: error.toString());
+}
+
+bool isMissingDeleteLeadRpcError(Object error) {
+  final details = error.toString().toLowerCase();
+
+  return details.contains('delete_lead_for_current_user') &&
+      (details.contains('could not find') ||
+          details.contains('not found') ||
+          details.contains('schema cache') ||
+          details.contains('pgrst202'));
+}
+
+bool isMissingLeadPhotosTableError(Object error) {
+  final details = error.toString().toLowerCase();
+
+  return details.contains('lead_photos') &&
+      (details.contains('does not exist') ||
+          details.contains('not found') ||
+          details.contains('404') ||
+          details.contains('42p01'));
+}
+
+Future<void> cleanupLeadPhotoRows(String leadId) async {
+  try {
+    await supabase.from('lead_photos').delete().eq('lead_id', leadId);
+  } catch (error) {
+    if (isMissingLeadPhotosTableError(error)) return;
+
+    if (kDebugMode) {
+      debugPrint('Lead photo row cleanup skipped: $error');
+      unawaited(
+        FieldTestLogger.log(
+          'lead_photo_row_cleanup_skipped',
+          detail: error.toString(),
+        ),
+      );
+    }
+  }
 }
 
 Future<void> cleanupLeadPhotoStorage(String leadId) async {
@@ -363,6 +401,34 @@ Future<void> cleanupLeadPhotoStorage(String leadId) async {
       );
     }
   }
+}
+
+Future<bool> deleteLeadWithRpc(String leadId) async {
+  final result = await supabase.rpc(
+    'delete_lead_for_current_user',
+    params: {'target_lead_id': leadId},
+  );
+
+  if (result is bool) return result;
+  if (result is String) return result.toLowerCase() == 'true';
+
+  return result == true;
+}
+
+Future<bool> deleteLeadDirectly({
+  required String leadId,
+  required String accountId,
+}) async {
+  await supabase.from('leads').delete().eq('id', leadId);
+
+  final remainingRows = await supabase
+      .from('leads')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('id', leadId)
+      .limit(1);
+
+  return remainingRows.isEmpty;
 }
 
 Future<LeadSaveResult> insertLeadWithOfflineQueue(
@@ -2845,19 +2911,29 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     if (accountId == null) return;
 
     try {
-      final deletedRows = await supabase
-          .from('leads')
-          .delete()
-          .eq('account_id', accountId)
-          .eq('id', leadId)
-          .select('id');
+      await cleanupLeadPhotoStorage(leadId);
+      await cleanupLeadPhotoRows(leadId);
 
-      if (deletedRows.isEmpty) {
-        throw StateError(
-          'No lead row was deleted. The lead may be blocked by RLS or may not belong to the active account.',
+      bool wasDeleted;
+      try {
+        wasDeleted = await deleteLeadWithRpc(leadId);
+      } catch (error) {
+        if (!isMissingDeleteLeadRpcError(error)) rethrow;
+
+        wasDeleted = await deleteLeadDirectly(
+          leadId: leadId,
+          accountId: accountId,
         );
       }
 
+      if (!wasDeleted) {
+        throw StateError(
+          'No lead row was deleted. The lead may be blocked by RLS or may not belong to the signed-in user. Run migration 0013_delete_lead_rpc.sql.',
+        );
+      }
+
+      // Run this again after the lead row is gone in case an older Storage
+      // policy blocked object cleanup before the database delete.
       await cleanupLeadPhotoStorage(leadId);
 
       if (!mounted) return;
