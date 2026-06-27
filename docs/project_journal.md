@@ -77,6 +77,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Areas coverage stats should be readable in dark mode without changing light mode.
 - Fix pushed, awaiting user confirmation: Parcel boundaries and parcel/lead markers should appear sooner and with stronger contrast on Satellite, Dark, and Minimal map styles, including during active missions.
 - Fix pushed, awaiting user confirmation: Tapping a house with no parcel data now opens a fallback capture sheet instead of dead-ending at "No parcel found."
+- Fix pushed, awaiting user confirmation: GPS-only Add Lead capture now tries to reverse-geocode the saved coordinates into a street address before saving, while still allowing GPS-only capture if the lookup fails.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -148,6 +149,8 @@ Bug status meanings:
 - Lowered parcel/house-number zoom thresholds, strengthened parcel boundary contrast by map style, made parcel dots easier to distinguish, and allowed parcel layers to remain visible during tracking/follow mode.
 - Added a no-parcel-data fallback bottom sheet from Drive map taps with an `Add Lead Here` action so missing parcel/owner data does not block capture.
 - Validation for visibility/fallback fixes: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Added best-effort reverse geocoding for GPS-only Add Lead capture. When a lead is started from a map/GPS point with no parcel data, the Add Lead screen now looks up the nearest address, prefills the Property Address field when available, and clearly says GPS will still be saved if address lookup fails.
+- Validation for GPS-to-address lead capture: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 
 ### 2026-06-26
 

@@ -123,6 +123,7 @@ const double kScoutSpeedMph = 10.0;
 const double kRepositioningMinutes = 1.0;
 const Duration leadInsertTimeout = Duration(seconds: 8);
 const Duration duplicateLeadCheckTimeout = Duration(seconds: 2);
+const Duration reverseGeocodeTimeout = Duration(seconds: 5);
 const int targetScoreVersion = 1;
 const double opportunityStreetMatchMiles = 0.04;
 const Map<String, double> targetScoreWeights = {
@@ -136,6 +137,93 @@ const Map<String, double> targetScoreWeights = {
 };
 
 final ValueNotifier<int> pendingLeadsQueueCountNotifier = ValueNotifier<int>(0);
+
+String? _stringValue(Object? value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty) return null;
+  return text;
+}
+
+String _joinNonEmpty(Iterable<String?> parts, String separator) {
+  return parts
+      .whereType<String>()
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .join(separator);
+}
+
+String? _formatReverseGeocodeAddress(Map<String, dynamic> data) {
+  final address = data['address'];
+  if (address is! Map) {
+    return _stringValue(data['display_name']);
+  }
+
+  final fields = address.cast<String, dynamic>();
+  final street = _joinNonEmpty([
+    _stringValue(fields['house_number']),
+    _stringValue(fields['road']) ??
+        _stringValue(fields['residential']) ??
+        _stringValue(fields['pedestrian']),
+  ], ' ');
+  final city =
+      _stringValue(fields['city']) ??
+      _stringValue(fields['town']) ??
+      _stringValue(fields['village']) ??
+      _stringValue(fields['suburb']);
+  final state = _stringValue(fields['state']);
+  final postcode = _stringValue(fields['postcode']);
+  final cityStateZip = _joinNonEmpty([
+    city,
+    _joinNonEmpty([state, postcode], ' '),
+  ], ', ');
+
+  final formatted = _joinNonEmpty([street, cityStateZip], ', ');
+  if (formatted.isNotEmpty) return formatted;
+
+  return _stringValue(data['display_name']);
+}
+
+Future<String?> reverseGeocodeAddress(
+  LatLng point, {
+  http.Client? client,
+}) async {
+  final httpClient = client ?? http.Client();
+  final shouldCloseClient = client == null;
+
+  try {
+    final uri = Uri.https('nominatim.openstreetmap.org', '/reverse', {
+      'format': 'jsonv2',
+      'lat': point.latitude.toStringAsFixed(7),
+      'lon': point.longitude.toStringAsFixed(7),
+      'addressdetails': '1',
+      'zoom': '18',
+    });
+    final response = await httpClient
+        .get(
+          uri,
+          headers: const {
+            'User-Agent': 'MarketCoverageOS/1.0 Flutter lead capture',
+          },
+        )
+        .timeout(reverseGeocodeTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Reverse geocode returned ${response.statusCode}');
+    }
+
+    final data = jsonDecode(response.body);
+    if (data is! Map<String, dynamic>) return null;
+
+    final error = _stringValue(data['error']);
+    if (error != null) return null;
+
+    return _formatReverseGeocodeAddress(data);
+  } finally {
+    if (shouldCloseClient) {
+      httpClient.close();
+    }
+  }
+}
 
 class LeadSaveResult {
   final bool savedOnline;
@@ -17348,6 +17436,18 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
   bool scoreOverride = false;
   double manualScore = 0;
   bool isSaving = false;
+  bool isResolvingAddress = false;
+  String? addressLookupMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.latitude != null && widget.longitude != null) {
+      isResolvingAddress = true;
+      addressLookupMessage = 'Finding nearest address from GPS...';
+      unawaited(prefillAddressFromLocation());
+    }
+  }
 
   @override
   void dispose() {
@@ -17380,6 +17480,57 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
       score: scoreOverride ? manualScore.round() : autoScore,
       scoreOverride: scoreOverride,
     );
+  }
+
+  Future<void> prefillAddressFromLocation() async {
+    final latitude = widget.latitude;
+    final longitude = widget.longitude;
+    if (latitude == null || longitude == null) return;
+
+    try {
+      final resolvedAddress = await reverseGeocodeAddress(
+        LatLng(latitude, longitude),
+      );
+      if (!mounted) return;
+
+      if (resolvedAddress == null || resolvedAddress.trim().isEmpty) {
+        setState(() {
+          isResolvingAddress = false;
+          addressLookupMessage =
+              'Address not found automatically. GPS will still be saved.';
+        });
+        return;
+      }
+
+      if (addressController.text.trim().isEmpty) {
+        addressController.text = resolvedAddress;
+      }
+
+      setState(() {
+        isResolvingAddress = false;
+        addressLookupMessage = 'Address found from GPS. Confirm before saving.';
+      });
+      unawaited(
+        FieldTestLogger.log(
+          'lead_reverse_geocode_success',
+          detail: resolvedAddress,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        isResolvingAddress = false;
+        addressLookupMessage =
+            'Address lookup unavailable. GPS will still be saved.';
+      });
+      unawaited(
+        FieldTestLogger.log(
+          'lead_reverse_geocode_failed',
+          detail: error.toString(),
+        ),
+      );
+    }
   }
 
   Future<void> saveLead() async {
@@ -17429,8 +17580,41 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
               if (hasLocation)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(
-                    'Location saved: ${widget.latitude!.toStringAsFixed(5)}, ${widget.longitude!.toStringAsFixed(5)}',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Location saved: ${widget.latitude!.toStringAsFixed(5)}, ${widget.longitude!.toStringAsFixed(5)}',
+                      ),
+                      if (addressLookupMessage != null) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (isResolvingAddress) ...[
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            Expanded(
+                              child: Text(
+                                addressLookupMessage!,
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               TextField(
