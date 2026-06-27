@@ -79,6 +79,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Tapping a house with no parcel data now opens a fallback capture sheet instead of dead-ending at "No parcel found."
 - Fix pushed, awaiting user confirmation: GPS-only Add Lead capture now tries to reverse-geocode the saved coordinates into a street address before saving, while still allowing GPS-only capture if the lookup fails.
 - Fix pushed, awaiting user confirmation: Leads tab now has a skip-tracing CSV export flow with selectable safe MVP columns, native share/download, and no fabricated owner/phone/email data.
+- Fix pushed, awaiting user confirmation: Skip-tracing export sheet should be readable in dark and light mode with a solid themed panel instead of letting the Leads screen show through.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -156,6 +157,8 @@ Bug status meanings:
 - Added `csv` for safe CSV generation and updated the older pure CSV helper to use package-based escaping instead of manual field escaping.
 - Added unit tests for selected-column export, semicolon-separated condition tags, and blank missing values.
 - Validation for CSV export: `dart format .`, `flutter analyze`, and `flutter test` passed with 114 tests.
+- Fixed skip-tracing export sheet readability. The sheet now uses an opaque theme-aware Material panel, explicit dark/light text and surface colors, a solid checklist card, and a darker scrim so the Leads page no longer bleeds through behind the export controls.
+- Validation for export sheet readability: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 114 tests.
 
 ### 2026-06-26
 

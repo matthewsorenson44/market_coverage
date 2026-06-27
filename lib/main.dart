@@ -18082,19 +18082,32 @@ class _LeadListScreenState extends State<LeadListScreen> {
   Future<void> openEmptyExportState() async {
     await showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      showDragHandle: false,
       builder: (sheetContext) {
+        final dark = Theme.of(sheetContext).brightness == Brightness.dark;
+        final sheetColor = dark
+            ? AppColors.surfaceDark
+            : AppColors.surfaceLight;
+
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: EmptyState(
-              icon: Icons.upload_file_outlined,
-              title: 'No leads to export yet',
-              subtitle: 'Capture leads from the Drive tab first.',
-              action: AppButton(
-                label: 'Close',
-                onPressed: () => Navigator.pop(sheetContext),
-                variant: AppButtonVariant.ghost,
+          top: false,
+          child: Material(
+            color: sheetColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: EmptyState(
+                icon: Icons.upload_file_outlined,
+                title: 'No leads to export yet',
+                subtitle: 'Capture leads from the Drive tab first.',
+                action: AppButton(
+                  label: 'Close',
+                  onPressed: () => Navigator.pop(sheetContext),
+                  variant: AppButtonVariant.ghost,
+                ),
               ),
             ),
           ),
@@ -18116,122 +18129,190 @@ class _LeadListScreenState extends State<LeadListScreen> {
     final selectedColumns = skipTraceExportColumns.toSet();
     await showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      showDragHandle: false,
       isScrollControlled: true,
       builder: (sheetContext) {
         var isExporting = false;
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            final dark = Theme.of(context).brightness == Brightness.dark;
+            final sheetColor = dark
+                ? AppColors.surfaceDark
+                : AppColors.surfaceLight;
+            final elevatedColor = dark
+                ? AppColors.surfaceElevatedDark
+                : AppColors.surfaceElevatedLight;
+            final primaryText = dark
+                ? AppColors.textPrimaryDark
+                : AppColors.textPrimaryLight;
+            final secondaryText = dark
+                ? AppColors.textSecondaryDark
+                : AppColors.textSecondaryLight;
+            final tertiaryText = dark
+                ? AppColors.textTertiaryDark
+                : AppColors.textTertiaryLight;
+            final borderColor = dark
+                ? AppColors.borderDark
+                : AppColors.borderLight;
             final selectableColumnCount = skipTraceExportColumns.length;
             final summaryText = exportingFiltered
                 ? 'Exporting ${leadsToExport.length} filtered leads'
                 : '${leadsToExport.length} of $totalLeadCount leads will be exported';
 
             return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: 20,
-                  right: 20,
-                  bottom: 20 + MediaQuery.viewInsetsOf(context).bottom,
+              top: false,
+              child: Material(
+                color: sheetColor,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
                 ),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+                clipBehavior: Clip.antiAlias,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 20,
+                    right: 20,
+                    top: 10,
+                    bottom: 20 + MediaQuery.viewInsetsOf(context).bottom,
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Export for Skip Tracing',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 54,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: tertiaryText.withValues(alpha: 0.7),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Select columns to include in your CSV.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        const SizedBox(height: 18),
+                        Text(
+                          'Export for Skip Tracing',
+                          style: TextStyle(
+                            color: primaryText,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Flexible(
-                        fit: FlexFit.loose,
-                        child: ListView(
-                          shrinkWrap: true,
-                          children: [
-                            for (final column in skipTraceExportColumns)
-                              CheckboxListTile(
-                                contentPadding: EdgeInsets.zero,
-                                controlAffinity:
-                                    ListTileControlAffinity.leading,
-                                title: Text(column.label),
-                                subtitle: column == SkipTraceExportColumn.leadId
-                                    ? const Text(
-                                        'Required to match skip tracing results back to leads',
-                                      )
-                                    : null,
-                                value: selectedColumns.contains(column),
-                                onChanged:
-                                    column == SkipTraceExportColumn.leadId ||
-                                        isExporting
-                                    ? null
-                                    : (checked) {
-                                        setSheetState(() {
-                                          if (checked ?? false) {
-                                            selectedColumns.add(column);
-                                          } else {
-                                            selectedColumns.remove(column);
-                                          }
-                                        });
-                                      },
-                              ),
-                          ],
+                        const SizedBox(height: 8),
+                        Text(
+                          'Select columns to include in your CSV.',
+                          style: TextStyle(color: secondaryText, fontSize: 15),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        summaryText,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${selectedColumns.length} of $selectableColumnCount columns selected',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      AppButton(
-                        label: 'Export CSV ->',
-                        onPressed: isExporting
-                            ? null
-                            : () async {
-                                setSheetState(() {
-                                  isExporting = true;
-                                });
+                        const SizedBox(height: 14),
+                        Flexible(
+                          fit: FlexFit.loose,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: elevatedColor,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: borderColor),
+                            ),
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              itemCount: skipTraceExportColumns.length,
+                              separatorBuilder: (_, _) =>
+                                  Divider(height: 1, color: borderColor),
+                              itemBuilder: (context, index) {
+                                final column = skipTraceExportColumns[index];
+                                final locked =
+                                    column == SkipTraceExportColumn.leadId;
 
-                                final success = await exportSkipTraceCsv(
-                                  leadsToExport,
-                                  selectedColumns,
+                                return CheckboxListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 2,
+                                  ),
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                  activeColor: AppColors.primary,
+                                  checkColor: Colors.white,
+                                  title: Text(
+                                    column.label,
+                                    style: TextStyle(
+                                      color: primaryText,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  subtitle: locked
+                                      ? Text(
+                                          'Required to match skip tracing results back to leads',
+                                          style: TextStyle(
+                                            color: secondaryText,
+                                            fontSize: 12,
+                                          ),
+                                        )
+                                      : null,
+                                  value: selectedColumns.contains(column),
+                                  onChanged: locked || isExporting
+                                      ? null
+                                      : (checked) {
+                                          setSheetState(() {
+                                            if (checked ?? false) {
+                                              selectedColumns.add(column);
+                                            } else {
+                                              selectedColumns.remove(column);
+                                            }
+                                          });
+                                        },
                                 );
-                                if (!context.mounted) return;
-
-                                setSheetState(() {
-                                  isExporting = false;
-                                });
-                                if (success && sheetContext.mounted) {
-                                  Navigator.pop(sheetContext);
-                                }
                               },
-                        leadingIcon: Icons.download_rounded,
-                        isLoading: isExporting,
-                        fullWidth: true,
-                      ),
-                    ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          summaryText,
+                          style: TextStyle(
+                            color: primaryText,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${selectedColumns.length} of $selectableColumnCount columns selected',
+                          style: TextStyle(color: secondaryText),
+                        ),
+                        const SizedBox(height: 16),
+                        AppButton(
+                          label: 'Export CSV ->',
+                          onPressed: isExporting
+                              ? null
+                              : () async {
+                                  setSheetState(() {
+                                    isExporting = true;
+                                  });
+
+                                  final success = await exportSkipTraceCsv(
+                                    leadsToExport,
+                                    selectedColumns,
+                                  );
+                                  if (!context.mounted) return;
+
+                                  setSheetState(() {
+                                    isExporting = false;
+                                  });
+                                  if (success && sheetContext.mounted) {
+                                    Navigator.pop(sheetContext);
+                                  }
+                                },
+                          leadingIcon: Icons.download_rounded,
+                          isLoading: isExporting,
+                          fullWidth: true,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
