@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:csv/csv.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +14,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:market_coverage/design_system.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -20,7 +22,6 @@ import 'src/area_stats.dart';
 import 'src/coverage.dart';
 import 'src/formatting.dart';
 import 'src/geo.dart';
-import 'src/lead_export.dart';
 import 'src/scoring.dart';
 
 // Re-export the extracted modules so existing imports of
@@ -17876,6 +17877,138 @@ class LeadListScreen extends StatefulWidget {
   State<LeadListScreen> createState() => _LeadListScreenState();
 }
 
+enum SkipTraceExportColumn {
+  leadId,
+  propertyAddress,
+  latitude,
+  longitude,
+  dateCaptured,
+  conditionTags,
+  notes,
+  leadScore,
+  source,
+}
+
+extension SkipTraceExportColumnLabel on SkipTraceExportColumn {
+  String get label {
+    return switch (this) {
+      SkipTraceExportColumn.leadId => 'Lead ID',
+      SkipTraceExportColumn.propertyAddress => 'Property Address',
+      SkipTraceExportColumn.latitude => 'Latitude',
+      SkipTraceExportColumn.longitude => 'Longitude',
+      SkipTraceExportColumn.dateCaptured => 'Date Captured',
+      SkipTraceExportColumn.conditionTags => 'Condition Tags',
+      SkipTraceExportColumn.notes => 'Notes',
+      SkipTraceExportColumn.leadScore => 'Lead Score',
+      SkipTraceExportColumn.source => 'Source',
+    };
+  }
+
+  String get csvHeader {
+    return switch (this) {
+      SkipTraceExportColumn.leadId => 'lead_id',
+      SkipTraceExportColumn.propertyAddress => 'property_address',
+      SkipTraceExportColumn.latitude => 'latitude',
+      SkipTraceExportColumn.longitude => 'longitude',
+      SkipTraceExportColumn.dateCaptured => 'date_captured',
+      SkipTraceExportColumn.conditionTags => 'condition_tags',
+      SkipTraceExportColumn.notes => 'notes',
+      SkipTraceExportColumn.leadScore => 'lead_score',
+      SkipTraceExportColumn.source => 'source',
+    };
+  }
+}
+
+const List<SkipTraceExportColumn> skipTraceExportColumns = [
+  SkipTraceExportColumn.leadId,
+  SkipTraceExportColumn.propertyAddress,
+  SkipTraceExportColumn.latitude,
+  SkipTraceExportColumn.longitude,
+  SkipTraceExportColumn.dateCaptured,
+  SkipTraceExportColumn.conditionTags,
+  SkipTraceExportColumn.notes,
+  SkipTraceExportColumn.leadScore,
+  SkipTraceExportColumn.source,
+];
+
+String skipTraceCsvValue(Object? value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty) return '';
+  return text;
+}
+
+String skipTraceDateValue(DateTime? date) {
+  if (date == null) return '';
+  return isoDateOnly(date);
+}
+
+String skipTraceCoordinateValue(double? coordinate) {
+  if (coordinate == null) return '';
+  return coordinate.toStringAsFixed(7);
+}
+
+String skipTraceConditionTags(Lead lead) {
+  final tags = <String>{};
+
+  void addTag(String value) {
+    final label = value.trim();
+    if (label.isEmpty || label == 'Parcel Selected') return;
+    tags.add(label);
+  }
+
+  if (lead.scoreData.vacantAppearance) addTag('Vacant');
+  if (lead.scoreData.roofDamage) addTag('Roof Damage');
+  if (lead.scoreData.tallGrass) addTag('Tall Grass');
+  if (lead.scoreData.trashInYard) addTag('Trash In Yard');
+  if (lead.scoreData.exteriorWear) addTag('Exterior Wear');
+  if (lead.scoreData.brokenWindows) addTag('Broken Windows');
+  addTag(lead.condition);
+
+  return tags.join('; ');
+}
+
+Object skipTraceValueForColumn(Lead lead, SkipTraceExportColumn column) {
+  return switch (column) {
+    SkipTraceExportColumn.leadId => lead.id,
+    SkipTraceExportColumn.propertyAddress => lead.address,
+    SkipTraceExportColumn.latitude => skipTraceCoordinateValue(lead.latitude),
+    SkipTraceExportColumn.longitude => skipTraceCoordinateValue(lead.longitude),
+    SkipTraceExportColumn.dateCaptured => skipTraceDateValue(lead.createdAt),
+    SkipTraceExportColumn.conditionTags => skipTraceConditionTags(lead),
+    SkipTraceExportColumn.notes => lead.notes,
+    SkipTraceExportColumn.leadScore => lead.score,
+    SkipTraceExportColumn.source => lead.source,
+  };
+}
+
+String buildSkipTraceLeadsCsv(
+  List<Lead> leads,
+  Set<SkipTraceExportColumn> selectedColumns,
+) {
+  final orderedColumns = skipTraceExportColumns
+      .where((column) {
+        return column == SkipTraceExportColumn.leadId ||
+            selectedColumns.contains(column);
+      })
+      .toList(growable: false);
+  final rows = <List<dynamic>>[
+    orderedColumns.map((column) => column.csvHeader).toList(growable: false),
+    for (final lead in leads)
+      orderedColumns
+          .map(
+            (column) =>
+                skipTraceCsvValue(skipTraceValueForColumn(lead, column)),
+          )
+          .toList(growable: false),
+  ];
+
+  return const ListToCsvConverter(eol: '\n').convert(rows);
+}
+
+String skipTraceExportFileName(DateTime date) {
+  return 'market_coverage_leads_${isoDateOnly(date)}.csv';
+}
+
 class _LeadListScreenState extends State<LeadListScreen> {
   final searchController = TextEditingController();
   String searchQuery = '';
@@ -17946,16 +18079,216 @@ class _LeadListScreenState extends State<LeadListScreen> {
     return count;
   }
 
-  Future<void> exportLeadsCsv(List<Lead> leads) async {
-    await Clipboard.setData(ClipboardData(text: leadsToCsv(leads)));
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Copied ${leads.length} leads as CSV to the clipboard.'),
-      ),
+  Future<void> openEmptyExportState() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: EmptyState(
+              icon: Icons.upload_file_outlined,
+              title: 'No leads to export yet',
+              subtitle: 'Capture leads from the Drive tab first.',
+              action: AppButton(
+                label: 'Close',
+                onPressed: () => Navigator.pop(sheetContext),
+                variant: AppButtonVariant.ghost,
+              ),
+            ),
+          ),
+        );
+      },
     );
+  }
+
+  Future<void> openSkipTraceExportSheet({
+    required List<Lead> leadsToExport,
+    required int totalLeadCount,
+    required bool exportingFiltered,
+  }) async {
+    if (leadsToExport.isEmpty) {
+      await openEmptyExportState();
+      return;
+    }
+
+    final selectedColumns = skipTraceExportColumns.toSet();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        var isExporting = false;
+
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final selectableColumnCount = skipTraceExportColumns.length;
+            final summaryText = exportingFiltered
+                ? 'Exporting ${leadsToExport.length} filtered leads'
+                : '${leadsToExport.length} of $totalLeadCount leads will be exported';
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 20,
+                  right: 20,
+                  bottom: 20 + MediaQuery.viewInsetsOf(context).bottom,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Export for Skip Tracing',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Select columns to include in your CSV.',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: [
+                            for (final column in skipTraceExportColumns)
+                              CheckboxListTile(
+                                contentPadding: EdgeInsets.zero,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                title: Text(column.label),
+                                subtitle: column == SkipTraceExportColumn.leadId
+                                    ? const Text(
+                                        'Required to match skip tracing results back to leads',
+                                      )
+                                    : null,
+                                value: selectedColumns.contains(column),
+                                onChanged:
+                                    column == SkipTraceExportColumn.leadId ||
+                                        isExporting
+                                    ? null
+                                    : (checked) {
+                                        setSheetState(() {
+                                          if (checked ?? false) {
+                                            selectedColumns.add(column);
+                                          } else {
+                                            selectedColumns.remove(column);
+                                          }
+                                        });
+                                      },
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        summaryText,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${selectedColumns.length} of $selectableColumnCount columns selected',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      AppButton(
+                        label: 'Export CSV ->',
+                        onPressed: isExporting
+                            ? null
+                            : () async {
+                                setSheetState(() {
+                                  isExporting = true;
+                                });
+
+                                final success = await exportSkipTraceCsv(
+                                  leadsToExport,
+                                  selectedColumns,
+                                );
+                                if (!context.mounted) return;
+
+                                setSheetState(() {
+                                  isExporting = false;
+                                });
+                                if (success && sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              },
+                        leadingIcon: Icons.download_rounded,
+                        isLoading: isExporting,
+                        fullWidth: true,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<bool> exportSkipTraceCsv(
+    List<Lead> leadsToExport,
+    Set<SkipTraceExportColumn> selectedColumns,
+  ) async {
+    try {
+      final csvText = buildSkipTraceLeadsCsv(leadsToExport, selectedColumns);
+      final fileName = skipTraceExportFileName(DateTime.now());
+      final bytes = Uint8List.fromList(utf8.encode(csvText));
+      final renderBox = context.findRenderObject() as RenderBox?;
+
+      await Share.shareXFiles(
+        [
+          XFile.fromData(
+            bytes,
+            name: fileName,
+            mimeType: 'text/csv',
+            length: bytes.length,
+          ),
+        ],
+        subject: 'Market Coverage leads for skip tracing',
+        text: 'Market Coverage lead export',
+        sharePositionOrigin: renderBox == null
+            ? null
+            : renderBox.localToGlobal(Offset.zero) & renderBox.size,
+      );
+
+      if (!mounted) return true;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Exported ${leadsToExport.length} leads to CSV.'),
+        ),
+      );
+      return true;
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('Lead CSV export error: $error');
+      }
+      unawaited(FieldTestLogger.log('lead_csv_export_error', detail: '$error'));
+
+      if (!mounted) return false;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Export failed. Please try again.')),
+      );
+      return false;
+    }
   }
 
   Future<void> openLeadDetails(Lead lead) async {
@@ -18204,11 +18537,13 @@ class _LeadListScreenState extends State<LeadListScreen> {
         title: const Text('Leads'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.download),
-            tooltip: 'Copy leads as CSV',
-            onPressed: filteredLeads.isEmpty
-                ? null
-                : () => exportLeadsCsv(filteredLeads),
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Export leads as CSV',
+            onPressed: () => openSkipTraceExportSheet(
+              leadsToExport: filteredLeads,
+              totalLeadCount: sortedLeads.length,
+              exportingFiltered: activeFilterCount > 0,
+            ),
           ),
         ],
       ),
@@ -18245,10 +18580,12 @@ class _LeadListScreenState extends State<LeadListScreen> {
                   ),
                   const SizedBox(width: 16),
                   FilledButton.icon(
-                    onPressed: filteredLeads.isEmpty
-                        ? null
-                        : () => exportLeadsCsv(filteredLeads),
-                    icon: const Icon(Icons.download),
+                    onPressed: () => openSkipTraceExportSheet(
+                      leadsToExport: filteredLeads,
+                      totalLeadCount: sortedLeads.length,
+                      exportingFiltered: activeFilterCount > 0,
+                    ),
+                    icon: const Icon(Icons.download_rounded),
                     label: const Text('Export CSV'),
                   ),
                 ],

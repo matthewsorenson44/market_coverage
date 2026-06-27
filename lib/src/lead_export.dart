@@ -1,7 +1,7 @@
-/// Lead CSV export. The CSV generation is pure and unit-tested; the UI just
-/// hands the resulting string to the clipboard.
+/// Lead CSV export. The CSV generation is pure and unit-tested.
 library;
 
+import 'package:csv/csv.dart';
 import 'package:market_coverage/main.dart';
 
 const List<String> _leadCsvHeaders = [
@@ -25,32 +25,14 @@ const List<String> _leadCsvHeaders = [
   'Longitude',
 ];
 
-/// Escapes a single CSV field: wraps in quotes when it contains a comma, quote,
-/// or line break, and doubles any embedded quotes (RFC 4180).
-String _csvField(Object? value) {
-  final text = value?.toString() ?? '';
-
-  if (text.contains(',') ||
-      text.contains('"') ||
-      text.contains('\n') ||
-      text.contains('\r')) {
-    return '"${text.replaceAll('"', '""')}"';
-  }
-
-  return text;
-}
-
-String _csvRow(Iterable<Object?> fields) => fields.map(_csvField).join(',');
-
 /// Builds a CSV document (header + one row per lead) suitable for upload to a
 /// skip-tracing service or a mail-merge. Returns just the header row when there
 /// are no leads.
 String leadsToCsv(List<Lead> leads) {
-  final rows = <String>[_csvRow(_leadCsvHeaders)];
-
-  for (final lead in leads) {
-    rows.add(
-      _csvRow([
+  final rows = <List<Object?>>[
+    _leadCsvHeaders,
+    for (final lead in leads)
+      [
         lead.address,
         normalizeLeadStage(lead.status),
         lead.score,
@@ -69,9 +51,8 @@ String leadsToCsv(List<Lead> leads) {
         lead.createdAt?.toIso8601String() ?? '',
         lead.latitude ?? '',
         lead.longitude ?? '',
-      ]),
-    );
-  }
+      ],
+  ];
 
-  return rows.join('\n');
+  return const ListToCsvConverter(eol: '\n').convert(rows);
 }

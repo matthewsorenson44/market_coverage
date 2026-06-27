@@ -78,6 +78,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Parcel boundaries and parcel/lead markers should appear sooner and with stronger contrast on Satellite, Dark, and Minimal map styles, including during active missions.
 - Fix pushed, awaiting user confirmation: Tapping a house with no parcel data now opens a fallback capture sheet instead of dead-ending at "No parcel found."
 - Fix pushed, awaiting user confirmation: GPS-only Add Lead capture now tries to reverse-geocode the saved coordinates into a street address before saving, while still allowing GPS-only capture if the lookup fails.
+- Fix pushed, awaiting user confirmation: Leads tab now has a skip-tracing CSV export flow with selectable safe MVP columns, native share/download, and no fabricated owner/phone/email data.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -151,6 +152,10 @@ Bug status meanings:
 - Validation for visibility/fallback fixes: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 - Added best-effort reverse geocoding for GPS-only Add Lead capture. When a lead is started from a map/GPS point with no parcel data, the Add Lead screen now looks up the nearest address, prefills the Property Address field when available, and clearly says GPS will still be saved if address lookup fails.
 - Validation for GPS-to-address lead capture: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Added Prompt B1 skip-tracing CSV export from the Leads tab. The export sheet lets users choose available lead columns, locks `lead_id` as the first column for future import matching, exports only visible/filtered leads, and uses native share/download via `share_plus`.
+- Added `csv` for safe CSV generation and updated the older pure CSV helper to use package-based escaping instead of manual field escaping.
+- Added unit tests for selected-column export, semicolon-separated condition tags, and blank missing values.
+- Validation for CSV export: `dart format .`, `flutter analyze`, and `flutter test` passed with 114 tests.
 
 ### 2026-06-26
 

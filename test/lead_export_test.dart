@@ -4,20 +4,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:market_coverage/main.dart';
 
 Lead makeLead({
+  String id = '1',
   String address = '123 Main St',
   String status = 'Interested',
   int score = 0,
+  LeadScoreData? scoreData,
   String notes = '',
+  String source = 'Driving For Dollars',
   double? assessedValue,
+  DateTime? createdAt,
+  double? latitude,
+  double? longitude,
 }) {
   return Lead(
-    id: '1',
+    id: id,
     address: address,
     condition: 'Tall Grass',
     notes: notes,
     status: status,
-    source: 'Driving For Dollars',
-    scoreData: LeadScoreData.empty().copyWith(score: score),
+    source: source,
+    scoreData: scoreData ?? LeadScoreData.empty().copyWith(score: score),
     parcelData: LeadParcelData(
       ownerName: 'Jane Doe',
       mailingAddress: 'PO Box 1',
@@ -44,9 +50,9 @@ Lead makeLead({
       documentDate: '',
       receptionNo: '',
     ),
-    createdAt: null,
-    latitude: null,
-    longitude: null,
+    createdAt: createdAt,
+    latitude: latitude,
+    longitude: longitude,
   );
 }
 
@@ -90,6 +96,65 @@ void main() {
 
     test('null numeric fields render empty', () {
       expect(leadsToCsv([makeLead(assessedValue: null)]), contains(',,'));
+    });
+  });
+
+  group('buildSkipTraceLeadsCsv', () {
+    test('keeps lead_id first and honors selected columns', () {
+      final csv = buildSkipTraceLeadsCsv(
+        [
+          makeLead(
+            id: 'lead-1',
+            address: '500 Oak Ave',
+            score: 72,
+            source: 'Referral',
+            createdAt: DateTime(2026, 6, 27, 12),
+          ),
+        ],
+        {
+          SkipTraceExportColumn.leadId,
+          SkipTraceExportColumn.propertyAddress,
+          SkipTraceExportColumn.dateCaptured,
+          SkipTraceExportColumn.leadScore,
+        },
+      );
+      final lines = csv.split('\n');
+
+      expect(lines.first, 'lead_id,property_address,date_captured,lead_score');
+      expect(lines[1], 'lead-1,500 Oak Ave,2026-06-27,72');
+      expect(csv, isNot(contains('source')));
+      expect(csv, isNot(contains('Referral')));
+    });
+
+    test('condition tags are semicolon separated in one cell', () {
+      final csv = buildSkipTraceLeadsCsv(
+        [
+          makeLead(
+            scoreData: LeadScoreData.empty().copyWith(
+              roofDamage: true,
+              tallGrass: true,
+              score: 55,
+            ),
+          ),
+        ],
+        {SkipTraceExportColumn.leadId, SkipTraceExportColumn.conditionTags},
+      );
+
+      expect(csv, contains('Roof Damage; Tall Grass'));
+    });
+
+    test('missing values export as blanks, not literal null', () {
+      final csv = buildSkipTraceLeadsCsv(
+        [makeLead(latitude: null, longitude: null)],
+        {
+          SkipTraceExportColumn.leadId,
+          SkipTraceExportColumn.latitude,
+          SkipTraceExportColumn.longitude,
+        },
+      );
+
+      expect(csv, contains('1,,'));
+      expect(csv, isNot(contains('null')));
     });
   });
 }
