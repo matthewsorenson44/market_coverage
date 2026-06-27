@@ -98,6 +98,8 @@ const String defaultCoverageCity = 'Owasso';
 const String motivatedSellersButtonLabel = 'Find Motivated Sellers';
 const String motivatedSellersDescription =
     'Fetches every property in this area and scores them by investment potential.';
+const String ownerDataUnavailableMessage =
+    'Owner data not available. Export this lead list for skip tracing.';
 const String primaryTulsaParcelLayerUrl =
     'https://map11.incog.org/arcgis11wa/rest/services/Parcels_TulsaCo/FeatureServer/0/query';
 const String fallbackTulsaParcelLayerUrl =
@@ -1067,19 +1069,26 @@ class CityReadiness {
         : streetCount < 500
         ? 50.0
         : 100.0;
-    final parcelServiceScore = parcelServiceVerified ? 100.0 : 0.0;
-    final marketMapScore = propertyCount < 1 ? 0.0 : 100.0;
+    final leadCaptureScore = streetCount > 0
+        ? 100.0
+        : leadCount > 0
+        ? 50.0
+        : 0.0;
     final coverageScore = streetCount < 1 ? 0.0 : 100.0;
+    final optionalParcelScore = propertyCount > 0
+        ? 100.0
+        : parcelServiceVerified
+        ? 50.0
+        : 0.0;
 
-    return streetLayerScore * 0.35 +
-        parcelServiceScore * 0.25 +
-        marketMapScore * 0.20 +
-        ownerInfoPercent.clamp(0, 100) * 0.10 +
-        coverageScore * 0.10;
+    return streetLayerScore * 0.60 +
+        coverageScore * 0.20 +
+        leadCaptureScore * 0.15 +
+        optionalParcelScore * 0.05;
   }
 
   String get statusLabel {
-    if (streetCount > 0 && propertyCount > 0) return 'Ready';
+    if (streetCount >= 500) return 'Ready';
     if (streetCount > 0 || propertyCount > 0) return 'Partial';
     if (marketStatus == 'planned') return 'Planned';
     return 'Missing Data';
@@ -1099,13 +1108,12 @@ class CityReadiness {
   }
 
   bool get isDrivable {
-    return statusLabel == 'Ready';
+    return streetCount > 0;
   }
 
   String get suggestedNextStep {
     if (streetCount < 1) return 'Import streets';
-    if (propertyCount < 1) return 'Import properties';
-    if (targetCount < 1) return 'Build Market Map';
+    if (driveAreaCount < 1) return 'Create Drive Area';
     return 'Ready to drive';
   }
 }
@@ -1260,15 +1268,14 @@ class Market {
   }
 
   bool get isDrivable {
-    return readinessStatus == 'ready' ||
-        (cachedStreetCount >= 500 && parcelServiceUrl != null);
+    return readinessStatus == 'ready' || cachedStreetCount > 0;
   }
 
   String get nextAction {
     if (isDrivable) return 'Ready to drive';
     if (streetDataStatus == 'none') return 'Import streets to unlock missions';
     if (propertyDataStatus == 'none') {
-      return 'Build Market Map to unlock targets';
+      return 'Ready to capture; parcels optional';
     }
     if (targetDataStatus == 'none') return 'Run target scoring';
     return 'Verify data quality';
@@ -5147,30 +5154,31 @@ class _CityDetailScreen extends StatelessWidget {
                     _DataLayerRow(
                       status: city.parcelServiceVerified
                           ? _LayerStatus.ready
-                          : _LayerStatus.missing,
-                      label: 'Parcel service',
+                          : _LayerStatus.optional,
+                      label: 'Parcel preview (optional)',
                       detail: city.parcelServiceVerified
                           ? 'Verified'
-                          : 'NOT VERIFIED',
+                          : 'Optional by market - lead capture still works',
                     ),
                     _DataLayerRow(
                       status: city.marketMapBuilt
                           ? _LayerStatus.ready
-                          : _LayerStatus.missing,
-                      label: 'Market map',
+                          : _LayerStatus.optional,
+                      label: 'Target property map (optional)',
                       detail: city.marketMapBuilt
                           ? '${city.propertyCount} properties, ${city.targetCount} targets'
-                          : 'NOT BUILT',
+                          : 'Optional - use Quick Capture and CSV export',
                     ),
                     _DataLayerRow(
                       status: city.ownerInfoPercent >= 80
                           ? _LayerStatus.ready
                           : city.ownerInfoPercent > 0
                           ? _LayerStatus.partial
-                          : _LayerStatus.missing,
-                      label: 'Owner info',
-                      detail:
-                          '${city.ownerInfoPercent.toStringAsFixed(0)}% filled',
+                          : _LayerStatus.optional,
+                      label: 'Owner enrichment (optional)',
+                      detail: city.ownerInfoPercent > 0
+                          ? '${city.ownerInfoPercent.toStringAsFixed(0)}% filled'
+                          : ownerDataUnavailableMessage,
                     ),
                     _DataLayerRow(
                       status: city.coveredStreetCount > 0
@@ -5202,7 +5210,7 @@ class _CityDetailScreen extends StatelessWidget {
                     const SizedBox(height: 8),
                     _CapabilityRow(label: 'Missions', enabled: city.isDrivable),
                     _CapabilityRow(
-                      label: 'Property Preview',
+                      label: 'Property Preview (optional)',
                       enabled: city.parcelServiceVerified,
                     ),
                     _CapabilityRow(
@@ -5228,7 +5236,7 @@ class _CityDetailScreen extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Text(
-                    '${city.displayName} is ${city.statusLabel}. You can set it active, but Drive will show missing streets/properties until data is imported.',
+                    '${city.displayName} is ${city.statusLabel}. You can set it active, but Drive needs street data for coverage and missions. Parcel and owner data are optional enrichment.',
                   ),
                 ),
               ),
@@ -5262,7 +5270,7 @@ class _CityDetailScreen extends StatelessWidget {
   }
 }
 
-enum _LayerStatus { ready, partial, missing }
+enum _LayerStatus { ready, partial, missing, optional }
 
 class _DataLayerRow extends StatelessWidget {
   final _LayerStatus status;
@@ -5281,11 +5289,13 @@ class _DataLayerRow extends StatelessWidget {
       _LayerStatus.ready => Icons.check_circle,
       _LayerStatus.partial => Icons.remove_circle,
       _LayerStatus.missing => Icons.cancel,
+      _LayerStatus.optional => Icons.info_outline,
     };
     final color = switch (status) {
       _LayerStatus.ready => Colors.green,
       _LayerStatus.partial => Colors.amber,
       _LayerStatus.missing => Colors.red,
+      _LayerStatus.optional => Colors.blueGrey,
     };
 
     return ListTile(
@@ -9237,9 +9247,19 @@ class _DrivingScreenState extends State<DrivingScreen>
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      quickParcel?.ownerName ?? 'Owner not set',
-                                      maxLines: 1,
+                                      quickParcel?.ownerName
+                                                  ?.trim()
+                                                  .isNotEmpty ==
+                                              true
+                                          ? quickParcel!.ownerName!.trim()
+                                          : ownerDataUnavailableMessage,
+                                      maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
+                                      style: AppTypography.bodySmall(
+                                        color: dark
+                                            ? AppColors.textSecondaryDark
+                                            : AppColors.textSecondaryLight,
+                                      ),
                                     ),
                                   ),
                                   if (quickParcel?.outOfStateOwner ?? false)
@@ -12630,21 +12650,59 @@ class _DrivingScreenState extends State<DrivingScreen>
               lastSaleDate: parcel.saleDate,
               assessedValue: parcel.assessedValue,
             );
+            final hasOwnerData =
+                parcel.ownerName != null && parcel.ownerName!.trim().isNotEmpty;
+            final hasMailingAddress =
+                parcel.mailingAddress != null &&
+                parcel.mailingAddress!.trim().isNotEmpty;
             final propertyInfoRows = <Widget>[
               parcelPreviewRow('Address', parcel.displayAddress, dark: dark),
+              if (!hasOwnerData && !hasMailingAddress) ...[
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: dark
+                        ? const Color(0xFF243044)
+                        : const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: dark
+                          ? const Color(0xFF334155)
+                          : const Color(0xFFBFDBFE),
+                    ),
+                  ),
+                  child: Text(
+                    ownerDataUnavailableMessage,
+                    style: TextStyle(
+                      color: dark
+                          ? const Color(0xFFE5E7EB)
+                          : const Color(0xFF1E3A8A),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
               parcelPreviewRow(
                 'Owner',
-                parcel.ownerName ?? 'Not set',
+                hasOwnerData ? parcel.ownerName!.trim() : 'Not available',
                 dark: dark,
               ),
               parcelPreviewRow(
                 'Mailing',
-                parcel.mailingAddress ?? 'Not set',
+                hasMailingAddress
+                    ? parcel.mailingAddress!.trim()
+                    : 'Not available',
                 dark: dark,
               ),
               parcelPreviewRow(
                 'Out of state',
-                parcel.outOfStateOwner ? 'Yes' : 'No',
+                hasMailingAddress
+                    ? parcel.outOfStateOwner
+                          ? 'Yes'
+                          : 'No'
+                    : 'Not available',
                 dark: dark,
               ),
               parcelPreviewRow(
@@ -19722,17 +19780,25 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Parcel Property Details',
+                        'Property Details (Optional)',
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
+                      if (ownerNameController.text.trim().isEmpty &&
+                          mailingAddressController.text.trim().isEmpty) ...[
+                        const SizedBox(height: 6),
+                        const Text(
+                          ownerDataUnavailableMessage,
+                          style: TextStyle(color: Color(0xFF6B7280)),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       TextField(
                         controller: ownerNameController,
                         decoration: const InputDecoration(
-                          labelText: 'Owner Name',
+                          labelText: 'Owner Name (optional)',
                           border: OutlineInputBorder(),
                         ),
                       ),

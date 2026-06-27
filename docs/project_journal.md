@@ -6,6 +6,8 @@ Apple Maps for driving-for-dollars, market coverage, and real estate wholesaler 
 
 Market Coverage OS should help a wholesaler see where they have driven, what streets and areas still need coverage, which properties look like opportunities, and what leads need follow-up.
 
+MVP strategy update: owner/property ownership data is not required for MVP. The core app should be built around nationwide driving-for-dollars lead capture: market/city selection, street coverage, Drive Areas, missions, Quick Capture, GPS/address capture, photos, tags, notes, lead scoring, CSV export for skip tracing, and CSV import/enrichment later. Parcel boundaries and owner data are optional by market and must never block lead capture.
+
 ## Main User Flow
 
 1. User chooses an active market.
@@ -36,7 +38,7 @@ The app should feel dependable in the field before adding more automation:
 - Drive Mode with map, GPS, follow-me foundation, route tracking, and Quick Capture.
 - Drive Areas and Missions.
 - Street coverage intelligence.
-- Parcel lookup and property preview.
+- Optional parcel lookup and property preview where market data exists.
 - Lead list and lead details.
 - Lead photos through Supabase Storage.
 - Lead scoring, source, pipeline stage, reminders, ARV, repair cost, assignment fee, and MAO.
@@ -71,6 +73,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Areas list cards should have readable stats/text in dark mode.
 - Fix pushed, awaiting user confirmation: Property Preview now puts "What did you see?" and Add Lead above the property information.
 - Fix pushed, awaiting user confirmation: Drive tab visual pass now uses design-system cards, buttons, chips, typography, and HUD treatments for planning, mission preview, active mission controls, Quick Capture, and first-run empty states.
+- Fix pushed, awaiting user confirmation: Market readiness and lead capture no longer require owner/property ownership data. Missing owner data now tells users to export the lead list for skip tracing instead of implying the lead is incomplete.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -134,6 +137,10 @@ Bug status meanings:
 - Component caveat: the mission preview still uses a custom `AppCard` composition instead of the domain `MissionCard` because it is built from transient planning estimates, not a saved `Mission` model.
 - Validation for Drive tab design pass: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 - Status: awaiting user confirmation on iPhone for visual clarity, button placement, and bottom-sheet behavior.
+- Updated the parcel/owner MVP strategy: street data now drives market readiness and mission eligibility, while parcel preview, target property maps, and owner enrichment are labeled optional.
+- Added consistent missing-owner copy: "Owner data not available. Export this lead list for skip tracing."
+- Property Preview, Quick Capture, Lead Details, market data layers, and market readiness now support driving-for-dollars capture without requiring owner names.
+- Validation for owner/parcel strategy update: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 
 ### 2026-06-26
 
