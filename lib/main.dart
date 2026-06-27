@@ -108,8 +108,8 @@ const List<String> tulsaParcelLayerUrls = [
   primaryTulsaParcelLayerUrl,
   fallbackTulsaParcelLayerUrl,
 ];
-const int visibleParcelZoom = 17;
-const int houseNumberLabelZoom = 18;
+const double visibleParcelZoom = 16.4;
+const double houseNumberLabelZoom = 17.2;
 const int visibleParcelLimit = 250;
 const int marketMapMaxParcelPages = 40;
 const Duration marketMapParcelPageTimeout = Duration(seconds: 20);
@@ -4537,8 +4537,12 @@ class _CoverageStatBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = dark ? Colors.white : const Color(0xFF111827);
-    final mutedColor = dark ? const Color(0xFFD1D5DB) : const Color(0xFF6B7280);
+    final effectiveDark =
+        dark || Theme.of(context).brightness == Brightness.dark;
+    final color = effectiveDark ? Colors.white : const Color(0xFF111827);
+    final mutedColor = effectiveDark
+        ? const Color(0xFFE5E7EB)
+        : const Color(0xFF6B7280);
 
     if (totalStreets == 0) {
       return Text(
@@ -12316,7 +12320,7 @@ class _DrivingScreenState extends State<DrivingScreen>
         selectedParcel = parcel;
         isLoadingParcel = false;
         locationMessage = parcel == null
-            ? 'No parcel found. Try zooming in or tapping closer to the house/lot.'
+            ? 'No parcel data here. You can still add a lead.'
             : 'Property loaded: ${parcel.displayAddress}';
       });
 
@@ -12324,10 +12328,11 @@ class _DrivingScreenState extends State<DrivingScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'No parcel found. Try zooming in or tapping closer to the house/lot.',
+              'No parcel data here. You can still capture this lead.',
             ),
           ),
         );
+        showMissingParcelCaptureSheet(point);
         return;
       }
 
@@ -12341,9 +12346,92 @@ class _DrivingScreenState extends State<DrivingScreen>
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not load property details.')),
+        const SnackBar(
+          content: Text('Property data unavailable. You can still add a lead.'),
+        ),
       );
+      showMissingParcelCaptureSheet(point);
     }
+  }
+
+  void showMissingParcelCaptureSheet(LatLng point) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: dark ? const Color(0xFF111827) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        final titleColor = dark ? Colors.white : const Color(0xFF0F172A);
+        final bodyColor = dark
+            ? const Color(0xFFCBD5E1)
+            : const Color(0xFF475569);
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'No parcel data here',
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: Icon(Icons.close, color: titleColor),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This market may not have parcel data loaded for this spot yet. You can still save the house as a driving-for-dollars lead with GPS coordinates, photos, tags, and notes.',
+                  style: TextStyle(color: bodyColor, height: 1.35),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  ownerDataUnavailableMessage,
+                  style: TextStyle(
+                    color: bodyColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                AppButton(
+                  label: 'Add Lead Here',
+                  leadingIcon: Icons.add_location_alt,
+                  fullWidth: true,
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    openManualLeadFromPoint(point);
+                  },
+                ),
+                const SizedBox(height: 8),
+                AppButton(
+                  label: 'Close',
+                  variant: AppButtonVariant.ghost,
+                  fullWidth: true,
+                  onPressed: () => Navigator.pop(sheetContext),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void scheduleVisibleParcelLoad() {
@@ -12429,9 +12517,10 @@ class _DrivingScreenState extends State<DrivingScreen>
   }
 
   Color get parcelBoundaryColor {
-    if (_currentTileUrl == kTilesSatellite) return const Color(0xE6FFFFFF);
-    if (_currentTileUrl == kTilesDark) return const Color(0xB3CBD5E1);
-    return const Color(0xCC4F5257);
+    if (_currentTileUrl == kTilesSatellite) return const Color(0xFFFFF176);
+    if (_currentTileUrl == kTilesDark) return const Color(0xFFE2E8F0);
+    if (_currentTileUrl == kTilesMinimal) return const Color(0xE6333A42);
+    return const Color(0xE6333A42);
   }
 
   Color get selectedParcelBoundaryColor {
@@ -12447,7 +12536,9 @@ class _DrivingScreenState extends State<DrivingScreen>
   }
 
   double get parcelBoundaryStrokeWidth {
-    return _currentTileUrl == kTilesSatellite ? 2.2 : 1.6;
+    if (_currentTileUrl == kTilesSatellite) return 2.8;
+    if (_currentTileUrl == kTilesDark) return 2.2;
+    return 2.0;
   }
 
   void openParcelPreview(ParcelProperty parcel) {
@@ -12528,19 +12619,25 @@ class _DrivingScreenState extends State<DrivingScreen>
   }
 
   Widget parcelStatusDot(ParcelProperty parcel) {
+    final lead = leadForParcel(parcel);
+    final markerColor = parcelMarkerColor(parcel);
+    final isLead = lead != null;
+    final fillColor = isLead ? markerColor : const Color(0xF2FFFFFF);
+    final borderColor = isLead ? Colors.white : markerColor;
+
     return Tooltip(
       message: parcel.displayAddress,
       child: Container(
-        width: 14,
-        height: 14,
+        width: 18,
+        height: 18,
         decoration: BoxDecoration(
-          color: parcelMarkerColor(parcel),
+          color: fillColor,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
+          border: Border.all(color: borderColor, width: isLead ? 3 : 2.5),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x33000000),
-              blurRadius: 3,
+              color: Color(0x66000000),
+              blurRadius: 5,
               offset: Offset(0, 1),
             ),
           ],
@@ -12550,6 +12647,10 @@ class _DrivingScreenState extends State<DrivingScreen>
   }
 
   Widget parcelHouseNumberLabel(ParcelProperty parcel, String houseNumber) {
+    final lead = leadForParcel(parcel);
+    final markerColor = parcelMarkerColor(parcel);
+    final isLead = lead != null;
+
     return Tooltip(
       message: parcel.displayAddress,
       child: Container(
@@ -12558,11 +12659,11 @@ class _DrivingScreenState extends State<DrivingScreen>
         decoration: BoxDecoration(
           color: const Color(0xF7FFFFFF),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: parcelMarkerColor(parcel), width: 2),
+          border: Border.all(color: markerColor, width: isLead ? 3 : 2),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x33000000),
-              blurRadius: 4,
+              color: Color(0x66000000),
+              blurRadius: 5,
               offset: Offset(0, 1),
             ),
           ],
@@ -13788,13 +13889,9 @@ class _DrivingScreenState extends State<DrivingScreen>
     final showMissionMap = mapMode == 'mission';
     final showTargetsMap = mapMode == 'targets';
     final showCoverageMap = mapMode == 'coverage';
-    final shouldUseLightweightFollowMap =
-        isTracking && followMyLocation && showDriveMap && !showTargetsMap;
     final shouldDrawParcelLayer =
         showTargetsMap ||
-        (!shouldUseLightweightFollowMap &&
-            (showDriveMap || showMissionMap) &&
-            currentZoom >= visibleParcelZoom);
+        ((showDriveMap || showMissionMap) && currentZoom >= visibleParcelZoom);
     final mapParcels = shouldDrawParcelLayer
         ? (showTargetsMap || showOnlyTargetsOnMap
               ? targetParcels

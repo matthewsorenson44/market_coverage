@@ -74,6 +74,9 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Property Preview now puts "What did you see?" and Add Lead above the property information.
 - Fix pushed, awaiting user confirmation: Drive tab visual pass now uses design-system cards, buttons, chips, typography, and HUD treatments for planning, mission preview, active mission controls, Quick Capture, and first-run empty states.
 - Fix pushed, awaiting user confirmation: Market readiness and lead capture no longer require owner/property ownership data. Missing owner data now tells users to export the lead list for skip tracing instead of implying the lead is incomplete.
+- Fix pushed, awaiting user confirmation: Areas coverage stats should be readable in dark mode without changing light mode.
+- Fix pushed, awaiting user confirmation: Parcel boundaries and parcel/lead markers should appear sooner and with stronger contrast on Satellite, Dark, and Minimal map styles, including during active missions.
+- Fix pushed, awaiting user confirmation: Tapping a house with no parcel data now opens a fallback capture sheet instead of dead-ending at "No parcel found."
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -141,6 +144,10 @@ Bug status meanings:
 - Added consistent missing-owner copy: "Owner data not available. Export this lead list for skip tracing."
 - Property Preview, Quick Capture, Lead Details, market data layers, and market readiness now support driving-for-dollars capture without requiring owner names.
 - Validation for owner/parcel strategy update: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
+- Improved dark-mode Areas coverage readability by making coverage stat text detect dark theme automatically while leaving light-mode colors unchanged.
+- Lowered parcel/house-number zoom thresholds, strengthened parcel boundary contrast by map style, made parcel dots easier to distinguish, and allowed parcel layers to remain visible during tracking/follow mode.
+- Added a no-parcel-data fallback bottom sheet from Drive map taps with an `Add Lead Here` action so missing parcel/owner data does not block capture.
+- Validation for visibility/fallback fixes: `dart format lib/main.dart`, `flutter analyze`, and `flutter test` passed with 111 tests.
 
 ### 2026-06-26
 
