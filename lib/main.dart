@@ -3144,7 +3144,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
       if (!mounted) return;
 
       setState(() {
-        leads.removeWhere((lead) => lead.id == leadId);
+        leads = leads.where((lead) => lead.id != leadId).toList();
       });
     } catch (error) {
       await logLeadDeleteError(error);
@@ -12964,7 +12964,9 @@ class _DrivingScreenState extends State<DrivingScreen>
             if (!mounted) return;
 
             setState(() {
-              drivingLeads.removeWhere((item) => item.id == leadId);
+              drivingLeads = drivingLeads
+                  .where((item) => item.id != leadId)
+                  .toList();
             });
           },
         ),

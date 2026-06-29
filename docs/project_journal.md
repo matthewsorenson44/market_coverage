@@ -64,11 +64,10 @@ The app should feel dependable in the field before adding more automation:
 - Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
 - Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
-- Open: Lead deletion still fails on device after prior RLS/RPC fixes. Needs a focused follow-up pass with the latest console/Supabase error.
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
 - Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
-- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt. User reported the first live test was still blocked after `0012_lead_delete_policy.sql`, so the app now uses secure RPC migration `0013_delete_lead_rpc.sql` and cleans related lead photo rows/storage before deleting. Latest user report says deletion still does not work.
+- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt. User reported the first live test was still blocked after `0012_lead_delete_policy.sql`, so the app now uses secure RPC migration `0013_delete_lead_rpc.sql` and cleans related lead photo rows/storage before deleting. Latest device error showed local state cleanup crashing with "Cannot remove from a fixed-length list"; the app now replaces lead lists immutably after delete instead of mutating them in place.
 - Fix pushed, awaiting user confirmation: Property Preview should no longer overlap the iPhone status bar and should have a sticky top-right X close button.
 - Fix pushed, awaiting user confirmation: Lead Details should have a pinned top-right X close button.
 - Fix pushed, awaiting user confirmation: Mission recap dark-mode cards/text should be readable.
@@ -142,6 +141,12 @@ Bug status meanings:
 - `Confirmed fixed`: User tested and said it works.
 
 ## Recent Work Log
+
+### 2026-06-29
+
+- Fixed the latest lead delete failure reported from iPhone. The Supabase delete path could complete, then the app crashed while removing the deleted lead from a fixed-length local list.
+- Updated both root lead state and Drive Mode lead state to replace the lead list with a fresh filtered list after deletion instead of calling `removeWhere` on the existing list.
+- Status: awaiting user confirmation from both delete entry points: Leads tab trash icon and Lead Details trash icon.
 
 ### 2026-06-28
 
