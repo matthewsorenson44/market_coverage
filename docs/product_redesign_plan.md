@@ -1,5 +1,7 @@
 # Market Coverage OS Product Redesign Plan
 
+> Note: `docs/master_plan.md` is now the source of truth for V1 navigation and build order. The current V1 direction is four primary tabs: Today, Drive, Leads, and Markets. Treat any older five-tab references in this redesign note as historical design exploration unless they are explicitly re-approved.
+
 ## North Star
 
 Market Coverage OS should answer one question on every screen:
@@ -681,4 +683,3 @@ Minimum Mission 2 scope:
 - Show one button: `Start Best Mission`.
 - Do not add AI yet.
 - Use existing data and deterministic rules.
-

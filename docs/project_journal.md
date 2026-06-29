@@ -2,24 +2,30 @@
 
 ## Product Vision
 
+Source of truth for the larger product plan: `docs/master_plan.md`.
+
 Apple Maps for driving-for-dollars, market coverage, and real estate wholesaler CRM.
 
 Market Coverage OS should help a wholesaler see where they have driven, what streets and areas still need coverage, which properties look like opportunities, and what leads need follow-up.
 
 MVP strategy update: owner/property ownership data is not required for MVP. The core app should be built around nationwide driving-for-dollars lead capture: market/city selection, street coverage, Drive Areas, missions, Quick Capture, GPS/address capture, photos, tags, notes, lead scoring, CSV export for skip tracing, and CSV import/enrichment later. Parcel boundaries and owner data are optional by market and must never block lead capture.
 
+Master plan update: the app should become a unified seller-lead command center, not only a field capture app. Driving for Dollars brings users in; Lead Funnel OS and Today Queue keep them organized. V1 should use four primary tabs: Today, Drive, Leads, and Markets. Inbox belongs inside Today until real use proves it needs its own tab.
+
 ## Main User Flow
 
-1. User chooses an active market.
-2. User creates or selects a Drive Area.
-3. User analyzes the area to find streets and target properties.
-4. User starts a Mission.
-5. App tracks live GPS during the drive.
-6. App marks streets as covered.
-7. User adds leads while driving.
-8. User adds photos, tags, notes, scores, and property details.
-9. User completes the mission.
-10. Dashboard and area views show coverage, leads, follow-ups, and pipeline progress.
+1. User opens Today and sees the seller leads, follow-ups, appointments, and driving work that need attention now.
+2. User chooses an active market.
+3. User creates or selects a Drive Area.
+4. User analyzes the area to find streets and target properties where data exists.
+5. User starts a Mission.
+6. App tracks live GPS during the drive.
+7. App marks streets as covered.
+8. User adds leads while driving with GPS/address capture.
+9. User adds photos, tags, notes, scores, and property details.
+10. Leads from field capture, CSV imports, website/webhooks, ads, phone/SMS, email, direct mail, and referrals flow into one lead funnel.
+11. User completes the mission.
+12. Today, Leads, and Markets show coverage, new leads, follow-ups, appointments, source attribution, and pipeline progress.
 
 ## Current MVP Priority
 
@@ -43,6 +49,7 @@ The app should feel dependable in the field before adding more automation:
 - Lead photos through Supabase Storage.
 - Lead scoring, source, pipeline stage, reminders, ARV, repair cost, assignment fee, and MAO.
 - Market catalog and readiness states.
+- Lead funnel direction: source attribution, tasks, Today Queue, inbox items, inbound events, calendar items, and attribution links should be added only as thin vertical slices with working UI.
 
 ## Current Known Issues To Watch
 
@@ -138,6 +145,10 @@ Bug status meanings:
 
 ### 2026-06-28
 
+- Added `docs/master_plan.md` as the source-of-truth master plan for Market Coverage OS.
+- Updated the journal to align with the master plan: four-tab V1 navigation, Today Queue, unified lead funnel, source attribution, additive-only development, security gates, and no fake owner/parcel data.
+- Marked the older redesign plan as historical where it conflicts with the new four-tab master plan.
+- Validation for master plan update: docs-only change, so Flutter validation was not run.
 - Built Prompt B2 skip-tracing CSV import in `lib/main.dart`.
 - Added `owner_phone`, `owner_phone_2`, `owner_email`, `skip_traced`, and `skip_traced_at` handling to the `Lead` model. The required Supabase SQL still needs to be run before live import testing.
 - Added a Leads tab import icon using `file_picker` to select `.csv` files and the existing `csv` package to parse quoted CSV correctly.
