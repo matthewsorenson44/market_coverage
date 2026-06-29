@@ -5,6 +5,7 @@ import 'dart:ui';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:csv/csv.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -88,6 +89,8 @@ const String timeMissionsEnabledPrefsKey = 'time_missions_enabled';
 const String calibrationFactorPrefsKey = 'calibration_factor';
 const String calibrationMissionCountPrefsKey = 'calibration_mission_count';
 const String pendingLeadsQueuePrefsKey = 'pending_leads_queue';
+const String pendingLeadEnrichmentsQueuePrefsKey =
+    'pending_lead_enrichments_queue';
 const String activeMissionIdPrefsKey = 'active_mission_id';
 const String activeCoverageCityPrefsKey = 'active_coverage_city';
 const String recentMarketCitiesPrefsKey = 'recent_market_cities';
@@ -253,6 +256,18 @@ class QuickCaptureSaveResult {
   });
 }
 
+class SkipTraceImportApplyResult {
+  final int updatedCount;
+  final int queuedCount;
+
+  const SkipTraceImportApplyResult({
+    required this.updatedCount,
+    required this.queuedCount,
+  });
+
+  int get totalHandled => updatedCount + queuedCount;
+}
+
 Map<String, dynamic> jsonSafeLeadRow(Map<String, dynamic> row) {
   return row.map((key, value) {
     if (value is DateTime) {
@@ -261,6 +276,16 @@ Map<String, dynamic> jsonSafeLeadRow(Map<String, dynamic> row) {
 
     return MapEntry(key, value);
   });
+}
+
+Map<String, dynamic> jsonSafeLeadEnrichmentQueueRow(Map<String, dynamic> row) {
+  final update = row['update'];
+
+  return {
+    'lead_id': row['lead_id'],
+    if (update is Map)
+      'update': jsonSafeLeadRow(Map<String, dynamic>.from(update)),
+  };
 }
 
 Future<List<Map<String, dynamic>>> pendingLeadRows() async {
@@ -301,6 +326,45 @@ Future<void> appendPendingLeadRow(Map<String, dynamic> row) async {
   final rows = await pendingLeadRows();
   rows.add(jsonSafeLeadRow(row));
   await savePendingLeadRows(rows);
+}
+
+Future<List<Map<String, dynamic>>> pendingLeadEnrichmentRows() async {
+  final prefs = await SharedPreferences.getInstance();
+  final encoded = prefs.getString(pendingLeadEnrichmentsQueuePrefsKey);
+  if (encoded == null || encoded.trim().isEmpty) return [];
+
+  try {
+    final decoded = jsonDecode(encoded);
+    if (decoded is! List) return [];
+
+    return decoded
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  } catch (_) {
+    return [];
+  }
+}
+
+Future<void> savePendingLeadEnrichmentRows(
+  List<Map<String, dynamic>> rows,
+) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(
+    pendingLeadEnrichmentsQueuePrefsKey,
+    jsonEncode(
+      rows.map(jsonSafeLeadEnrichmentQueueRow).toList(growable: false),
+    ),
+  );
+}
+
+Future<void> appendPendingLeadEnrichmentRow(
+  String leadId,
+  Map<String, dynamic> update,
+) async {
+  final rows = await pendingLeadEnrichmentRows();
+  rows.add({'lead_id': leadId, 'update': jsonSafeLeadRow(update)});
+  await savePendingLeadEnrichmentRows(rows);
 }
 
 String leadDeleteErrorMessage(Object error) {
@@ -476,6 +540,54 @@ Future<void> flushPendingLeadsQueue() async {
   await savePendingLeadRows(remainingRows);
   unawaited(
     FieldTestLogger.log('queue_flush_done', detail: 'synced: $syncedCount'),
+  );
+}
+
+Future<void> flushPendingLeadEnrichmentsQueue({String? accountId}) async {
+  final rows = await pendingLeadEnrichmentRows();
+  if (rows.isEmpty) return;
+
+  unawaited(
+    FieldTestLogger.log(
+      'enrichment_queue_flush_start',
+      detail: 'count: ${rows.length}',
+    ),
+  );
+  final remainingRows = <Map<String, dynamic>>[];
+  var syncedCount = 0;
+
+  for (final row in rows) {
+    final leadId = row['lead_id']?.toString();
+    final update = row['update'];
+    if (leadId == null || leadId.isEmpty || update is! Map) {
+      continue;
+    }
+
+    try {
+      var query = supabase
+          .from('leads')
+          .update(jsonSafeLeadRow(Map<String, dynamic>.from(update)))
+          .eq('id', leadId);
+      if (accountId != null && accountId.isNotEmpty) {
+        query = query.eq('account_id', accountId);
+      }
+      final updatedRows = await query.select('id').timeout(leadInsertTimeout);
+      if (updatedRows.isEmpty) {
+        remainingRows.add(row);
+      } else {
+        syncedCount++;
+      }
+    } catch (_) {
+      remainingRows.add(row);
+    }
+  }
+
+  await savePendingLeadEnrichmentRows(remainingRows);
+  unawaited(
+    FieldTestLogger.log(
+      'enrichment_queue_flush_done',
+      detail: 'synced: $syncedCount',
+    ),
   );
 }
 
@@ -828,6 +940,11 @@ class Lead {
   final LeadReminderData reminderData;
   final LeadOfferData offerData;
   final LeadSaleData saleData;
+  final String ownerPhone;
+  final String ownerPhone2;
+  final String ownerEmail;
+  final bool skipTraced;
+  final DateTime? skipTracedAt;
   final DateTime? createdAt;
   final double? latitude;
   final double? longitude;
@@ -844,6 +961,11 @@ class Lead {
     required this.reminderData,
     required this.offerData,
     required this.saleData,
+    this.ownerPhone = '',
+    this.ownerPhone2 = '',
+    this.ownerEmail = '',
+    this.skipTraced = false,
+    this.skipTracedAt,
     required this.createdAt,
     this.latitude,
     this.longitude,
@@ -862,6 +984,13 @@ class Lead {
       reminderData: LeadReminderData.fromMap(map),
       offerData: LeadOfferData.fromMap(map),
       saleData: LeadSaleData.fromMap(map),
+      ownerPhone: map['owner_phone']?.toString() ?? '',
+      ownerPhone2: map['owner_phone_2']?.toString() ?? '',
+      ownerEmail: map['owner_email']?.toString() ?? '',
+      skipTraced: map['skip_traced'] ?? false,
+      skipTracedAt: map['skip_traced_at'] == null
+          ? null
+          : DateTime.tryParse(map['skip_traced_at'].toString()),
       createdAt: map['created_at'] == null
           ? null
           : DateTime.tryParse(map['created_at'].toString()),
@@ -876,6 +1005,10 @@ class Lead {
 
   int get score => scoreData.score;
   double? get mao => offerData.mao;
+  bool get hasContactData =>
+      ownerPhone.trim().isNotEmpty ||
+      ownerPhone2.trim().isNotEmpty ||
+      ownerEmail.trim().isNotEmpty;
 
   Lead copyWith({
     String? status,
@@ -885,6 +1018,11 @@ class Lead {
     LeadReminderData? reminderData,
     LeadOfferData? offerData,
     LeadSaleData? saleData,
+    String? ownerPhone,
+    String? ownerPhone2,
+    String? ownerEmail,
+    bool? skipTraced,
+    DateTime? skipTracedAt,
   }) {
     return Lead(
       id: id,
@@ -898,6 +1036,11 @@ class Lead {
       reminderData: reminderData ?? this.reminderData,
       offerData: offerData ?? this.offerData,
       saleData: saleData ?? this.saleData,
+      ownerPhone: ownerPhone ?? this.ownerPhone,
+      ownerPhone2: ownerPhone2 ?? this.ownerPhone2,
+      ownerEmail: ownerEmail ?? this.ownerEmail,
+      skipTraced: skipTraced ?? this.skipTraced,
+      skipTracedAt: skipTracedAt ?? this.skipTracedAt,
       createdAt: createdAt,
       latitude: latitude,
       longitude: longitude,
@@ -2581,7 +2724,11 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
       );
       if (hasConnection) {
         flushPendingLeadsQueue().then((_) {
-          if (mounted) loadLeads();
+          flushPendingLeadEnrichmentsQueue(accountId: activeAccountId).then((
+            _,
+          ) {
+            if (mounted) loadLeads();
+          });
         });
       }
     });
@@ -2655,6 +2802,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
 
       await loadLeads();
       await flushPendingLeadsQueue();
+      await flushPendingLeadEnrichmentsQueue(accountId: accountId);
       await loadLeads();
     } catch (_) {
       if (!mounted) return;
@@ -2906,6 +3054,63 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
     });
   }
 
+  bool shouldQueueLeadEnrichmentError(Object error) {
+    final details = error.toString().toLowerCase();
+
+    if (details.contains('column') &&
+        (details.contains('owner_phone') ||
+            details.contains('owner_email') ||
+            details.contains('skip_traced'))) {
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<SkipTraceImportApplyResult> importSkipTraceEnrichments(
+    List<SkipTraceLeadEnrichment> enrichments,
+  ) async {
+    final accountId = activeAccountId;
+    if (accountId == null) {
+      throw StateError('No active account.');
+    }
+
+    var updatedCount = 0;
+    var queuedCount = 0;
+
+    for (final enrichment in enrichments) {
+      final update = enrichment.toUpdateMap();
+
+      try {
+        final updatedRows = await supabase
+            .from('leads')
+            .update(jsonSafeLeadRow(update))
+            .eq('account_id', accountId)
+            .eq('id', enrichment.leadId)
+            .select('id')
+            .timeout(leadInsertTimeout);
+
+        if (updatedRows.isEmpty) {
+          throw StateError('No lead row was updated for ${enrichment.leadId}.');
+        }
+
+        updatedCount++;
+      } catch (error) {
+        if (!shouldQueueLeadEnrichmentError(error)) rethrow;
+
+        await appendPendingLeadEnrichmentRow(enrichment.leadId, update);
+        queuedCount++;
+      }
+    }
+
+    await loadLeads();
+
+    return SkipTraceImportApplyResult(
+      updatedCount: updatedCount,
+      queuedCount: queuedCount,
+    );
+  }
+
   Future<void> deleteLead(String leadId) async {
     final accountId = activeAccountId;
     if (accountId == null) return;
@@ -2973,6 +3178,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
               onUpdateLeadReminderData: updateLeadReminderData,
               onUpdateLeadOfferData: updateLeadOfferData,
               onDeleteLead: deleteLead,
+              onImportSkipTraceEnrichments: importSkipTraceEnrichments,
               onRefreshLeads: loadLeads,
             ),
           ),
@@ -3229,6 +3435,10 @@ class MarketCoverageRootScreen extends StatefulWidget {
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
   final Future<void> Function(String leadId) onDeleteLead;
+  final Future<SkipTraceImportApplyResult> Function(
+    List<SkipTraceLeadEnrichment> enrichments,
+  )
+  onImportSkipTraceEnrichments;
   final Future<void> Function() onRefreshLeads;
 
   const MarketCoverageRootScreen({
@@ -3246,6 +3456,7 @@ class MarketCoverageRootScreen extends StatefulWidget {
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
     required this.onDeleteLead,
+    required this.onImportSkipTraceEnrichments,
     required this.onRefreshLeads,
   });
 
@@ -3337,6 +3548,8 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
         onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
         onDeleteLead: widget.onDeleteLead,
+        onImportSkipTraceEnrichments: widget.onImportSkipTraceEnrichments,
+        onRefreshLeads: widget.onRefreshLeads,
       ),
       _AreasTab(
         driveScreenKey: driveScreenKey,
@@ -17935,6 +18148,11 @@ class LeadListScreen extends StatefulWidget {
   final Future<void> Function(String leadId, LeadOfferData offerData)
   onUpdateLeadOfferData;
   final Future<void> Function(String leadId)? onDeleteLead;
+  final Future<SkipTraceImportApplyResult> Function(
+    List<SkipTraceLeadEnrichment> enrichments,
+  )?
+  onImportSkipTraceEnrichments;
+  final Future<void> Function()? onRefreshLeads;
 
   const LeadListScreen({
     super.key,
@@ -17947,6 +18165,8 @@ class LeadListScreen extends StatefulWidget {
     required this.onUpdateLeadReminderData,
     required this.onUpdateLeadOfferData,
     this.onDeleteLead,
+    this.onImportSkipTraceEnrichments,
+    this.onRefreshLeads,
   });
 
   @override
@@ -18085,6 +18305,312 @@ String skipTraceExportFileName(DateTime date) {
   return 'market_coverage_leads_${isoDateOnly(date)}.csv';
 }
 
+const String skipTraceImportMissingMatcherMessage =
+    "This CSV doesn't have a lead_id or address column to match on. Export your leads first, skip trace them, then import the result.";
+
+class SkipTraceImportPreview {
+  final List<SkipTraceLeadEnrichment> enrichments;
+  final List<String> unmatchedRows;
+  final int phoneFirstTimeCount;
+
+  const SkipTraceImportPreview({
+    required this.enrichments,
+    required this.unmatchedRows,
+    required this.phoneFirstTimeCount,
+  });
+}
+
+class SkipTraceLeadEnrichment {
+  final String leadId;
+  final String? ownerName;
+  final String? ownerPhone;
+  final String? ownerPhone2;
+  final String? ownerEmail;
+  final DateTime skipTracedAt;
+
+  const SkipTraceLeadEnrichment({
+    required this.leadId,
+    required this.ownerName,
+    required this.ownerPhone,
+    required this.ownerPhone2,
+    required this.ownerEmail,
+    required this.skipTracedAt,
+  });
+
+  SkipTraceLeadEnrichment copyWith({
+    String? ownerName,
+    String? ownerPhone,
+    String? ownerPhone2,
+    String? ownerEmail,
+    DateTime? skipTracedAt,
+  }) {
+    return SkipTraceLeadEnrichment(
+      leadId: leadId,
+      ownerName: ownerName ?? this.ownerName,
+      ownerPhone: ownerPhone ?? this.ownerPhone,
+      ownerPhone2: ownerPhone2 ?? this.ownerPhone2,
+      ownerEmail: ownerEmail ?? this.ownerEmail,
+      skipTracedAt: skipTracedAt ?? this.skipTracedAt,
+    );
+  }
+
+  bool get hasNewData =>
+      ownerName != null ||
+      ownerPhone != null ||
+      ownerPhone2 != null ||
+      ownerEmail != null;
+
+  Map<String, dynamic> toUpdateMap() {
+    return {
+      if (ownerName != null) 'owner_name': ownerName,
+      if (ownerPhone != null) 'owner_phone': ownerPhone,
+      if (ownerPhone2 != null) 'owner_phone_2': ownerPhone2,
+      if (ownerEmail != null) 'owner_email': ownerEmail,
+      'skip_traced': true,
+      'skip_traced_at': skipTracedAt.toUtc().toIso8601String(),
+    };
+  }
+}
+
+class SkipTraceImportColumns {
+  final int? leadId;
+  final int? address;
+  final int? ownerName;
+  final int? ownerPhone;
+  final int? ownerPhone2;
+  final int? ownerEmail;
+
+  const SkipTraceImportColumns({
+    required this.leadId,
+    required this.address,
+    required this.ownerName,
+    required this.ownerPhone,
+    required this.ownerPhone2,
+    required this.ownerEmail,
+  });
+
+  bool get hasMatcher => leadId != null || address != null;
+}
+
+String normalizeSkipTraceHeader(Object? value) {
+  final normalized = value
+      ?.toString()
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+      .replaceAll(RegExp(r'^_+|_+$'), '');
+
+  return normalized ?? '';
+}
+
+String? skipTraceImportCell(List<dynamic> row, int? index) {
+  if (index == null || index < 0 || index >= row.length) return null;
+
+  final value = row[index].toString().trim();
+  if (value.isEmpty) return null;
+
+  return value;
+}
+
+int? skipTraceHeaderIndex(
+  Map<String, int> headerIndexes,
+  List<String> aliases,
+) {
+  for (final alias in aliases) {
+    final index = headerIndexes[normalizeSkipTraceHeader(alias)];
+    if (index != null) return index;
+  }
+
+  return null;
+}
+
+SkipTraceImportColumns skipTraceImportColumns(List<dynamic> headerRow) {
+  final headerIndexes = <String, int>{};
+  for (var index = 0; index < headerRow.length; index++) {
+    final header = normalizeSkipTraceHeader(headerRow[index]);
+    if (header.isNotEmpty) {
+      headerIndexes.putIfAbsent(header, () => index);
+    }
+  }
+
+  return SkipTraceImportColumns(
+    leadId: skipTraceHeaderIndex(headerIndexes, const ['lead_id']),
+    address: skipTraceHeaderIndex(headerIndexes, const [
+      'property_address',
+      'address',
+    ]),
+    ownerName: skipTraceHeaderIndex(headerIndexes, const [
+      'owner_name',
+      'owner',
+    ]),
+    ownerPhone: skipTraceHeaderIndex(headerIndexes, const [
+      'owner_phone',
+      'phone',
+      'phone_1',
+    ]),
+    ownerPhone2: skipTraceHeaderIndex(headerIndexes, const [
+      'owner_phone_2',
+      'phone_2',
+    ]),
+    ownerEmail: skipTraceHeaderIndex(headerIndexes, const [
+      'owner_email',
+      'email',
+    ]),
+  );
+}
+
+bool skipTraceRowIsEmpty(List<dynamic> row) {
+  return row.every((cell) => cell.toString().trim().isEmpty);
+}
+
+SkipTraceLeadEnrichment mergeSkipTraceEnrichment({
+  required Lead lead,
+  required SkipTraceLeadEnrichment? pending,
+  required DateTime now,
+  required String? importedOwnerName,
+  required String? importedOwnerPhone,
+  required String? importedOwnerPhone2,
+  required String? importedOwnerEmail,
+}) {
+  final effectiveOwnerName =
+      pending?.ownerName ?? lead.parcelData.ownerName.trim();
+  final effectiveOwnerPhone = pending?.ownerPhone ?? lead.ownerPhone.trim();
+  final effectiveOwnerPhone2 = pending?.ownerPhone2 ?? lead.ownerPhone2.trim();
+  final effectiveOwnerEmail = pending?.ownerEmail ?? lead.ownerEmail.trim();
+
+  final ownerName = effectiveOwnerName.isEmpty ? importedOwnerName : null;
+  final ownerPhone = effectiveOwnerPhone.isEmpty ? importedOwnerPhone : null;
+  final ownerPhone2 = effectiveOwnerPhone2.isEmpty ? importedOwnerPhone2 : null;
+  final ownerEmail = effectiveOwnerEmail.isEmpty ? importedOwnerEmail : null;
+
+  final next = SkipTraceLeadEnrichment(
+    leadId: lead.id,
+    ownerName: pending?.ownerName ?? ownerName,
+    ownerPhone: pending?.ownerPhone ?? ownerPhone,
+    ownerPhone2: pending?.ownerPhone2 ?? ownerPhone2,
+    ownerEmail: pending?.ownerEmail ?? ownerEmail,
+    skipTracedAt: now,
+  );
+
+  return next;
+}
+
+SkipTraceImportPreview buildSkipTraceImportPreview(
+  List<Lead> leads,
+  List<List<dynamic>> csvRows,
+  DateTime now,
+) {
+  if (csvRows.isEmpty) {
+    return const SkipTraceImportPreview(
+      enrichments: [],
+      unmatchedRows: [],
+      phoneFirstTimeCount: 0,
+    );
+  }
+
+  final columns = skipTraceImportColumns(csvRows.first);
+  if (!columns.hasMatcher) {
+    throw const FormatException(skipTraceImportMissingMatcherMessage);
+  }
+
+  final leadsById = {for (final lead in leads) lead.id: lead};
+  final leadsByAddress = <String, Lead>{};
+  for (final lead in leads) {
+    final key = normalizedAddressKey(lead.address);
+    if (key.isNotEmpty) {
+      leadsByAddress.putIfAbsent(key, () => lead);
+    }
+  }
+
+  final unmatchedRows = <String>[];
+  final enrichmentsByLeadId = <String, SkipTraceLeadEnrichment>{};
+
+  for (var rowIndex = 1; rowIndex < csvRows.length; rowIndex++) {
+    final row = csvRows[rowIndex];
+    if (skipTraceRowIsEmpty(row)) continue;
+
+    final leadId = skipTraceImportCell(row, columns.leadId);
+    final address = skipTraceImportCell(row, columns.address);
+    final lead =
+        (leadId == null ? null : leadsById[leadId]) ??
+        (address == null
+            ? null
+            : leadsByAddress[normalizedAddressKey(address)]);
+
+    if (lead == null) {
+      unmatchedRows.add(leadId ?? address ?? 'Row ${rowIndex + 1}');
+      continue;
+    }
+
+    final pending = enrichmentsByLeadId[lead.id];
+    final next = mergeSkipTraceEnrichment(
+      lead: lead,
+      pending: pending,
+      now: now,
+      importedOwnerName: skipTraceImportCell(row, columns.ownerName),
+      importedOwnerPhone: skipTraceImportCell(row, columns.ownerPhone),
+      importedOwnerPhone2: skipTraceImportCell(row, columns.ownerPhone2),
+      importedOwnerEmail: skipTraceImportCell(row, columns.ownerEmail),
+    );
+
+    if (next.hasNewData) {
+      enrichmentsByLeadId[lead.id] = next;
+    }
+  }
+
+  final enrichments = enrichmentsByLeadId.values.toList(growable: false);
+  var phoneFirstTimeCount = 0;
+  for (final enrichment in enrichments) {
+    final lead = leadsById[enrichment.leadId];
+    if (lead == null) continue;
+
+    final hadAnyPhone =
+        lead.ownerPhone.trim().isNotEmpty || lead.ownerPhone2.trim().isNotEmpty;
+    final gainsAnyPhone =
+        enrichment.ownerPhone != null || enrichment.ownerPhone2 != null;
+    if (!hadAnyPhone && gainsAnyPhone) {
+      phoneFirstTimeCount++;
+    }
+  }
+
+  return SkipTraceImportPreview(
+    enrichments: enrichments,
+    unmatchedRows: unmatchedRows,
+    phoneFirstTimeCount: phoneFirstTimeCount,
+  );
+}
+
+class _SkipTraceImportSummaryRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final Color textColor;
+
+  const _SkipTraceImportSummaryRow({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.textColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(color: textColor, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _LeadListScreenState extends State<LeadListScreen> {
   final searchController = TextEditingController();
   String searchQuery = '';
@@ -18096,6 +18622,7 @@ class _LeadListScreenState extends State<LeadListScreen> {
   double minScoreFilter = 0;
   double maxScoreFilter = 100;
   bool showAdvancedFilters = false;
+  bool isImportingSkipTrace = false;
 
   @override
   void dispose() {
@@ -18448,6 +18975,278 @@ class _LeadListScreenState extends State<LeadListScreen> {
     }
   }
 
+  Future<void> openSkipTraceImportFlow() async {
+    final importCallback = widget.onImportSkipTraceEnrichments;
+    if (importCallback == null || isImportingSkipTrace) return;
+
+    if (widget.leads.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Capture leads before importing CSVs.')),
+      );
+      return;
+    }
+
+    setState(() {
+      isImportingSkipTrace = true;
+    });
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['csv'],
+        withData: true,
+      );
+
+      if (!mounted || result == null) return;
+
+      final bytes = result.files.single.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        throw StateError('Could not read the selected CSV file.');
+      }
+
+      final csvText = utf8.decode(bytes, allowMalformed: true);
+      final rows = const CsvToListConverter(
+        shouldParseNumbers: false,
+      ).convert(csvText);
+      final preview = buildSkipTraceImportPreview(
+        widget.leads,
+        rows,
+        DateTime.now(),
+      );
+
+      if (!mounted) return;
+
+      final shouldApply = await openSkipTraceImportPreviewSheet(preview);
+      if (!mounted || shouldApply != true) return;
+
+      final applyResult = await importCallback(preview.enrichments);
+      await widget.onRefreshLeads?.call();
+
+      if (!mounted) return;
+
+      final message = applyResult.queuedCount == 0
+          ? 'Enriched ${applyResult.updatedCount} leads with skip tracing data.'
+          : 'Enriched ${applyResult.updatedCount} leads and queued ${applyResult.queuedCount} for retry.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } on FormatException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('Lead CSV import error: $error');
+      }
+      unawaited(FieldTestLogger.log('lead_csv_import_error', detail: '$error'));
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Import failed. Your leads were not changed.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isImportingSkipTrace = false;
+        });
+      }
+    }
+  }
+
+  Future<bool?> openSkipTraceImportPreviewSheet(
+    SkipTraceImportPreview preview,
+  ) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      showDragHandle: false,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final dark = Theme.of(sheetContext).brightness == Brightness.dark;
+        final sheetColor = dark
+            ? AppColors.surfaceDark
+            : AppColors.surfaceLight;
+        final elevatedColor = dark
+            ? AppColors.surfaceElevatedDark
+            : AppColors.surfaceElevatedLight;
+        final primaryText = dark
+            ? AppColors.textPrimaryDark
+            : AppColors.textPrimaryLight;
+        final secondaryText = dark
+            ? AppColors.textSecondaryDark
+            : AppColors.textSecondaryLight;
+        final borderColor = dark ? AppColors.borderDark : AppColors.borderLight;
+        final canApply = preview.enrichments.isNotEmpty;
+
+        return SafeArea(
+          top: false,
+          child: Material(
+            color: sheetColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 10,
+                bottom: 20 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.82,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 54,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: secondaryText.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Import Skip Trace Results',
+                      style: TextStyle(
+                        color: primaryText,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Review matches before any lead is updated.',
+                      style: TextStyle(color: secondaryText, fontSize: 15),
+                    ),
+                    const SizedBox(height: 14),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: elevatedColor,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: borderColor),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SkipTraceImportSummaryRow(
+                              icon: Icons.check_circle_outline,
+                              label:
+                                  '${preview.enrichments.length} rows matched and will be enriched',
+                              color: AppColors.success,
+                              textColor: primaryText,
+                            ),
+                            const SizedBox(height: 10),
+                            _SkipTraceImportSummaryRow(
+                              icon: Icons.phone_in_talk_outlined,
+                              label:
+                                  '${preview.phoneFirstTimeCount} leads will get a phone number for the first time',
+                              color: AppColors.primary,
+                              textColor: primaryText,
+                            ),
+                            const SizedBox(height: 10),
+                            _SkipTraceImportSummaryRow(
+                              icon: preview.unmatchedRows.isEmpty
+                                  ? Icons.link
+                                  : Icons.warning_amber_rounded,
+                              label:
+                                  "${preview.unmatchedRows.length} rows didn't match any lead",
+                              color: preview.unmatchedRows.isEmpty
+                                  ? AppColors.success
+                                  : AppColors.warning,
+                              textColor: primaryText,
+                            ),
+                            if (preview.unmatchedRows.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              ExpansionTile(
+                                tilePadding: EdgeInsets.zero,
+                                childrenPadding: EdgeInsets.zero,
+                                iconColor: primaryText,
+                                collapsedIconColor: secondaryText,
+                                title: Text(
+                                  'Show unmatched rows',
+                                  style: TextStyle(
+                                    color: primaryText,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                children: [
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxHeight: 160,
+                                    ),
+                                    child: ListView.builder(
+                                      shrinkWrap: true,
+                                      itemCount: preview.unmatchedRows.length,
+                                      itemBuilder: (context, index) {
+                                        return Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 6,
+                                          ),
+                                          child: Text(
+                                            preview.unmatchedRows[index],
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: secondaryText,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            if (!canApply) ...[
+                              const SizedBox(height: 10),
+                              Text(
+                                'No blank contact fields can be filled from this file.',
+                                style: TextStyle(color: secondaryText),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    AppButton(
+                      label: 'Apply Import ->',
+                      onPressed: canApply
+                          ? () => Navigator.pop(sheetContext, true)
+                          : null,
+                      leadingIcon: Icons.upload_file_rounded,
+                      fullWidth: true,
+                    ),
+                    const SizedBox(height: 8),
+                    AppButton(
+                      label: 'Cancel',
+                      onPressed: () => Navigator.pop(sheetContext, false),
+                      variant: AppButtonVariant.ghost,
+                      fullWidth: true,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> openLeadDetails(Lead lead) async {
     final deleted = await Navigator.push<bool>(
       context,
@@ -18693,6 +19492,17 @@ class _LeadListScreenState extends State<LeadListScreen> {
       appBar: AppBar(
         title: const Text('Leads'),
         actions: [
+          IconButton(
+            icon: isImportingSkipTrace
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.upload_file_rounded),
+            tooltip: 'Import skip trace CSV',
+            onPressed: isImportingSkipTrace ? null : openSkipTraceImportFlow,
+          ),
           IconButton(
             icon: const Icon(Icons.download_rounded),
             tooltip: 'Export leads as CSV',
@@ -20205,6 +21015,71 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     }
   }
 
+  Widget contactDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(value, style: const TextStyle(fontSize: 17)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget contactSection() {
+    final ownerName = widget.lead.parcelData.ownerName.trim();
+    final phone = widget.lead.ownerPhone.trim();
+    final phone2 = widget.lead.ownerPhone2.trim();
+    final email = widget.lead.ownerEmail.trim();
+    final hasAnyContact =
+        ownerName.isNotEmpty ||
+        phone.isNotEmpty ||
+        phone2.isNotEmpty ||
+        email.isNotEmpty;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Contact',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            if (hasAnyContact) ...[
+              if (ownerName.isNotEmpty) contactDetailRow('Owner', ownerName),
+              if (phone.isNotEmpty) contactDetailRow('Phone', phone),
+              if (phone2.isNotEmpty) contactDetailRow('Phone 2', phone2),
+              if (email.isNotEmpty) contactDetailRow('Email', email),
+            ] else
+              Text(
+                widget.lead.skipTraced
+                    ? 'Skip traced - no contact info found.'
+                    : 'Not skip traced yet. Export and import to enrich.',
+                style: const TextStyle(fontSize: 16),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasLocation =
@@ -20271,6 +21146,8 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
                 'Condition: ${widget.lead.condition}',
                 style: const TextStyle(fontSize: 20),
               ),
+              const SizedBox(height: 16),
+              contactSection(),
               const SizedBox(height: 16),
               Card(
                 child: Padding(

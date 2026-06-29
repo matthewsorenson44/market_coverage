@@ -57,10 +57,11 @@ The app should feel dependable in the field before adding more automation:
 - Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
 - Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
+- Open: Lead deletion still fails on device after prior RLS/RPC fixes. Needs a focused follow-up pass with the latest console/Supabase error.
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
 - Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
-- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt. User reported the first live test was still blocked after `0012_lead_delete_policy.sql`, so the app now uses secure RPC migration `0013_delete_lead_rpc.sql` and cleans related lead photo rows/storage before deleting.
+- Fix pushed, awaiting user confirmation: Leads can be deleted from the Leads tab and from Lead Details with a confirmation prompt. User reported the first live test was still blocked after `0012_lead_delete_policy.sql`, so the app now uses secure RPC migration `0013_delete_lead_rpc.sql` and cleans related lead photo rows/storage before deleting. Latest user report says deletion still does not work.
 - Fix pushed, awaiting user confirmation: Property Preview should no longer overlap the iPhone status bar and should have a sticky top-right X close button.
 - Fix pushed, awaiting user confirmation: Lead Details should have a pinned top-right X close button.
 - Fix pushed, awaiting user confirmation: Mission recap dark-mode cards/text should be readable.
@@ -78,8 +79,7 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Parcel boundaries and parcel/lead markers should appear sooner and with stronger contrast on Satellite, Dark, and Minimal map styles, including during active missions.
 - Fix pushed, awaiting user confirmation: Tapping a house with no parcel data now opens a fallback capture sheet instead of dead-ending at "No parcel found."
 - Fix pushed, awaiting user confirmation: GPS-only Add Lead capture now tries to reverse-geocode the saved coordinates into a street address before saving, while still allowing GPS-only capture if the lookup fails.
-- Fix pushed, awaiting user confirmation: Leads tab now has a skip-tracing CSV export flow with selectable safe MVP columns, native share/download, and no fabricated owner/phone/email data.
-- Fix pushed, awaiting user confirmation: Skip-tracing export sheet should be readable in dark and light mode with a solid themed panel instead of letting the Leads screen show through.
+- Fix pushed, awaiting user confirmation: Leads tab now has a skip-tracing CSV import flow that matches by `lead_id`, falls back to address, previews changes before writing, fills blank contact fields only, reports unmatched rows, queues failed enrichment updates for retry, and shows imported contact info in Lead Details.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -106,6 +106,7 @@ The app should feel dependable in the field before adding more automation:
 - Mission manual test passed.
 - Coverage manual test passed.
 - Area Name dialog TextField crash was fixed and covered by tests.
+- Skip-tracing CSV export works after readability fixes.
 
 ## Journal Maintenance Rules
 
@@ -134,6 +135,20 @@ Bug status meanings:
 - `Confirmed fixed`: User tested and said it works.
 
 ## Recent Work Log
+
+### 2026-06-28
+
+- Built Prompt B2 skip-tracing CSV import in `lib/main.dart`.
+- Added `owner_phone`, `owner_phone_2`, `owner_email`, `skip_traced`, and `skip_traced_at` handling to the `Lead` model. The required Supabase SQL still needs to be run before live import testing.
+- Added a Leads tab import icon using `file_picker` to select `.csv` files and the existing `csv` package to parse quoted CSV correctly.
+- Added case-insensitive/tolerant CSV header matching for `lead_id`, `property_address`/`address`, `owner_name`/`owner`, `owner_phone`/`phone`/`phone_1`, `owner_phone_2`/`phone_2`, and `owner_email`/`email`.
+- Added a preview sheet before import writes: matched rows to enrich, unmatched rows with expandable details, and leads gaining a first phone number.
+- Import merge rules fill blanks only and never overwrite notes, scores, tags, stage, source, existing owner/contact values, or any field-captured data.
+- Added a small offline retry queue for failed lead enrichment updates and flushes it on app load/connectivity recovery.
+- Added a Lead Details Contact section showing imported owner/phone/email data or the right skip-tracing empty state.
+- Added unit tests for lead-id matching, address fallback, unmatched rows, missing matcher-column error, blank-cell no-op behavior, and no-overwrite behavior.
+- Added `file_picker` and refreshed generated platform registration through `flutter pub get`.
+- Validation for skip-tracing import: `dart format .`, `flutter analyze`, and `flutter test` passed with 118 tests.
 
 ### 2026-06-27
 
