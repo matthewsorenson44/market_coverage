@@ -270,6 +270,10 @@ class SkipTraceImportApplyResult {
 
 Map<String, dynamic> jsonSafeLeadRow(Map<String, dynamic> row) {
   return row.map((key, value) {
+    if (key == 'source') {
+      return MapEntry(key, normalizeLeadSource(value));
+    }
+
     if (value is DateTime) {
       return MapEntry(key, value.toUtc().toIso8601String());
     }
@@ -928,6 +932,72 @@ class LeadSaleData {
   }
 }
 
+const String leadSourceDriving = 'driving';
+const String leadSourceManual = 'manual';
+const String leadSourceReferral = 'referral';
+const String leadSourceFacebook = 'facebook';
+const String leadSourceWebsite = 'website';
+const String leadSourceCsvImport = 'csv_import';
+const String leadSourceOther = 'other';
+const Set<String> leadSourceValues = {
+  leadSourceDriving,
+  leadSourceManual,
+  leadSourceReferral,
+  leadSourceFacebook,
+  leadSourceWebsite,
+  leadSourceCsvImport,
+  leadSourceOther,
+};
+
+String normalizeLeadSource(
+  Object? value, {
+  String fallback = leadSourceDriving,
+}) {
+  final fallbackValue = fallback.trim().toLowerCase();
+  final normalizedFallback = leadSourceValues.contains(fallbackValue)
+      ? fallbackValue
+      : leadSourceDriving;
+  final source = value?.toString().trim().toLowerCase();
+  if (source == null || source.isEmpty) return normalizedFallback;
+
+  return switch (source) {
+    'driving' || 'drive' || 'driving for dollars' || 'd4d' => leadSourceDriving,
+    'manual' || 'manual add' || 'manual lead' => leadSourceManual,
+    'referral' => leadSourceReferral,
+    'facebook' || 'fb' => leadSourceFacebook,
+    'website' || 'web' || 'web form' => leadSourceWebsite,
+    'csv_import' || 'csv import' || 'csv' => leadSourceCsvImport,
+    'other' || 'direct mail' || 'cold call' => leadSourceOther,
+    _ => normalizedFallback,
+  };
+}
+
+Color leadSourceColor(String source) {
+  return switch (normalizeLeadSource(source)) {
+    leadSourceDriving => AppColors.sourceDriving,
+    leadSourceManual => AppColors.sourceManual,
+    leadSourceReferral => AppColors.sourceReferral,
+    leadSourceFacebook => AppColors.sourceFacebook,
+    leadSourceWebsite => AppColors.sourceWebsite,
+    leadSourceCsvImport => AppColors.sourceCsvImport,
+    leadSourceOther => AppColors.sourceOther,
+    _ => AppColors.sourceOther,
+  };
+}
+
+String leadSourceLabel(String source) {
+  return switch (normalizeLeadSource(source)) {
+    leadSourceDriving => 'Driving',
+    leadSourceManual => 'Manual',
+    leadSourceReferral => 'Referral',
+    leadSourceFacebook => 'Facebook',
+    leadSourceWebsite => 'Website',
+    leadSourceCsvImport => 'CSV Import',
+    leadSourceOther => 'Other',
+    _ => 'Other',
+  };
+}
+
 class Lead {
   final String id;
   final String address;
@@ -955,7 +1025,7 @@ class Lead {
     required this.condition,
     required this.notes,
     this.status = 'New Lead',
-    this.source = 'Driving For Dollars',
+    String source = leadSourceDriving,
     required this.scoreData,
     required this.parcelData,
     required this.reminderData,
@@ -969,7 +1039,7 @@ class Lead {
     required this.createdAt,
     this.latitude,
     this.longitude,
-  });
+  }) : source = normalizeLeadSource(source);
 
   factory Lead.fromMap(Map<String, dynamic> map) {
     return Lead(
@@ -978,7 +1048,7 @@ class Lead {
       condition: map['condition'] ?? '',
       notes: map['notes'] ?? '',
       status: normalizeLeadStage(map['status'] ?? 'New Lead'),
-      source: map['source'] ?? 'Driving For Dollars',
+      source: normalizeLeadSource(map['source']),
       scoreData: LeadScoreData.fromMap(map),
       parcelData: LeadParcelData.fromMap(map),
       reminderData: LeadReminderData.fromMap(map),
@@ -1056,12 +1126,13 @@ const List<String> followUpStatusOptions = [
 ];
 
 const List<String> leadSourceOptions = [
-  'Driving For Dollars',
-  'Facebook',
-  'Referral',
-  'Direct Mail',
-  'Cold Call',
-  'Other',
+  leadSourceDriving,
+  leadSourceManual,
+  leadSourceReferral,
+  leadSourceFacebook,
+  leadSourceWebsite,
+  leadSourceCsvImport,
+  leadSourceOther,
 ];
 
 class LeadPhoto {
@@ -2875,7 +2946,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
       'condition': condition,
       'notes': notes,
       'status': 'New Lead',
-      'source': source,
+      'source': normalizeLeadSource(source, fallback: leadSourceManual),
       ...scoreData.toMap(),
       'latitude': latitude,
       'longitude': longitude,
@@ -2905,7 +2976,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
       'condition': 'Parcel Selected',
       'notes': parcel.leadNotes,
       'status': 'New Lead',
-      'source': 'Driving For Dollars',
+      'source': leadSourceDriving,
       ...scoreData.toMap(),
       'latitude': leadLocation?.latitude,
       'longitude': leadLocation?.longitude,
@@ -3037,9 +3108,10 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
   }
 
   Future<void> updateLeadSource(String leadId, String source) async {
+    final normalizedSource = normalizeLeadSource(source);
     await supabase
         .from('leads')
-        .update({'source': source})
+        .update({'source': normalizedSource})
         .eq('account_id', activeAccountId ?? '')
         .eq('id', leadId);
 
@@ -3049,7 +3121,7 @@ class _MarketCoverageAppState extends State<MarketCoverageApp> {
       final index = leads.indexWhere((lead) => lead.id == leadId);
 
       if (index != -1) {
-        leads[index] = leads[index].copyWith(source: source);
+        leads[index] = leads[index].copyWith(source: normalizedSource);
       }
     });
   }
@@ -9162,7 +9234,7 @@ class _DrivingScreenState extends State<DrivingScreen>
       'condition': condition,
       'notes': notes.isEmpty ? parcel.leadNotes : notes,
       'status': 'New Lead',
-      'source': 'Driving For Dollars',
+      'source': leadSourceDriving,
       ...scoreData.toMap(),
       'latitude': leadLocation?.latitude,
       'longitude': leadLocation?.longitude,
@@ -9332,6 +9404,7 @@ class _DrivingScreenState extends State<DrivingScreen>
           latitude: point.latitude,
           longitude: point.longitude,
           missionId: missionIdForPoint(point),
+          initialSource: leadSourceDriving,
         ),
       ),
     );
@@ -13989,6 +14062,7 @@ class _DrivingScreenState extends State<DrivingScreen>
           latitude: myLocation?.latitude,
           longitude: myLocation?.longitude,
           missionId: missionId,
+          initialSource: leadSourceDriving,
         ),
       ),
     );
@@ -17634,6 +17708,7 @@ class AddLeadScreen extends StatefulWidget {
   final double? latitude;
   final double? longitude;
   final String? missionId;
+  final String initialSource;
 
   const AddLeadScreen({
     super.key,
@@ -17641,6 +17716,7 @@ class AddLeadScreen extends StatefulWidget {
     this.latitude,
     this.longitude,
     this.missionId,
+    this.initialSource = leadSourceManual,
   });
 
   @override
@@ -17718,7 +17794,7 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
   final addressController = TextEditingController();
   final notesController = TextEditingController();
   String condition = 'Tall Grass';
-  String source = 'Driving For Dollars';
+  late String source;
   bool brokenWindows = false;
   bool roofDamage = false;
   bool tallGrass = false;
@@ -17734,6 +17810,10 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
   @override
   void initState() {
     super.initState();
+    source = normalizeLeadSource(
+      widget.initialSource,
+      fallback: leadSourceManual,
+    );
     if (widget.latitude != null && widget.longitude != null) {
       isResolvingAddress = true;
       addressLookupMessage = 'Finding nearest address from GPS...';
@@ -17836,7 +17916,7 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
       addressController.text,
       condition,
       notesController.text,
-      source,
+      normalizeLeadSource(source, fallback: leadSourceManual),
       scoreData,
       widget.latitude,
       widget.longitude,
@@ -20122,6 +20202,12 @@ class _LeadListRow extends StatelessWidget {
         : '$secondaryLabel | $condition';
     final infoChips = [
       leadStageBadge(stage),
+      AppBadge(
+        label: leadSourceLabel(lead.source),
+        variant: AppBadgeVariant.custom,
+        customColor: leadSourceColor(lead.source),
+        size: AppBadgeSize.small,
+      ),
       _MiniInfoChip(
         icon: Icons.sell,
         label: '$lastSaleDate ${formatMoney(lead.saleData.lastSalePrice)}',

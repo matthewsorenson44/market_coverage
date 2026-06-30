@@ -147,6 +147,11 @@ Bug status meanings:
 - Fixed the latest lead delete failure reported from iPhone. The Supabase delete path could complete, then the app crashed while removing the deleted lead from a fixed-length local list.
 - Updated both root lead state and Drive Mode lead state to replace the lead list with a fresh filtered list after deletion instead of calling `removeWhere` on the existing list.
 - Status: awaiting user confirmation from both delete entry points: Leads tab trash icon and Lead Details trash icon.
+- Added the data-layer piece of canonical lead source tracking. `Lead.source` now normalizes to `driving`, `manual`, `referral`, `facebook`, `website`, `csv_import`, or `other`; Quick Capture and drive/map-created leads write `driving`; manual Add Lead defaults to `manual`.
+- Added manual-only Supabase migration `0014_lead_source_tracking.sql` to add/backfill/constrain `public.leads.source`. The migration has not been run by Codex and still needs to be run manually in Supabase before relying on the database constraint.
+- Validation for lead source data layer: `dart format lib/main.dart` and `flutter analyze` passed.
+- Added colored source chips to Leads tab cards using `AppBadgeSize.small`, with source colors stored in `AppColors` and display labels mapped from canonical source values.
+- Validation for source chip UI: `dart format lib/main.dart lib/design_system/tokens/app_colors.dart` and `flutter analyze` passed.
 
 ### 2026-06-28
 
