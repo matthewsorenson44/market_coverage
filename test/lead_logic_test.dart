@@ -58,6 +58,45 @@ void main() {
     });
   });
 
+  group('lead source taxonomy', () {
+    test('passes through the current 13 allowed source values', () {
+      const sources = [
+        'driving',
+        'referral',
+        'facebook',
+        'instagram',
+        'tiktok',
+        'youtube',
+        'x',
+        'mailing',
+        'bandit_signs',
+        'website',
+        'manual',
+        'csv_import',
+        'other',
+      ];
+
+      for (final source in sources) {
+        expect(normalizeLeadSource(source), source);
+      }
+    });
+
+    test('maps legacy source labels to canonical database values', () {
+      expect(normalizeLeadSource('Driving For Dollars'), 'driving');
+      expect(normalizeLeadSource('Direct Mail'), 'mailing');
+      expect(normalizeLeadSource('Cold Call'), 'other');
+      expect(normalizeLeadSource('Tik Tok'), 'tiktok');
+      expect(normalizeLeadSource('Bandit Signs'), 'bandit_signs');
+    });
+
+    test('source labels are user-facing', () {
+      expect(sourceLabel('csv_import'), 'CSV Import');
+      expect(sourceLabel('bandit_signs'), 'Bandit Signs');
+      expect(sourceLabel('youtube'), 'YouTube');
+      expect(sourceLabel('unknown'), 'Other');
+    });
+  });
+
   group('normalizedAddressKey', () {
     test('null returns empty string', () {
       expect(normalizedAddressKey(null), '');

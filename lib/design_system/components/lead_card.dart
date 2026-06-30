@@ -99,6 +99,12 @@ class LeadCard extends StatelessWidget {
                         customColor: leadStatusColor(lead.status),
                         size: AppBadgeSize.small,
                       ),
+                      AppBadge(
+                        label: sourceLabel(lead.source),
+                        variant: AppBadgeVariant.custom,
+                        customColor: sourceColor(lead.source),
+                        size: AppBadgeSize.small,
+                      ),
                       if (lead.offerData.mao != null)
                         AppBadge(
                           label: 'MAO: ${formatMoney(lead.offerData.mao)}',

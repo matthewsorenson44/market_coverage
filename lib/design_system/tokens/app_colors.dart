@@ -8,13 +8,12 @@ class AppColors {
   static const Color accent = Color(0xFFF59E0B);
   static const Color accentDark = Color(0xFFB45309);
 
-  static const Color sourceDriving = Color(0xFF1B6FEB);
-  static const Color sourceManual = Color(0xFF64748B);
+  static const Color sourceField = Color(0xFF1B6FEB);
   static const Color sourceReferral = Color(0xFF16A34A);
-  static const Color sourceFacebook = Color(0xFF4F46E5);
-  static const Color sourceWebsite = Color(0xFFD97706);
-  static const Color sourceCsvImport = Color(0xFF9333EA);
-  static const Color sourceOther = Color(0xFF475569);
+  static const Color sourceSocial = Color(0xFF7C3AED);
+  static const Color sourceOutbound = Color(0xFFD97706);
+  static const Color sourceInbound = Color(0xFF0891B2);
+  static const Color sourceCapture = Color(0xFF475569);
 
   static const Color success = Color(0xFF22C55E);
   static const Color successSurface = Color(0x1A22C55E);

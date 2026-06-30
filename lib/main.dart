@@ -936,15 +936,27 @@ const String leadSourceDriving = 'driving';
 const String leadSourceManual = 'manual';
 const String leadSourceReferral = 'referral';
 const String leadSourceFacebook = 'facebook';
+const String leadSourceInstagram = 'instagram';
+const String leadSourceTikTok = 'tiktok';
+const String leadSourceYouTube = 'youtube';
+const String leadSourceX = 'x';
+const String leadSourceMailing = 'mailing';
+const String leadSourceBanditSigns = 'bandit_signs';
 const String leadSourceWebsite = 'website';
 const String leadSourceCsvImport = 'csv_import';
 const String leadSourceOther = 'other';
 const Set<String> leadSourceValues = {
   leadSourceDriving,
-  leadSourceManual,
   leadSourceReferral,
   leadSourceFacebook,
+  leadSourceInstagram,
+  leadSourceTikTok,
+  leadSourceYouTube,
+  leadSourceX,
+  leadSourceMailing,
+  leadSourceBanditSigns,
   leadSourceWebsite,
+  leadSourceManual,
   leadSourceCsvImport,
   leadSourceOther,
 };
@@ -965,33 +977,53 @@ String normalizeLeadSource(
     'manual' || 'manual add' || 'manual lead' => leadSourceManual,
     'referral' => leadSourceReferral,
     'facebook' || 'fb' => leadSourceFacebook,
+    'instagram' || 'ig' => leadSourceInstagram,
+    'tiktok' || 'tik tok' => leadSourceTikTok,
+    'youtube' || 'you tube' || 'yt' => leadSourceYouTube,
+    'x' || 'twitter' => leadSourceX,
+    'mailing' || 'mail' || 'direct mail' => leadSourceMailing,
+    'bandit_signs' ||
+    'bandit signs' ||
+    'bandit sign' ||
+    'signs' => leadSourceBanditSigns,
     'website' || 'web' || 'web form' => leadSourceWebsite,
     'csv_import' || 'csv import' || 'csv' => leadSourceCsvImport,
-    'other' || 'direct mail' || 'cold call' => leadSourceOther,
+    'other' || 'cold call' => leadSourceOther,
     _ => normalizedFallback,
   };
 }
 
-Color leadSourceColor(String source) {
-  return switch (normalizeLeadSource(source)) {
-    leadSourceDriving => AppColors.sourceDriving,
-    leadSourceManual => AppColors.sourceManual,
+Color sourceColor(String source) {
+  return switch (normalizeLeadSource(source, fallback: leadSourceOther)) {
+    leadSourceDriving => AppColors.sourceField,
     leadSourceReferral => AppColors.sourceReferral,
-    leadSourceFacebook => AppColors.sourceFacebook,
-    leadSourceWebsite => AppColors.sourceWebsite,
-    leadSourceCsvImport => AppColors.sourceCsvImport,
-    leadSourceOther => AppColors.sourceOther,
-    _ => AppColors.sourceOther,
+    leadSourceFacebook ||
+    leadSourceInstagram ||
+    leadSourceTikTok ||
+    leadSourceYouTube ||
+    leadSourceX => AppColors.sourceSocial,
+    leadSourceMailing || leadSourceBanditSigns => AppColors.sourceOutbound,
+    leadSourceWebsite => AppColors.sourceInbound,
+    leadSourceManual ||
+    leadSourceCsvImport ||
+    leadSourceOther => AppColors.sourceCapture,
+    _ => AppColors.sourceCapture,
   };
 }
 
-String leadSourceLabel(String source) {
-  return switch (normalizeLeadSource(source)) {
+String sourceLabel(String source) {
+  return switch (normalizeLeadSource(source, fallback: leadSourceOther)) {
     leadSourceDriving => 'Driving',
-    leadSourceManual => 'Manual',
     leadSourceReferral => 'Referral',
     leadSourceFacebook => 'Facebook',
+    leadSourceInstagram => 'Instagram',
+    leadSourceTikTok => 'TikTok',
+    leadSourceYouTube => 'YouTube',
+    leadSourceX => 'X',
+    leadSourceMailing => 'Mailing',
+    leadSourceBanditSigns => 'Bandit Signs',
     leadSourceWebsite => 'Website',
+    leadSourceManual => 'Manual',
     leadSourceCsvImport => 'CSV Import',
     leadSourceOther => 'Other',
     _ => 'Other',
@@ -1127,10 +1159,16 @@ const List<String> followUpStatusOptions = [
 
 const List<String> leadSourceOptions = [
   leadSourceDriving,
-  leadSourceManual,
   leadSourceReferral,
   leadSourceFacebook,
+  leadSourceInstagram,
+  leadSourceTikTok,
+  leadSourceYouTube,
+  leadSourceX,
+  leadSourceMailing,
+  leadSourceBanditSigns,
   leadSourceWebsite,
+  leadSourceManual,
   leadSourceCsvImport,
   leadSourceOther,
 ];
@@ -18060,7 +18098,7 @@ class _AddLeadScreenState extends State<AddLeadScreen> {
                     .map(
                       (sourceOption) => DropdownMenuItem(
                         value: sourceOption,
-                        child: Text(sourceOption),
+                        child: Text(sourceLabel(sourceOption)),
                       ),
                     )
                     .toList(),
@@ -19947,7 +19985,11 @@ class _LeadListScreenState extends State<LeadListScreen> {
                                   .map(
                                     (source) => DropdownMenuItem(
                                       value: source,
-                                      child: Text(source),
+                                      child: Text(
+                                        source == 'All'
+                                            ? 'All'
+                                            : sourceLabel(source),
+                                      ),
                                     ),
                                   )
                                   .toList(),
@@ -20203,9 +20245,9 @@ class _LeadListRow extends StatelessWidget {
     final infoChips = [
       leadStageBadge(stage),
       AppBadge(
-        label: leadSourceLabel(lead.source),
+        label: sourceLabel(lead.source),
         variant: AppBadgeVariant.custom,
-        customColor: leadSourceColor(lead.source),
+        customColor: sourceColor(lead.source),
         size: AppBadgeSize.small,
       ),
       _MiniInfoChip(
@@ -20783,9 +20825,9 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Source updated to $value')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Source updated to ${sourceLabel(value)}')),
+      );
     } catch (_) {
       if (!mounted) return;
 
@@ -21791,7 +21833,7 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
                     .map(
                       (sourceOption) => DropdownMenuItem(
                         value: sourceOption,
-                        child: Text(sourceOption),
+                        child: Text(sourceLabel(sourceOption)),
                       ),
                     )
                     .toList(),

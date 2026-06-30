@@ -86,6 +86,8 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Tapping a house with no parcel data now opens a fallback capture sheet instead of dead-ending at "No parcel found."
 - Fix pushed, awaiting user confirmation: GPS-only Add Lead capture now tries to reverse-geocode the saved coordinates into a street address before saving, while still allowing GPS-only capture if the lookup fails.
 - Fix pushed, awaiting user confirmation: Leads tab now has a skip-tracing CSV import flow that matches by `lead_id`, falls back to address, previews changes before writing, fills blank contact fields only, reports unmatched rows, queues failed enrichment updates for retry, and shows imported contact info in Lead Details.
+- Fix pushed, awaiting user confirmation: Lead cards now show a category-colored source chip for the R1 source taxonomy. This was UI-only and did not change lead creation, Quick Capture, or the data layer.
+- Fix pushed, awaiting user confirmation: Lead source UI now uses the full 13-source taxonomy in app-side options, normalization, Lead Details, Add Lead, filters, and source chips. Dropdowns show friendly labels while saving canonical database values.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -152,6 +154,7 @@ Bug status meanings:
 - Validation for lead source data layer: `dart format lib/main.dart` and `flutter analyze` passed.
 - Added colored source chips to Leads tab cards using `AppBadgeSize.small`, with source colors stored in `AppColors` and display labels mapped from canonical source values.
 - Validation for source chip UI: `dart format lib/main.dart lib/design_system/tokens/app_colors.dart` and `flutter analyze` passed.
+- Fixed the follow-up source UI bug after device testing showed the previous source work was not visible/complete in-app. The app-side source taxonomy now matches the 13 allowed database values, old source labels normalize into safe canonical values, source dropdowns display readable labels, and the reusable design-system `LeadCard` also renders the source badge.
 
 ### 2026-06-28
 
