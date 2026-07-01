@@ -190,6 +190,52 @@ void main() {
 
       expect(sorted.map((task) => task.id), ['soon', 'later', 'done']);
     });
+
+    test(
+      'todayAttentionTasksForDisplay includes overdue and due today only',
+      () {
+        final now = DateTime(2026, 7, 2, 12);
+        final sorted = todayAttentionTasksForDisplay([
+          LeadTask(
+            id: 'future',
+            userId: 'user',
+            leadId: 'lead',
+            title: 'Future',
+            dueAt: DateTime(2026, 7, 3),
+          ),
+          LeadTask(
+            id: 'done',
+            userId: 'user',
+            leadId: 'lead',
+            title: 'Done',
+            status: taskStatusDone,
+            dueAt: DateTime(2026, 7, 1),
+          ),
+          const LeadTask(
+            id: 'no-date',
+            userId: 'user',
+            leadId: 'lead',
+            title: 'No date',
+          ),
+          LeadTask(
+            id: 'today',
+            userId: 'user',
+            leadId: 'lead',
+            title: 'Today',
+            dueAt: DateTime(2026, 7, 2, 9),
+          ),
+          LeadTask(
+            id: 'overdue',
+            userId: 'user',
+            leadId: 'lead',
+            title: 'Overdue',
+            dueAt: DateTime(2026, 7, 1),
+          ),
+        ], now);
+
+        expect(sorted.map((task) => task.id), ['overdue', 'today']);
+      },
+    );
   });
 
   group('normalizedAddressKey', () {

@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-T1 Tasks Data Layer complete; ready for T2 Today View.
+T2 Today View complete; ready for T3 Inbox Surface Inside Today.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -16,12 +16,13 @@ The current product direction is documented in `docs/master_plan.md`.
 
 ## Current Shipped App State
 
-The current shipped app still has 4 tabs:
+The current shipped app has 5 tabs:
 
-1. Drive
-2. Leads
-3. Areas
-4. Settings
+1. Today
+2. Drive
+3. Leads
+4. Areas
+5. Settings
 
 The V1 target navigation is:
 
@@ -31,34 +32,30 @@ The V1 target navigation is:
 4. Leads
 5. Markets
 
-Today and Inbox do not exist yet.
+Inbox and Markets are V1 target tabs and do not exist yet. Areas remains the current bridge toward Markets.
 
 ## Most Recent Completed Task ID
 
-T1: Tasks Data Layer.
+T2: Today View.
 
 ## Files Changed In Latest Status Update
 
 - `lib/main.dart`
 - `test/lead_logic_test.dart`
-- `supabase/migrations/0016_create_tasks.sql`
-- `docs/master_plan.md`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
 
 ## Migration Added
 
-- `supabase/migrations/0016_create_tasks.sql`
+None for T2.
 
-Manual SQL still needs to be run in Supabase before live task creation will work.
-
-Backfill assumptions: none. The `tasks` table is new and starts empty.
+T2 uses the existing `tasks` table from T1.
 
 ## Test Results
 
 - `dart format .`: passed
 - `flutter analyze`: passed with no issues
-- `flutter test`: passed with 125 tests
+- `flutter test`: passed with 126 tests
 
 ## Known Issues
 
@@ -71,16 +68,17 @@ Current high-priority open areas:
 - Mission and area analysis UX is still confusing.
 - Map overlay visibility and toggles need continued cleanup.
 - Lead deletion needs final user confirmation after the fixed-length list bug fix.
-- Today and Inbox are V1 targets but do not exist yet.
-- T1 task UI depends on running `0016_create_tasks.sql` manually in Supabase.
+- Today now exists as a shell with a real tasks section.
+- Drive Next is a placeholder and does not compute coverage recommendations yet.
+- Inbox is a placeholder inside Today and the full Inbox flow is not implemented yet.
 
 ## Next Recommended Task
 
-T2: Today View.
+T3: Inbox Surface Inside Today.
 
 Start with a thin vertical slice:
 
-- Add the Today command center tab/shell.
-- Read from the T1 `tasks` table.
-- Show overdue tasks, due-today tasks, and new leads.
-- Keep existing Drive, Leads, Areas, and Settings behavior intact.
+- Add `inbox_items`.
+- Surface unreviewed inbound items inside Today.
+- Let the user review or resolve an inbox item.
+- Keep existing Today, Drive, Leads, Areas, and Settings behavior intact.

@@ -10,7 +10,7 @@ Market Coverage OS should help a wholesaler see where they have driven, what str
 
 MVP strategy update: owner/property ownership data is not required for MVP. The core app should be built around nationwide driving-for-dollars lead capture: market/city selection, street coverage, Drive Areas, missions, Quick Capture, GPS/address capture, photos, tags, notes, lead scoring, CSV export for skip tracing, and CSV import/enrichment later. Parcel boundaries and owner data are optional by market and must never block lead capture.
 
-Master plan update: the app should become a unified seller-lead command center, not only a field capture app. Driving for Dollars brings users in; Lead Funnel OS and Today Queue keep them organized. V1 target navigation is five tabs: Today, Drive, Inbox, Leads, and Markets. The current shipped app still has four tabs: Drive, Leads, Areas, and Settings. Today and Inbox do not exist yet and should be built as future vertical slices.
+Master plan update: the app should become a unified seller-lead command center, not only a field capture app. Driving for Dollars brings users in; Lead Funnel OS and Today Queue keep them organized. V1 target navigation is five tabs: Today, Drive, Inbox, Leads, and Markets. The current shipped app now has five tabs: Today, Drive, Leads, Areas, and Settings. Inbox and Markets do not exist yet as first-class tabs; Areas remains the bridge toward Markets.
 
 ## Main User Flow
 
@@ -50,7 +50,8 @@ The app should feel dependable in the field before adding more automation:
 - Lead scoring, source, pipeline stage, reminders, ARV, repair cost, assignment fee, and MAO.
 - Market catalog and readiness states.
 - Lead funnel direction: source attribution, tasks, Today Queue, inbox items, inbound events, calendar items, and attribution links should be added only as thin vertical slices with working UI.
-- T1 task data layer is implemented in code: after running the manual Supabase migration, Lead Details can create, list, and complete lead-attached tasks. The Today tab that summarizes tasks is still T2 and has not been built.
+- T1 task data layer is implemented and user-confirmed: Lead Details can create, list, and complete lead-attached tasks.
+- T2 Today View is implemented as the first tab: it loads open overdue/due-today tasks from Supabase, lets the user complete tasks inline, opens the attached lead, and includes placeholder widgets for Drive Next and Inbox.
 
 ## Current Known Issues To Watch
 
@@ -65,7 +66,7 @@ The app should feel dependable in the field before adding more automation:
 - Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
 - Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
-- Setup needed: run `supabase/migrations/0016_create_tasks.sql` manually in Supabase before the new Lead Details task UI can save live data.
+- Needs confirmation: Today tab should show overdue/due-today tasks, open the attached lead when tapped, and remove a task when completed inline.
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
 - Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
@@ -117,6 +118,7 @@ The app should feel dependable in the field before adding more automation:
 - Coverage manual test passed.
 - Area Name dialog TextField crash was fixed and covered by tests.
 - Skip-tracing CSV export works after readability fixes.
+- T1 Lead Details tasks work after the user manually pushed/pulled and tested the feature.
 
 ## Journal Maintenance Rules
 
@@ -151,6 +153,15 @@ Bug status meanings:
 ## Recent Work Log
 
 ### 2026-06-30
+
+- Implemented T2 Today View.
+- Added Today as the first app tab while preserving the current Drive, Leads, Areas, and Settings tabs after it.
+- Added a real Needs Attention section that loads open overdue and due-today tasks from the T1 `tasks` table for the current user.
+- Added inline task completion from Today, which marks tasks `done`, sets `completed_at`, and removes them from the attention list.
+- Added task tap behavior from Today to open the attached Lead Details screen.
+- Added separate placeholder widgets for Drive Next and Inbox so later T3/Drive-intelligence slices can fill them without redesigning Today.
+- Added a focused unit test for overdue/due-today task filtering.
+- Validation for T2 Today View: `dart format .`, `flutter analyze`, and `flutter test` passed with 126 tests.
 
 - Implemented T1 Tasks Data Layer.
 - Confirmed the app/database timestamp convention is `created_at` and `updated_at`, so the new `tasks` table follows that convention.

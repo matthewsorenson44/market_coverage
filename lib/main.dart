@@ -1285,6 +1285,23 @@ List<LeadTask> sortLeadTasksForDisplay(Iterable<LeadTask> tasks) {
   return sortedTasks;
 }
 
+bool isTodayAttentionTask(LeadTask task, DateTime now) {
+  final dueAt = task.dueAt?.toLocal();
+  if (task.isDone || dueAt == null) return false;
+
+  final tomorrow = dateOnly(now.toLocal()).add(const Duration(days: 1));
+  return dueAt.isBefore(tomorrow);
+}
+
+List<LeadTask> todayAttentionTasksForDisplay(
+  Iterable<LeadTask> tasks,
+  DateTime now,
+) {
+  return sortLeadTasksForDisplay(
+    tasks.where((task) => isTodayAttentionTask(task, now)),
+  );
+}
+
 const List<String> followUpStatusOptions = [
   'None',
   'Needs Revisit',
@@ -3711,29 +3728,35 @@ class MarketCoverageRootScreen extends StatefulWidget {
 }
 
 class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
+  static const int todayTabIndex = 0;
+  static const int driveTabIndex = 1;
+  static const int areasTabIndex = 3;
+
+  final todayTabKey = GlobalKey<_TodayTabState>();
   final driveScreenKey = GlobalKey<_DrivingScreenState>();
-  int selectedTabIndex = 0;
+  int selectedTabIndex = todayTabIndex;
 
   void openDriveTab() {
-    setState(() {
-      selectedTabIndex = 0;
-    });
+    selectTab(driveTabIndex);
   }
 
   void openAreasTab() {
-    setState(() {
-      selectedTabIndex = 2;
-    });
+    selectTab(areasTabIndex);
   }
 
   void selectTab(int index) {
     if (index == selectedTabIndex) return;
 
-    if (selectedTabIndex == 0 && index != 0) {
+    if (selectedTabIndex == driveTabIndex && index != driveTabIndex) {
       driveScreenKey.currentState?.handleDriveTabHidden();
     }
-    if (index == 0) {
+    if (index == driveTabIndex) {
       driveScreenKey.currentState?.handleDriveTabVisible();
+    }
+    if (index == todayTabIndex) {
+      unawaited(
+        todayTabKey.currentState?.loadAttentionTasks() ?? Future.value(),
+      );
     }
 
     setState(() => selectedTabIndex = index);
@@ -3744,6 +3767,35 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       driveScreenKey.currentState?.enterDrawAreaMode();
     });
+  }
+
+  Future<void> openLeadDetails(Lead lead) async {
+    final deleted = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LeadDetailsScreen(
+          lead: lead,
+          onUpdateLeadStatus: widget.onUpdateLeadStatus,
+          onUpdateLeadSource: widget.onUpdateLeadSource,
+          onUpdateLeadScoreData: widget.onUpdateLeadScoreData,
+          onUpdateLeadParcelData: widget.onUpdateLeadParcelData,
+          onUpdateLeadReminderData: widget.onUpdateLeadReminderData,
+          onUpdateLeadOfferData: widget.onUpdateLeadOfferData,
+          onDeleteLead: widget.onDeleteLead,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (deleted == true) {
+      await widget.onRefreshLeads();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Lead deleted.')));
+    }
   }
 
   @override
@@ -3767,6 +3819,11 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
     }
 
     final tabs = [
+      _TodayTab(
+        key: todayTabKey,
+        leads: widget.leads,
+        onOpenLead: openLeadDetails,
+      ),
       DrivingScreen(
         key: driveScreenKey,
         leads: widget.leads,
@@ -3814,6 +3871,11 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
         onTap: selectTab,
         items: const [
           BottomNavigationBarItem(
+            icon: Icon(Icons.today_outlined),
+            activeIcon: Icon(Icons.today),
+            label: 'Today',
+          ),
+          BottomNavigationBarItem(
             icon: Icon(Icons.directions_car),
             label: 'Drive',
           ),
@@ -3823,6 +3885,477 @@ class _MarketCoverageRootScreenState extends State<MarketCoverageRootScreen> {
             icon: Icon(Icons.settings_outlined),
             activeIcon: Icon(Icons.settings),
             label: 'Settings',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodayTab extends StatefulWidget {
+  final List<Lead> leads;
+  final Future<void> Function(Lead lead) onOpenLead;
+
+  const _TodayTab({super.key, required this.leads, required this.onOpenLead});
+
+  @override
+  State<_TodayTab> createState() => _TodayTabState();
+}
+
+class _TodayTaskItem {
+  final LeadTask task;
+  final Lead? lead;
+
+  const _TodayTaskItem({required this.task, required this.lead});
+}
+
+class _TodayTabState extends State<_TodayTab> {
+  List<_TodayTaskItem> attentionItems = [];
+  final Set<String> completingTaskIds = <String>{};
+  bool isLoadingTasks = true;
+  String? taskLoadError;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(loadAttentionTasks());
+  }
+
+  Future<void> loadAttentionTasks() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      if (!mounted) return;
+      setState(() {
+        attentionItems = [];
+        isLoadingTasks = false;
+        taskLoadError = 'Sign in to see today\'s tasks.';
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        isLoadingTasks = true;
+        taskLoadError = null;
+      });
+    }
+
+    try {
+      final tomorrow = dateOnly(
+        DateTime.now().toLocal(),
+      ).add(const Duration(days: 1));
+      final rows = await supabase
+          .from('tasks')
+          .select()
+          .eq('user_id', userId)
+          .eq('status', taskStatusOpen)
+          .lt('due_at', tomorrow.toUtc().toIso8601String())
+          .order('due_at', ascending: true);
+
+      final tasks = todayAttentionTasksForDisplay(
+        (rows as List<dynamic>).map((row) {
+          return LeadTask.fromJson(Map<String, dynamic>.from(row as Map));
+        }),
+        DateTime.now(),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        attentionItems = tasks
+            .map((task) => _TodayTaskItem(task: task, lead: leadForTask(task)))
+            .toList(growable: false);
+        isLoadingTasks = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Today task load error: $error\n$stackTrace');
+
+      if (!mounted) return;
+      setState(() {
+        attentionItems = [];
+        isLoadingTasks = false;
+        taskLoadError = 'Could not load today\'s tasks.';
+      });
+    }
+  }
+
+  Lead? leadForTask(LeadTask task) {
+    for (final lead in widget.leads) {
+      if (lead.id == task.leadId) return lead;
+    }
+
+    return null;
+  }
+
+  Future<void> completeTask(LeadTask task) async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sign in to complete tasks.')),
+      );
+      return;
+    }
+
+    setState(() => completingTaskIds.add(task.id));
+
+    try {
+      final completedAt = DateTime.now().toUtc();
+      await supabase
+          .from('tasks')
+          .update({
+            'status': taskStatusDone,
+            'completed_at': completedAt.toIso8601String(),
+            'updated_at': completedAt.toIso8601String(),
+          })
+          .eq('id', task.id)
+          .eq('user_id', userId);
+
+      if (!mounted) return;
+      setState(() {
+        attentionItems = attentionItems
+            .where((item) => item.task.id != task.id)
+            .toList(growable: false);
+        completingTaskIds.remove(task.id);
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Today task complete error: $error\n$stackTrace');
+
+      if (!mounted) return;
+      setState(() => completingTaskIds.remove(task.id));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not complete task.')));
+    }
+  }
+
+  Future<void> openTaskLead(_TodayTaskItem item) async {
+    final lead = item.lead;
+    if (lead == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lead for this task is not loaded.')),
+      );
+      return;
+    }
+
+    await widget.onOpenLead(lead);
+    if (mounted) unawaited(loadAttentionTasks());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final background = dark ? AppColors.bgDark : AppColors.bgLight;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Today')),
+      backgroundColor: background,
+      body: RefreshIndicator(
+        onRefresh: loadAttentionTasks,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
+            _TodayAttentionSection(
+              items: attentionItems,
+              isLoading: isLoadingTasks,
+              errorMessage: taskLoadError,
+              completingTaskIds: completingTaskIds,
+              onRefresh: loadAttentionTasks,
+              onOpenTask: openTaskLead,
+              onCompleteTask: completeTask,
+            ),
+            const SizedBox(height: 16),
+            const _TodayDriveNextCard(),
+            const SizedBox(height: 16),
+            const _TodayInboxPreview(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayAttentionSection extends StatelessWidget {
+  final List<_TodayTaskItem> items;
+  final bool isLoading;
+  final String? errorMessage;
+  final Set<String> completingTaskIds;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(_TodayTaskItem item) onOpenTask;
+  final Future<void> Function(LeadTask task) onCompleteTask;
+
+  const _TodayAttentionSection({
+    required this.items,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.completingTaskIds,
+    required this.onRefresh,
+    required this.onOpenTask,
+    required this.onCompleteTask,
+  });
+
+  String dueLabel(BuildContext context, LeadTask task) {
+    final dueAt = task.dueAt?.toLocal();
+    if (dueAt == null) return 'No due date';
+
+    final dueDate = dateOnly(dueAt);
+    final today = todayDateOnly();
+    if (dueDate.isBefore(today)) {
+      return 'Overdue ${displayDate(dueAt)}';
+    }
+
+    final hasSpecificTime = dueAt.hour != 0 || dueAt.minute != 0;
+    if (!hasSpecificTime) return 'Due today';
+
+    return 'Due today ${TimeOfDay.fromDateTime(dueAt).format(context)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final primaryText = dark
+        ? AppColors.textPrimaryDark
+        : AppColors.textPrimaryLight;
+    final secondaryText = dark
+        ? AppColors.textSecondaryDark
+        : AppColors.textSecondaryLight;
+    final tertiaryText = dark
+        ? AppColors.textTertiaryDark
+        : AppColors.textTertiaryLight;
+
+    return AppCard.elevated(
+      showBorder: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.priority_high_rounded, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Needs Attention',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: primaryText,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh tasks',
+                onPressed: isLoading ? null : () => unawaited(onRefresh()),
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (isLoading)
+            const LinearProgressIndicator(minHeight: 3)
+          else if (errorMessage != null)
+            Text(errorMessage!, style: TextStyle(color: secondaryText))
+          else if (items.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppColors.success.withValues(alpha: 0.25),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: AppColors.success,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      "Nothing overdue — you're on top of it",
+                      style: TextStyle(
+                        color: primaryText,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            Column(
+              children: [
+                for (final item in items)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => unawaited(onOpenTask(item)),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: dark
+                                  ? AppColors.borderDark
+                                  : AppColors.borderLight,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              completingTaskIds.contains(item.task.id)
+                                  ? const SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Checkbox(
+                                      value: false,
+                                      onChanged: (_) =>
+                                          unawaited(onCompleteTask(item.task)),
+                                    ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.task.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            color: primaryText,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      [
+                                        item.lead == null
+                                            ? 'Lead unavailable'
+                                            : leadPrimaryLabel(item.lead!),
+                                        dueLabel(context, item.task),
+                                      ].join(' • '),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(color: tertiaryText),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: item.lead == null
+                                    ? tertiaryText
+                                    : secondaryText,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodayDriveNextCard extends StatelessWidget {
+  const _TodayDriveNextCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final primaryText = dark
+        ? AppColors.textPrimaryDark
+        : AppColors.textPrimaryLight;
+    final secondaryText = dark
+        ? AppColors.textSecondaryDark
+        : AppColors.textSecondaryLight;
+
+    return AppCard.elevated(
+      showBorder: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.route_outlined,
+              color: AppColors.primary,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Drive Next',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: primaryText,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Drive Next — coverage recommendations coming soon.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: secondaryText),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodayInboxPreview extends StatelessWidget {
+  const _TodayInboxPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final primaryText = dark
+        ? AppColors.textPrimaryDark
+        : AppColors.textPrimaryLight;
+    final secondaryText = dark
+        ? AppColors.textSecondaryDark
+        : AppColors.textSecondaryLight;
+
+    return AppCard(
+      showBorder: true,
+      child: Row(
+        children: [
+          const Icon(Icons.move_to_inbox_outlined, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'New inbound leads',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: primaryText,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text('Coming soon.', style: TextStyle(color: secondaryText)),
+              ],
+            ),
           ),
         ],
       ),
