@@ -1150,6 +1150,141 @@ class Lead {
   }
 }
 
+const String taskStatusOpen = 'open';
+const String taskStatusDone = 'done';
+
+String normalizeTaskStatus(dynamic value) {
+  return value?.toString() == taskStatusDone ? taskStatusDone : taskStatusOpen;
+}
+
+String taskStatusLabel(String status) {
+  return normalizeTaskStatus(status) == taskStatusDone ? 'Done' : 'Open';
+}
+
+class LeadTask {
+  final String id;
+  final String userId;
+  final String leadId;
+  final String? areaId;
+  final String? missionId;
+  final String title;
+  final String description;
+  final String status;
+  final String priority;
+  final DateTime? dueAt;
+  final DateTime? completedAt;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  const LeadTask({
+    required this.id,
+    required this.userId,
+    required this.leadId,
+    this.areaId,
+    this.missionId,
+    required this.title,
+    this.description = '',
+    this.status = taskStatusOpen,
+    this.priority = '',
+    this.dueAt,
+    this.completedAt,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  factory LeadTask.fromJson(Map<String, dynamic> json) {
+    return LeadTask(
+      id: json['id']?.toString() ?? '',
+      userId: json['user_id']?.toString() ?? '',
+      leadId: json['lead_id']?.toString() ?? '',
+      areaId: cleanParcelText(json['area_id']),
+      missionId: cleanParcelText(json['mission_id']),
+      title: json['title']?.toString() ?? '',
+      description: json['description']?.toString() ?? '',
+      status: normalizeTaskStatus(json['status']),
+      priority: json['priority']?.toString() ?? '',
+      dueAt: _parseDateTime(json['due_at']),
+      completedAt: _parseDateTime(json['completed_at']),
+      createdAt: _parseDateTime(json['created_at']),
+      updatedAt: _parseDateTime(json['updated_at']),
+    );
+  }
+
+  bool get isDone => status == taskStatusDone;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'user_id': userId,
+      'lead_id': leadId,
+      'area_id': areaId,
+      'mission_id': missionId,
+      'title': title,
+      'description': description.isEmpty ? null : description,
+      'status': status,
+      'priority': priority.isEmpty ? null : priority,
+      'due_at': dueAt?.toUtc().toIso8601String(),
+      'completed_at': completedAt?.toUtc().toIso8601String(),
+      'created_at': createdAt?.toUtc().toIso8601String(),
+      'updated_at': updatedAt?.toUtc().toIso8601String(),
+    };
+  }
+
+  LeadTask copyWith({String? status, DateTime? completedAt}) {
+    return LeadTask(
+      id: id,
+      userId: userId,
+      leadId: leadId,
+      areaId: areaId,
+      missionId: missionId,
+      title: title,
+      description: description,
+      status: status ?? this.status,
+      priority: priority,
+      dueAt: dueAt,
+      completedAt: completedAt ?? this.completedAt,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  static DateTime? _parseDateTime(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
+  }
+}
+
+class _TaskDraft {
+  final String title;
+  final String description;
+  final DateTime? dueDate;
+
+  const _TaskDraft({
+    required this.title,
+    required this.description,
+    required this.dueDate,
+  });
+}
+
+List<LeadTask> sortLeadTasksForDisplay(Iterable<LeadTask> tasks) {
+  final sortedTasks = List<LeadTask>.from(tasks);
+
+  sortedTasks.sort((a, b) {
+    if (a.isDone != b.isDone) return a.isDone ? 1 : -1;
+
+    final aDue = a.dueAt;
+    final bDue = b.dueAt;
+
+    if (aDue != null && bDue != null) return aDue.compareTo(bDue);
+    if (aDue != null) return -1;
+    if (bDue != null) return 1;
+
+    return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+  });
+
+  return sortedTasks;
+}
+
 const List<String> followUpStatusOptions = [
   'None',
   'Needs Revisit',
@@ -20469,6 +20604,11 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
   bool isDeletingLead = false;
   bool isLoadingPhotos = true;
   bool isUploadingPhoto = false;
+  List<LeadTask> leadTasks = [];
+  bool isLoadingTasks = true;
+  bool isCreatingTask = false;
+  final Set<String> completingTaskIds = <String>{};
+  String? taskLoadError;
   String? missionAttributionLabel;
 
   @override
@@ -20494,6 +20634,7 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     outOfStateOwner = widget.lead.parcelData.outOfStateOwner;
     loadLeadPhotos();
     loadMissionAttribution();
+    loadLeadTasks();
   }
 
   @override
@@ -20686,6 +20827,316 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
       });
     } catch (_) {
       // Attribution is read-only context; never block lead details.
+    }
+  }
+
+  bool isMissingTasksTableError(Object error) {
+    final details = error.toString().toLowerCase();
+
+    return details.contains('tasks') &&
+        (details.contains('does not exist') ||
+            details.contains('could not find') ||
+            details.contains('schema cache') ||
+            details.contains('pgrst205'));
+  }
+
+  String taskErrorMessage(Object error) {
+    if (isMissingTasksTableError(error)) {
+      return 'Run Supabase migration 0016_create_tasks.sql to enable tasks.';
+    }
+
+    final details = error.toString().toLowerCase();
+
+    if (details.contains('sign in')) {
+      return 'Sign in to create and view tasks.';
+    }
+
+    if (details.contains('row-level security') ||
+        details.contains('permission') ||
+        details.contains('unauthorized') ||
+        details.contains('403') ||
+        details.contains('401')) {
+      return 'Task save is blocked by Supabase permissions.';
+    }
+
+    return 'Could not save task. Please try again.';
+  }
+
+  void showTaskError(Object error) {
+    final message = taskErrorMessage(error);
+
+    if (kDebugMode) {
+      debugPrint('Lead task error: $error');
+    }
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> loadLeadTasks() async {
+    final userId = supabase.auth.currentUser?.id;
+
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingTasks = false;
+        taskLoadError = 'Sign in to create and view tasks.';
+      });
+      return;
+    }
+
+    setState(() {
+      isLoadingTasks = true;
+      taskLoadError = null;
+    });
+
+    try {
+      final rows = await supabase
+          .from('tasks')
+          .select()
+          .eq('lead_id', widget.lead.id)
+          .eq('user_id', userId)
+          .order('status')
+          .order('due_at', ascending: true)
+          .order('created_at', ascending: false);
+
+      if (!mounted) return;
+
+      setState(() {
+        leadTasks = sortLeadTasksForDisplay(
+          rows.map<LeadTask>((row) => LeadTask.fromJson(row)),
+        );
+        isLoadingTasks = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingTasks = false;
+        taskLoadError = taskErrorMessage(error);
+      });
+
+      if (kDebugMode) {
+        debugPrint('Lead task load error: $error');
+      }
+    }
+  }
+
+  Future<void> showCreateTaskDialog() async {
+    final titleController = TextEditingController();
+    final descriptionController = TextEditingController();
+    DateTime? dueDate;
+
+    try {
+      final draft = await showDialog<_TaskDraft>(
+        context: context,
+        builder: (dialogContext) {
+          String? titleError;
+
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Add task'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: titleController,
+                        autofocus: true,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: 'Task title',
+                          errorText: titleError,
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: descriptionController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          labelText: 'Description (optional)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              dueDate == null
+                                  ? 'No due date'
+                                  : 'Due ${displayDate(dueDate)}',
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              final pickedDate = await pickLeadDate(dueDate);
+
+                              if (pickedDate == null) return;
+
+                              setDialogState(() {
+                                dueDate = dateOnly(pickedDate);
+                              });
+                            },
+                            child: const Text('Pick date'),
+                          ),
+                        ],
+                      ),
+                      if (dueDate != null)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: () {
+                              setDialogState(() {
+                                dueDate = null;
+                              });
+                            },
+                            child: const Text('Clear due date'),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      final title = titleController.text.trim();
+
+                      if (title.isEmpty) {
+                        setDialogState(() {
+                          titleError = 'Task title is required.';
+                        });
+                        return;
+                      }
+
+                      FocusScope.of(dialogContext).unfocus();
+                      Navigator.pop(
+                        dialogContext,
+                        _TaskDraft(
+                          title: title,
+                          description: descriptionController.text.trim(),
+                          dueDate: dueDate,
+                        ),
+                      );
+                    },
+                    child: const Text('Add task'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (draft == null) return;
+
+      await createLeadTask(draft);
+    } finally {
+      titleController.dispose();
+      descriptionController.dispose();
+    }
+  }
+
+  Future<void> createLeadTask(_TaskDraft draft) async {
+    if (isCreatingTask) return;
+
+    final userId = supabase.auth.currentUser?.id;
+
+    if (userId == null || userId.isEmpty) {
+      showTaskError(StateError('Sign in to create and view tasks.'));
+      return;
+    }
+
+    setState(() {
+      isCreatingTask = true;
+    });
+
+    try {
+      final row = await supabase
+          .from('tasks')
+          .insert({
+            'user_id': userId,
+            'lead_id': widget.lead.id,
+            'title': draft.title,
+            if (draft.description.isNotEmpty) 'description': draft.description,
+            if (draft.dueDate != null)
+              'due_at': draft.dueDate!.toUtc().toIso8601String(),
+          })
+          .select()
+          .single();
+      final task = LeadTask.fromJson(row);
+
+      if (!mounted) return;
+
+      setState(() {
+        leadTasks = sortLeadTasksForDisplay([...leadTasks, task]);
+        taskLoadError = null;
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Task added.')));
+    } catch (error) {
+      showTaskError(error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          isCreatingTask = false;
+        });
+      }
+    }
+  }
+
+  Future<void> completeLeadTask(LeadTask task) async {
+    if (task.isDone || completingTaskIds.contains(task.id)) return;
+
+    setState(() {
+      completingTaskIds.add(task.id);
+    });
+
+    try {
+      final completedAt = DateTime.now().toUtc();
+      final row = await supabase
+          .from('tasks')
+          .update({
+            'status': taskStatusDone,
+            'completed_at': completedAt.toIso8601String(),
+          })
+          .eq('id', task.id)
+          .eq('lead_id', widget.lead.id)
+          .select()
+          .single();
+      final updatedTask = LeadTask.fromJson(row);
+
+      if (!mounted) return;
+
+      setState(() {
+        leadTasks = sortLeadTasksForDisplay(
+          leadTasks.map((item) => item.id == task.id ? updatedTask : item),
+        );
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Task completed.')));
+    } catch (error) {
+      showTaskError(error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          completingTaskIds.remove(task.id);
+        });
+      }
     }
   }
 
@@ -21210,6 +21661,125 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
     );
   }
 
+  String taskSubtitle(LeadTask task) {
+    final parts = <String>[];
+
+    if (task.dueAt != null) {
+      parts.add('Due ${displayDate(task.dueAt!.toLocal())}');
+    }
+
+    if (task.description.trim().isNotEmpty) {
+      parts.add(task.description.trim());
+    }
+
+    if (task.isDone && task.completedAt != null) {
+      parts.add('Completed ${displayDate(task.completedAt!.toLocal())}');
+    }
+
+    return parts.isEmpty ? taskStatusLabel(task.status) : parts.join(' - ');
+  }
+
+  Widget taskTile(LeadTask task) {
+    final isCompleting = completingTaskIds.contains(task.id);
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: isCompleting
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Checkbox(
+              value: task.isDone,
+              onChanged: task.isDone ? null : (_) => completeLeadTask(task),
+            ),
+      title: Text(
+        task.title,
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          decoration: task.isDone ? TextDecoration.lineThrough : null,
+        ),
+      ),
+      subtitle: Text(taskSubtitle(task)),
+      trailing: task.isDone
+          ? const Chip(
+              label: Text('Done'),
+              visualDensity: VisualDensity.compact,
+            )
+          : null,
+    );
+  }
+
+  Widget tasksSection() {
+    final migrationMissing =
+        taskLoadError?.contains('0016_create_tasks.sql') ?? false;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Tasks',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: isCreatingTask || migrationMissing
+                      ? null
+                      : showCreateTaskDialog,
+                  icon: isCreatingTask
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add_task),
+                  label: Text(isCreatingTask ? 'Adding...' : 'Add task'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (isLoadingTasks)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: LinearProgressIndicator(),
+              )
+            else if (taskLoadError != null)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(taskLoadError!, style: const TextStyle(fontSize: 16)),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: loadLeadTasks,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ],
+              )
+            else if (leadTasks.isEmpty)
+              const Text(
+                'No tasks yet. Add a call, revisit, or follow-up for this lead.',
+                style: TextStyle(fontSize: 16),
+              )
+            else
+              Column(
+                children: sortLeadTasksForDisplay(
+                  leadTasks,
+                ).map(taskTile).toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasLocation =
@@ -21278,6 +21848,8 @@ class _LeadDetailsScreenState extends State<LeadDetailsScreen> {
               ),
               const SizedBox(height: 16),
               contactSection(),
+              const SizedBox(height: 16),
+              tasksSection(),
               const SizedBox(height: 16),
               Card(
                 child: Padding(

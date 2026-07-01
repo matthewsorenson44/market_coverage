@@ -50,6 +50,7 @@ The app should feel dependable in the field before adding more automation:
 - Lead scoring, source, pipeline stage, reminders, ARV, repair cost, assignment fee, and MAO.
 - Market catalog and readiness states.
 - Lead funnel direction: source attribution, tasks, Today Queue, inbox items, inbound events, calendar items, and attribution links should be added only as thin vertical slices with working UI.
+- T1 task data layer is implemented in code: after running the manual Supabase migration, Lead Details can create, list, and complete lead-attached tasks. The Today tab that summarizes tasks is still T2 and has not been built.
 
 ## Current Known Issues To Watch
 
@@ -64,6 +65,7 @@ The app should feel dependable in the field before adding more automation:
 - Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
 - Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
+- Setup needed: run `supabase/migrations/0016_create_tasks.sql` manually in Supabase before the new Lead Details task UI can save live data.
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
 - Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
@@ -150,6 +152,13 @@ Bug status meanings:
 
 ### 2026-06-30
 
+- Implemented T1 Tasks Data Layer.
+- Confirmed the app/database timestamp convention is `created_at` and `updated_at`, so the new `tasks` table follows that convention.
+- Added manual Supabase migration `0016_create_tasks.sql` for the new user-scoped `tasks` table with `open`/`done` status, optional due date, completed timestamp, RLS policies, indexes, and an `updated_at` trigger.
+- Added the `LeadTask` Dart model, task status helpers, task sorting, and focused unit tests.
+- Added minimal Lead Details task UI: create a lead task, view tasks for the lead, and mark a task complete. This does not build the Today tab.
+- Updated project status to mark T1 complete and recommend T2 Today View next.
+- Validation: `dart format .`, `flutter analyze`, and `flutter test` passed with 125 tests.
 - Saved the rewritten V1 product direction into `docs/master_plan.md`.
 - Added root `MASTER_PLAN.md` as a pointer because future prompts may reference that filename directly.
 - Added `CODEX_CHECKLIST.md` with the one-task-per-session implementation checklist.

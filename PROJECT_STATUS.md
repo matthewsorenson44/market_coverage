@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Planning / V1 alignment.
+T1 Tasks Data Layer complete; ready for T2 Today View.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -35,26 +35,30 @@ Today and Inbox do not exist yet.
 
 ## Most Recent Completed Task ID
 
-Docs: V1 master plan alignment.
+T1: Tasks Data Layer.
 
 ## Files Changed In Latest Status Update
 
+- `lib/main.dart`
+- `test/lead_logic_test.dart`
+- `supabase/migrations/0016_create_tasks.sql`
 - `docs/master_plan.md`
-- `MASTER_PLAN.md`
-- `CODEX_CHECKLIST.md`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
-- `AGENTS.md`
 
 ## Migration Added
 
-None.
+- `supabase/migrations/0016_create_tasks.sql`
+
+Manual SQL still needs to be run in Supabase before live task creation will work.
+
+Backfill assumptions: none. The `tasks` table is new and starts empty.
 
 ## Test Results
 
-Docs-only update.
-
-No Dart code changed, so `dart format`, `flutter analyze`, and `flutter test` were not required for this status update.
+- `dart format .`: passed
+- `flutter analyze`: passed with no issues
+- `flutter test`: passed with 125 tests
 
 ## Known Issues
 
@@ -68,14 +72,15 @@ Current high-priority open areas:
 - Map overlay visibility and toggles need continued cleanup.
 - Lead deletion needs final user confirmation after the fixed-length list bug fix.
 - Today and Inbox are V1 targets but do not exist yet.
+- T1 task UI depends on running `0016_create_tasks.sql` manually in Supabase.
 
 ## Next Recommended Task
 
-T1: Today Queue + Tasks.
+T2: Today View.
 
 Start with a thin vertical slice:
 
-- Add a `tasks` migration.
-- Add a minimal Today command center shell.
+- Add the Today command center tab/shell.
+- Read from the T1 `tasks` table.
 - Show overdue tasks, due-today tasks, and new leads.
 - Keep existing Drive, Leads, Areas, and Settings behavior intact.

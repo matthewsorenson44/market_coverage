@@ -176,6 +176,8 @@ Current important tables:
 
 New V1 tables to document and build:
 
+Timestamp columns on new tables should match the existing database convention. Existing tables use `created` and `updated` where applicable, not `created_at` and `updated_at`. New tables should follow the existing convention for consistency; confirm the exact existing column names before writing migrations.
+
 - `inbound_events`
   - Purpose: raw event log for inbound leads from website forms, webhooks, CSV imports, and future integrations.
   - Expected key columns: `id`, `user_id`, `source`, `external_id`, `payload`, `received_at`, `processed_at`, `status`, `created_lead_id`, `error_message`, `created_at`.
@@ -242,19 +244,31 @@ Purpose:
 - Preserve existing driving and manual lead creation.
 - Show source clearly in lead workflows.
 
-### T1: Today Queue + Tasks
+### T1: Tasks Data Layer
 
 Purpose:
 
-- Build the Today command center shell.
 - Add the `tasks` table.
-- Show today's follow-ups, overdue tasks, new leads, and suggested next action.
+- Add the ability to create, view, and complete a task attached to a lead.
 
 Testable result:
 
-- User opens Today and can immediately see what needs attention.
+- User can create a task on a lead and mark it complete; it persists.
+- This slice does not build the Today tab.
 
-### T2: Inbox Surface Inside Today
+### T2: Today View
+
+Purpose:
+
+- Build the Today command-center tab.
+- Surface today's follow-ups, overdue tasks, new leads, and a suggested next action.
+- Read from the tasks created in T1.
+
+Testable result:
+
+- User opens Today and immediately sees what needs attention.
+
+### T3: Inbox Surface Inside Today
 
 Purpose:
 
@@ -372,9 +386,9 @@ Drive OS is already a foundation, not net-new V1 work.
 
 V1 must include:
 
-1. Today Queue
-2. Tasks
-3. Unified inbox
+1. Tasks (T1)
+2. Today Queue (T2)
+3. Unified inbox (T3)
 4. Manual source-based lead creation
 5. CSV import
 6. Website/webhook intake

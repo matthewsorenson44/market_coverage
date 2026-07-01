@@ -97,6 +97,101 @@ void main() {
     });
   });
 
+  group('LeadTask', () {
+    test('fromJson parses database task rows', () {
+      final task = LeadTask.fromJson({
+        'id': 'task-1',
+        'user_id': 'user-1',
+        'lead_id': 'lead-1',
+        'area_id': 'area-1',
+        'mission_id': 'mission-1',
+        'title': 'Call seller',
+        'description': 'Ask about timeline',
+        'status': 'done',
+        'priority': 'high',
+        'due_at': '2026-07-02T15:30:00Z',
+        'completed_at': '2026-07-02T16:00:00Z',
+        'created_at': '2026-07-01T10:00:00Z',
+        'updated_at': '2026-07-01T11:00:00Z',
+      });
+
+      expect(task.id, 'task-1');
+      expect(task.userId, 'user-1');
+      expect(task.leadId, 'lead-1');
+      expect(task.areaId, 'area-1');
+      expect(task.missionId, 'mission-1');
+      expect(task.title, 'Call seller');
+      expect(task.description, 'Ask about timeline');
+      expect(task.status, taskStatusDone);
+      expect(task.isDone, isTrue);
+      expect(task.priority, 'high');
+      expect(task.dueAt, DateTime.parse('2026-07-02T15:30:00Z'));
+      expect(task.completedAt, DateTime.parse('2026-07-02T16:00:00Z'));
+    });
+
+    test('unknown task status normalizes to open', () {
+      final task = LeadTask.fromJson({
+        'id': 'task-1',
+        'user_id': 'user-1',
+        'lead_id': 'lead-1',
+        'title': 'Follow up',
+        'status': 'blocked',
+      });
+
+      expect(task.status, taskStatusOpen);
+      expect(taskStatusLabel(task.status), 'Open');
+    });
+
+    test('toJson writes database column names', () {
+      final task = LeadTask(
+        id: 'task-1',
+        userId: 'user-1',
+        leadId: 'lead-1',
+        title: 'Revisit property',
+        description: 'Bring camera',
+        dueAt: DateTime.utc(2026, 7, 3),
+      );
+
+      final json = task.toJson();
+
+      expect(json['id'], 'task-1');
+      expect(json['user_id'], 'user-1');
+      expect(json['lead_id'], 'lead-1');
+      expect(json['title'], 'Revisit property');
+      expect(json['description'], 'Bring camera');
+      expect(json['status'], taskStatusOpen);
+      expect(json['due_at'], '2026-07-03T00:00:00.000Z');
+    });
+
+    test('sortLeadTasksForDisplay keeps open due tasks first', () {
+      final sorted = sortLeadTasksForDisplay([
+        const LeadTask(
+          id: 'done',
+          userId: 'user',
+          leadId: 'lead',
+          title: 'Done task',
+          status: taskStatusDone,
+        ),
+        LeadTask(
+          id: 'later',
+          userId: 'user',
+          leadId: 'lead',
+          title: 'Later',
+          dueAt: DateTime(2026, 7, 10),
+        ),
+        LeadTask(
+          id: 'soon',
+          userId: 'user',
+          leadId: 'lead',
+          title: 'Soon',
+          dueAt: DateTime(2026, 7, 2),
+        ),
+      ]);
+
+      expect(sorted.map((task) => task.id), ['soon', 'later', 'done']);
+    });
+  });
+
   group('normalizedAddressKey', () {
     test('null returns empty string', () {
       expect(normalizedAddressKey(null), '');
