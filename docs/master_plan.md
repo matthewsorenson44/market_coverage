@@ -1,284 +1,520 @@
-# MASTER PLAN - Market Coverage OS
+# Market Coverage OS Master Plan
 
-## What This App Is
+## Product North Star
 
-Market Coverage OS is the daily acquisition command center for a part-time wholesaler.
+Market Coverage OS is a full wholesaler automation OS.
 
-It is not just a Driving for Dollars app. Driving for Dollars is the hook that gets users in. The unified lead funnel and the Today Queue are what keep users paying.
+It answers three daily questions:
 
-The one-line product promise:
+1. Where should I drive next?
+2. What leads came in today?
+3. What needs my attention right now?
 
-> Open one app, see every seller lead from every source, know what needs attention today, and know where to drive next.
+Market Coverage OS = Drive OS + Lead Funnel + Today Queue + Automation Engine + Lightweight CRM + Deal Tools.
 
-When the user opens the app they should immediately see:
+The map remains the product moat. It helps wholesalers see coverage, plan drive areas, capture field leads, and understand where opportunity has already been worked. But retention comes from acting on leads and automating follow-up. V1 must make the user better at both: finding new opportunities and managing every lead that enters the business.
 
-- New leads from driving.
-- New leads from ad platforms: Facebook, Instagram, TikTok, YouTube, and Google.
-- New leads from website forms.
-- New leads from email.
-- New leads from phone and SMS.
-- New leads from direct mail responses.
-- Overdue follow-ups.
-- Today's appointments.
-- The next best area to drive.
+## Final V1 Positioning
 
-## Critical Execution Rules
+Market Coverage OS is not just a driving-for-dollars app.
 
-These rules exist because they have worked for every successful session so far. Breaking them is the fastest way to break a working app.
+V1 should become a practical daily command center for real estate wholesalers:
 
-1. **Do not restructure the app.** The app lives in a single `lib/main.dart` plus the `lib/design_system/` folder. We are not migrating to a layered `lib/features/`, `lib/shared/`, and `lib/core/` architecture. New features are added additively, the same way the design system was added. A full refactor is the single most likely thing to break the working app and strand a half-migrated codebase. Do not do it.
-2. **Every session ships something testable.** No session should add a database table or model with no UI yet. Each session is a thin vertical slice: table, screen, and one working flow the user can open and test. One working feature beats four empty tables.
-3. **Additive only.** Never change existing capture, mission, scoring, CRM, photos, ARV/MAO, Drive Areas, Market Map, offline queue, or export/import behavior unless the task explicitly says to. Preserve all existing functionality. All existing tests must keep passing.
-4. **Always provide a numbered How To Test checklist** at the end of every code task, written tap-by-tap, with a clear pass/fail condition.
-5. **SQL is run by the human.** Codex outputs SQL and explains it; the human runs it in the Supabase SQL Editor. Codex never assumes it can run SQL.
-6. **Git checkpoint before every session.** Run `git add .` and `git commit -m "..."` before any change when the user requests a checkpoint or the task is substantial.
-7. **Validate every session.** Run `dart format .`, `flutter analyze`, and `flutter test`. Fix only issues the change introduced.
-8. **Four tabs, not five.** The audit confirmed the 4-tab structure is correct and warned against overload. Today and Inbox overlap, so Inbox is a section inside Today, not its own tab, until and unless real use proves a separate tab is needed.
-9. **No fake data, ever.** No fabricated owner names, phones, emails, or parcel data. Owner data is optional and never required to capture a lead.
+- Drive markets with live map coverage.
+- Capture distressed properties quickly.
+- Receive and organize leads from multiple sources.
+- Know what came in today.
+- Know what needs action now.
+- Track follow-ups, reminders, status, and source.
+- Export leads for skip tracing.
+- Import enriched CSV results.
+- Manage lightweight deal math and next steps.
 
-## Current State
+The product should feel like:
 
-- Design system complete: tokens, primitives, domain components, and redesigned Drive tab in `lib/design_system/`.
-- Dark/light mode with system follow and manual toggle in Settings.
-- Map tile switching: Dark Matter, Voyager, Satellite, and Minimal.
-- Frosted glass bottom sheets and transparent AppBar over map.
-- Drive OS: markets, Drive Areas, Missions, street coverage, next-best-street, time-based mission planner, weekly planner, mission calibration, mission results.
-- Quick Capture: GPS, reverse-geocoded address, tags, score, notes, and photos.
-- Owner-data pivot: lead capture works nationwide on GPS and address; parcel/owner data is optional enhancement only.
-- National market catalog: markets table, readiness states, Data Health.
-- Multi-county street import: bbox-based, handles county-straddling cities.
-- Offline lead save queue and sync.
-- Field test logger.
-- CSV export for skip tracing: column selection, `lead_id` locked.
-- CSV import for skip tracing enrichment: `lead_id` first, address fallback, fill-blanks-only merge, preview before write.
+> Apple Maps for market coverage plus a wholesaler lead funnel and daily action queue.
 
-## Revised V1 Navigation - Four Tabs
+V1 should not try to replace a full enterprise CRM. It should focus on speed, clarity, and daily execution for solo wholesalers and small operators.
 
-1. **Today** - the command center. First tab. Opens here. The unified Inbox lives as a section inside Today, not a separate tab.
-2. **Drive** - the Driving for Dollars map experience.
-3. **Leads** - the CRM list and lead detail.
-4. **Markets** - market catalog, Drive Areas, and Data Health.
+## What V1 Is / Is Not
 
-Settings remains accessible by gear or account. Analytics is a possible later tab, not V1.
+V1 is:
 
-## The Four Product Pillars
+- A Drive OS for market coverage and quick capture.
+- A lead funnel for field, manual, CSV, referral, social, website, and other lead sources.
+- A Today Queue for what needs attention now.
+- A unified Inbox for incoming and unreviewed leads.
+- A lightweight CRM for status, source, score, tasks, reminders, photos, notes, and deal fields.
+- A practical deal tool for ARV, repair cost, assignment fee, and MAO.
+- A system that works even when owner or parcel data is unavailable.
 
-### Pillar 1 - Drive OS
+V1 is not:
 
-Mostly done.
+- A full enterprise CRM.
+- A nationwide parcel ownership database.
+- A skip tracing provider.
+- A full marketing automation suite.
+- A full calendar replacement.
+- A full route optimization engine.
+- A team/account permissions product yet.
+- A fake-data product that pretends every market is ready.
 
-Markets, Drive Areas, Missions, street coverage, next best street, Quick Capture, parcel support where available, mission results, coverage percentage, and leads found during missions.
+Owner data is not required for MVP. Parcel boundaries and ownership data are optional by market.
 
-### Pillar 2 - Lead Funnel OS
+If owner data is unavailable, the app should show:
 
-The new work.
+> Owner data not available. Export this lead list for skip tracing.
 
-Manual lead entry, field capture, website/webhook leads, CSV import from ad platforms, source tracking, campaign tracking, and duplicate detection.
+Lead capture must never be blocked because parcel, owner, or enrichment data is missing.
 
-Future connectors: Facebook, Instagram, TikTok, YouTube, Google, X, Gmail, and Twilio.
+## App Navigation
 
-### Pillar 3 - Today Queue
+Target V1 navigation order:
 
-The retention engine.
+1. Today
+2. Drive
+3. Inbox
+4. Leads
+5. Markets
 
-New leads needing review, leads needing contact today, overdue follow-ups, revisit reminders, appointments, inbound replies, suggested driving mission, and do-this-next recommendations.
+Important current-state note:
 
-### Pillar 4 - Lightweight CRM
+The current shipped app has 4 tabs:
 
-Partly done.
+1. Drive
+2. Leads
+3. Areas
+4. Settings
 
-Lead stages, lead detail, notes, photos, tasks, calendar items, follow-up status, source attribution, mission attribution, ARV, repair estimate, and MAO.
+The 5-tab structure is the V1 target to build toward, not the current state. Today and Inbox do not exist yet.
 
-This should not become a full REsimpli clone.
+Navigation intent:
 
-## Data Model
+- Today: the command center. Shows new leads, overdue tasks, today's follow-ups, mission prompts, and key alerts.
+- Drive: live map, GPS, quick capture, missions, route tracking, and street coverage.
+- Inbox: unified lead intake review from website/webhooks, CSV imports, manual entries, and future integrations.
+- Leads: searchable/filterable CRM list and lead detail management.
+- Markets: market selection, city readiness, street data status, drive areas, and coverage planning.
 
-Add these tables additively alongside existing tables. Each table should be introduced in the session that first uses it. Do not add empty tables ahead of UI.
+Areas should eventually move under Markets or Drive as Drive Areas. The current Areas tab is a bridge toward the V1 Markets structure.
 
-### `lead_sources`
+## Revised Domain Model
+
+Core objects:
+
+- Market: a city or local market the user works.
+- Drive Area: a bounded area inside a market.
+- Mission: a planned driving session inside a drive area.
+- Street Segment: a real street centerline used for coverage tracking.
+- Street Coverage: whether a street segment has been covered.
+- Driving Point: GPS breadcrumb from route tracking.
+- Lead: a property/opportunity captured from any source.
+- Lead Source: currently stored as `leads.source` using the implemented 13-value taxonomy.
+- Inbound Event: raw lead intake event from website, webhook, CSV, or future integrations.
+- Inbox Item: user-facing review item generated from inbound events or lead workflows.
+- Task: a follow-up, reminder, call, revisit, or action item.
+- Attribution Link: connection between a lead and its source, mission, campaign, import, or inbound event.
+- Calendar Item: lightweight scheduled follow-up, drive block, appointment, or reminder.
+- Photo: image attached to a lead.
+- Deal Tool Fields: ARV, repair cost, assignment fee, and MAO.
+- Score Signals: condition tags and scoring inputs such as roof damage, tall grass, vacancy, trash, exterior wear, and broken windows.
+
+Existing lead source taxonomy:
+
+- `driving`
+- `referral`
+- `facebook`
+- `instagram`
+- `tiktok`
+- `youtube`
+- `x`
+- `mailing`
+- `bandit_signs`
+- `website`
+- `manual`
+- `csv_import`
+- `other`
+
+## Supabase Data Model
+
+Current important tables:
+
+- `leads`
+  - Stores lead records.
+  - Lead source is already implemented as a `source text` column with a 13-value CHECK constraint:
+    - `driving`
+    - `referral`
+    - `facebook`
+    - `instagram`
+    - `tiktok`
+    - `youtube`
+    - `x`
+    - `mailing`
+    - `bandit_signs`
+    - `website`
+    - `manual`
+    - `csv_import`
+    - `other`
+  - Do not replace this with a dedicated source table in V1.
+  - Expected key columns include: `id`, `user_id`, `address`, `latitude`, `longitude`, `source`, `pipeline_stage`, `status`, `score`, `notes`, `created_at`, `updated_at`.
 
-Tracks where every lead came from.
+- `driving_points`
+  - Stores GPS route breadcrumbs.
+  - Currently scoped by `user_id`.
 
-Columns: `id`, `user_id`, `name`, `source_type`, `platform`, `campaign_name`, `is_active`, `created_at`, `updated_at`.
+- `street_coverage`
+  - Stores covered street records.
+  - Currently scoped by `user_id`.
 
-Source types: `field`, `manual`, `website`, `facebook`, `instagram`, `tiktok`, `youtube`, `google_ads`, `x`, `gmail`, `email`, `phone`, `sms`, `direct_mail`, `referral`, `csv_import`, `webhook`, `other`.
+- `city_streets`
+  - Stores imported street centerline data for market coverage.
+  - Supports coverage percentages and street rendering.
 
-### `tasks`
+- `lead_photos`
+  - Stores metadata for photos attached to leads.
+  - Storage files live in Supabase Storage.
 
-Powers the Today Queue.
+New V1 tables to document and build:
 
-Columns: `id`, `user_id`, `lead_id`, `market_id`, `drive_area_id`, `mission_id`, `title`, `description`, `task_type`, `priority`, `due_at`, `completed_at`, `status`, `source`, `created_at`, `updated_at`.
+- `inbound_events`
+  - Purpose: raw event log for inbound leads from website forms, webhooks, CSV imports, and future integrations.
+  - Expected key columns: `id`, `user_id`, `source`, `external_id`, `payload`, `received_at`, `processed_at`, `status`, `created_lead_id`, `error_message`, `created_at`.
 
-Task types: `review_new_lead`, `call_lead`, `text_lead`, `email_lead`, `mail_lead`, `drive_by`, `appointment`, `follow_up`, `update_lead`, `sync_issue`.
+- `inbox_items`
+  - Purpose: unified review queue for new inbound leads, import rows, follow-up prompts, and items needing user action.
+  - Expected key columns: `id`, `user_id`, `lead_id`, `inbound_event_id`, `title`, `subtitle`, `source`, `priority`, `status`, `due_at`, `resolved_at`, `created_at`.
 
-### `inbound_events`
+- `tasks`
+  - Purpose: explicit user actions such as call seller, revisit property, follow up, send mail, review lead, or complete skip trace.
+  - Expected key columns: `id`, `user_id`, `lead_id`, `area_id`, `mission_id`, `title`, `description`, `status`, `priority`, `due_at`, `completed_at`, `created_at`, `updated_at`.
 
-Raw lead events from outside the app, before or while they become leads.
+- `attribution_links`
+  - Purpose: connect leads to source events, missions, campaigns, imports, or manual source selections.
+  - Expected key columns: `id`, `user_id`, `lead_id`, `source`, `inbound_event_id`, `mission_id`, `campaign_name`, `metadata`, `created_at`.
 
-Columns: `id`, `user_id`, `source_id`, `external_event_id`, `raw_payload`, `normalized_name`, `normalized_phone`, `normalized_email`, `normalized_address`, `normalized_message`, `campaign_name`, `status`, `lead_id`, `received_at`, `processed_at`, `created_at`.
+- `calendar_items`
+  - Purpose: lightweight scheduling for follow-ups, appointments, drive sessions, and reminders.
+  - Expected key columns: `id`, `user_id`, `lead_id`, `task_id`, `area_id`, `market_id`, `title`, `starts_at`, `ends_at`, `status`, `created_at`, `updated_at`.
 
-Statuses: `new`, `processed`, `duplicate`, `needs_review`, `failed`, `ignored`.
+Known future migration:
 
-### `inbox_items`
+- `leads`, `driving_points`, and `street_coverage` are currently scoped by `user_id`.
+- A future migration should convert these to `account_id` scoping before team features ship.
+- Do not change this now. Document it as a known migration for the team/account phase.
 
-The unified inbox item shown to the user inside Today.
+Later data model upgrade:
 
-Columns: `id`, `user_id`, `inbound_event_id`, `lead_id`, `item_type`, `title`, `subtitle`, `body`, `priority`, `status`, `due_at`, `created_at`, `updated_at`.
+- `lead_sources`
+  - This is not a V1 replacement for `leads.source`.
+  - Add this in Version 1.1 when source metadata is needed, such as per-channel cost, campaign grouping, display ordering, channel type, and ROI reporting.
 
-Item types: `new_field_lead`, `new_ad_lead`, `new_web_lead`, `new_email_lead`, `new_sms_lead`, `missed_call`, `voicemail`, `direct_mail_response`, `duplicate_candidate`, `follow_up_due`, `appointment_due`, `sync_error`.
+Preserved status:
 
-### `calendar_items`
+- Phase 0 security/RLS is complete and verified.
+- R1 lead source tracking is complete and verified.
 
-In-app calendar before external Google Calendar sync.
+Do not reopen or contradict those settled items unless a new concrete regression is found.
 
-Columns: `id`, `user_id`, `lead_id`, `task_id`, `title`, `starts_at`, `ends_at`, `location`, `notes`, `status`, `created_at`, `updated_at`.
+## Build Phases
 
-### `attribution_links`
+Each phase should be an ordered vertical slice that ships something testable.
 
-Connects a lead to its origin.
+### Phase 0: Security/RLS Foundation
 
-Columns: `id`, `user_id`, `lead_id`, `source_id`, `market_id`, `drive_area_id`, `mission_session_id`, `campaign_name`, `created_at`.
+Status: complete and verified.
 
-### Existing Tables
+Purpose:
 
-Existing tables remain unchanged: `leads`, `driving_points`, `street_coverage`, `city_streets`, `drive_areas`, `properties`, `missions`, `weekly_plans`, `markets`, plus the `lead-photos` storage bucket.
+- Ensure Supabase security is usable.
+- Keep RLS enabled.
+- Keep photo uploads working.
+- Keep Flutter using anon key only.
+- Avoid service role key in the client.
 
-## Security
+### R1: Lead Source Tracking
 
-Security must be done before public launch. This is non-negotiable.
+Status: complete and verified.
 
-This plan adds tables full of phone numbers, emails, and raw inbound payloads. Security cannot be deferred again. The funnel multiplies sensitive data, so the isolation gap must close before the funnel tables fill up and definitely before any second user or App Store release.
+Purpose:
 
-### Security Gate 1 - Do First, Before Funnel Tables
+- Add `source` to `leads`.
+- Use the 13-value source taxonomy.
+- Preserve existing driving and manual lead creation.
+- Show source clearly in lead workflows.
 
-- Enable RLS on all existing tables, scoped to `auth.uid()`.
-- Move lead photos to a private Supabase Storage bucket.
-- Replace `getPublicUrl()` with signed URLs for photo access.
-- Add Sentry or equivalent crash reporting.
+### T1: Today Queue + Tasks
 
-### Security Gate 2 - Applied As Each New Table Is Created
+Purpose:
 
-- Every new funnel table gets RLS enabled and a `user_id`-scoped policy in the same session it is created.
-- No new table ships without RLS.
+- Build the Today command center shell.
+- Add the `tasks` table.
+- Show today's follow-ups, overdue tasks, new leads, and suggested next action.
 
-### Security Gate 3 - Before App Store Submission
+Testable result:
 
-- Audit every table for RLS coverage.
-- Confirm no public bucket exposure.
-- Confirm webhook endpoints validate a secret token.
-- Confirm no raw payloads leak PII in logs.
+- User opens Today and can immediately see what needs attention.
 
-## Build Order
+### T2: Inbox Surface Inside Today
 
-Each numbered item is one Codex session that produces something the user can open and test. No empty-table sessions.
+Purpose:
 
-### Phase 0 - Security Gate 1
+- Add `inbox_items`.
+- Surface unreviewed inbound items inside Today.
+- Let user review, resolve, or convert items.
 
-Do before any funnel work.
+Testable result:
 
-- **0.1** RLS audit, read-only: output current RLS status of all tables and report what is exposed. No changes.
-- **0.2** Enable RLS and policies on all existing tables. Private photo bucket plus signed URLs. Add Sentry.
+- User can see and clear an inbox item from Today.
 
-### Phase R - Source Attribution
+### L1: Manual Source-Based Lead Creation
 
-Thin slice, immediately visible.
+Purpose:
 
-- **R1** `lead_sources` table with RLS, source chip on lead cards, and source picker in the Add Lead form. Existing leads default to source type `field`. Lead Detail shows source.
+- Let users manually create leads with the existing 13-source list.
+- Use `leads.source`.
+- Do not introduce `lead_sources` table in V1.
 
-Payoff: every lead now has visible attribution.
+Testable result:
 
-### Phase T - Today Queue Using Data Already In The App
+- User creates a manual lead from a selected source and sees it correctly in Leads.
 
-- **T1** `tasks` table with RLS and task model. Add a minimal Today tab that shows three things from existing data only: follow-ups due, revisit reminders, and today's scheduled mission. No inbox yet.
+### C1: CSV Import For Leads
 
-Payoff: the app opens like a command center immediately, using data already in the app.
+Purpose:
 
-- **T2** Auto-create a task when a lead is created. Field lead creates a review task. Today now fills itself.
+- Reuse existing CSV plumbing.
+- Import lead rows from skip tracing or external lists.
+- Default source to `csv_import`.
+- Create leads or inbox review items depending on confidence.
 
-Payoff: Today is self-populating.
+Testable result:
 
-### Phase S - Multi-Source Funnel
+- User imports a CSV and sees resulting leads or review items.
 
-- **S1** Manual source-based lead creation. Add source and campaign fields to the Add Lead form so a user can log a Facebook, website, or referral lead by hand. Source chip displays. Auto-task is created per source type.
+### A1: Source Attribution
 
-Payoff: real multi-source funnel data exists.
+Purpose:
 
-- **S2** Inbox as a section inside Today, not a tab. Surface new and unreviewed leads needing action. Filter chips: All, Field, Ads, Website, Email, Phone, Mail, Errors.
+- Add `attribution_links`.
+- Add/use `inbound_events`.
+- Connect leads to missions, imports, webhooks, and source campaigns.
 
-Payoff: unified inbox without a fifth tab. Validate whether a separate tab is ever needed before building one.
+Testable result:
 
-- **S3** CSV import for ad leads. Reuse the existing CSV plumbing from skip-tracing import. Import Facebook, TikTok, and Google ad-export CSVs, normalize, create leads plus source plus campaign plus auto-task, and flag duplicates.
+- A lead can show where it came from and why.
 
-Payoff: ad leads flow in without API integration.
+### W1: Website/Webhook Intake
 
-### Phase U - Website / Webhook Intake
+Purpose:
 
-Only after the in-app funnel is proven.
+- Accept website or webhook leads.
+- Store raw payloads in `inbound_events`.
+- Create `inbox_items` for review.
+- Convert valid events into leads.
 
-- **U1** `inbound_events` and `inbox_items` tables with RLS plus inbound webhook Edge Function. Accept POST, validate secret token, save raw event, normalize, create inbox item, and optionally create lead plus auto-task.
+Testable result:
 
-Payoff: external sources can send leads in.
+- A test webhook creates an inbox item and/or lead without manual database work.
 
-- **U2** Website lead form setup screen in Settings. Show webhook URL, source token, sample payload, and a Send Test Lead button. Test lead appears in Today.
+### D1: Dedupe MVP
 
-Payoff: user can connect a landing page.
+Purpose:
 
-- **U3** Landing page form template documentation. Docs only. No website builder.
+- Prevent duplicate leads once multiple sources are flowing in.
+- Match by parcel ID when available.
+- Otherwise match by normalized address + city + state.
+- Flag duplicate candidates instead of aggressively auto-merging.
 
-### Phase V - Dedupe And Lead Identity
+Testable result:
 
-Last, because it only matters with multi-source.
+- Duplicate imported or inbound leads are flagged before cluttering the CRM.
 
-- **V1** Normalize phone, email, and address while preserving originals.
-- **V2** Duplicate detection MVP. Flag possible duplicates into the Today inbox section. Never auto-merge. User reviews and can mark ignored.
+### K1: Calendar MVP
 
-### Phase W - Connector Settings Hub
+Purpose:
 
-- **W1** Connector Settings screen. Website forms, CSV import, and manual entry are available. Gmail, Twilio, Facebook, Instagram, TikTok, Google, YouTube, and X are marked coming soon. No fake broken buttons.
+- Add `calendar_items`.
+- Schedule follow-ups, drive blocks, and reminders.
+- Show upcoming items in Today.
 
-### Phase X - Calendar MVP
+Testable result:
 
-- **X1** `calendar_items` table with RLS plus simple in-app calendar tied to leads and tasks. Appointments show in Today. No external Google Calendar sync yet.
+- User can schedule a follow-up and see it in Today.
 
-### Phase Z - Launch Readiness
+### CRM1: Lightweight CRM Polish
 
-- **Z1** Security gate 3 audit: RLS coverage, bucket exposure, webhook tokens, PII in logs.
-- **Z2** Verify Owasso data complete; finish Tulsa street import so there are two solid demo markets.
-- **Z3** Remove debug tools, including the design gallery button and field test logger trigger, or hide them behind a debug flag.
-- **Z4** App Store readiness pass.
+Purpose:
+
+- Make lead detail and lead list easier to act from.
+- Emphasize source, status, score, next task, notes, photos, and deal math.
+- Keep the CRM lightweight and action-first.
+
+Testable result:
+
+- User can open a lead and immediately know the next action.
+
+### Drive OS Foundation
+
+Status: substantially built.
+
+Purpose:
+
+- Preserve and polish the existing moat.
+- Continue improving markets, drive areas, missions, coverage, quick capture, and GPS reliability.
+
+Testable result:
+
+- User can drive, capture leads, see coverage, and complete missions reliably.
+
+Drive OS is already a foundation, not net-new V1 work.
 
 ## V1 Launch Cut Line
 
 V1 must include:
 
-- Driving for Dollars map, Markets, Drive Areas, Missions, street coverage, Quick Capture.
-- Manual lead creation, lead source tracking, and source attribution.
-- Today Queue and Tasks.
-- Unified Inbox as a Today section.
-- CSV import for ad leads plus existing skip-tracing export/import.
-- Website/webhook intake.
-- Basic duplicate detection.
-- Mission attribution.
-- Lightweight CRM.
-- Calendar MVP.
-- Offline save queue.
-- RLS on every table plus private photo storage, with security gates 1 and 3 complete.
-- App Store readiness.
+1. Today Queue
+2. Tasks
+3. Unified inbox
+4. Manual source-based lead creation
+5. CSV import
+6. Website/webhook intake
+7. Source attribution
+8. Dedupe MVP
+9. Calendar MVP
+10. Lightweight CRM
+11. Drive OS with markets, drive areas, missions, coverage, and quick capture
 
-V1 must not wait for:
+Drive OS is already substantially built and remains the product moat.
 
-- Official Facebook, Instagram, TikTok, YouTube, or X APIs.
-- Full Gmail sync, full Twilio dialer, or full SMS campaign builder.
-- Full email marketing or full ad manager.
-- Full owner-data provider or full skip-tracing automation.
-- AI agents.
+Funneling, Today Queue, and automation are not later ideas. They are core to V1.
 
-## Strategic Summary
+V1 can defer:
 
-Driving for Dollars gets users in.
+- Dedicated `lead_sources` table.
+- Advanced source ROI analytics.
+- Campaign cost tracking.
+- Full team/account permissions.
+- Full account-based scoping migration.
+- Full calendar sync.
+- Full marketing automation sequences.
+- Native push notification polish.
+- Advanced route optimization.
+- AI lead scoring.
+- Nationwide owner/parcel data.
 
-Lead funneling and the Today Queue keep users paying.
+## Version 1.1 Roadmap
 
-The moat is field coverage intelligence: the app knows what has actually been seen, by whom, how recently, with what signals, and what the next best action is. That gets fused with a unified funnel that makes the app the one place the user acts on every seller lead from every source.
+Version 1.1 focuses on analytics, automation depth, team readiness, and channel optimization.
 
-Build it in additive vertical slices on top of the working app. Never restructure the whole app. Close the security gap before the funnel tables fill. Keep four tabs until use proves a fifth is needed.
+Potential Version 1.1 upgrades:
+
+- Add `lead_sources` table for source metadata.
+- Track source cost by channel and campaign.
+- Track ROI by source.
+- Add campaign-level attribution.
+- Add team/account scoping with `account_id`.
+- Add roles and permissions.
+- Add source dashboards.
+- Add channel analytics.
+- Add integrations for Zapier, Make, n8n, website forms, and lead vendors.
+- Add direct mail campaign tracking.
+- Add skip trace vendor templates.
+- Add recurring automation rules.
+- Add notification scheduling.
+- Add calendar sync.
+- Add route-to-start and routing optimization.
+- Add market readiness analytics.
+- Add more property data providers by market.
+- Add richer dedupe and merge workflows.
+
+## Codex Prompt Template
+
+Use this checklist for every code task:
+
+```text
+Read MASTER_PLAN.md, PROJECT_STATUS.md, CODEX_CHECKLIST.md, and docs/project_journal.md before coding.
+
+You must follow these steps exactly:
+
+1. Identify the single Task ID being implemented.
+2. Restate the task goal in 2-4 sentences.
+3. List the exact files you expect to touch before making edits.
+4. Do not work on later tasks.
+5. Do not perform unrelated refactors.
+6. Preserve existing behavior unless the task explicitly changes it.
+7. If database changes are needed, create a Supabase migration in supabase/migrations and note any backfill assumptions.
+8. If API/webhook/edge function changes are needed, keep them minimal and scoped to the task.
+9. Add or update focused tests where practical.
+10. After coding, run:
+   - dart format .
+   - flutter analyze
+   - flutter test
+11. If a command fails, report the exact failure instead of silently skipping it.
+12. Update PROJECT_STATUS.md with:
+   - current phase
+   - completed task ID
+   - files changed
+   - migration added
+   - test results
+   - known issues
+   - next recommended task
+13. Update docs/project_journal.md with:
+   - what changed
+   - what was validated
+   - which bugs are still open
+   - which bugs were fixed and are waiting for user confirmation
+   - which bugs the user confirmed are fixed
+14. Then provide a short summary of what changed and any follow-up risks.
+
+Commit message format:
+<type>(<scope>): <TASK ID> <desc>
+
+Examples:
+feat(inbox): R3 add inbox item model
+feat(today): T2 add today command center
+refactor(data): R1 add lead source model
+fix(dedupe): V2 flag duplicate lead candidates
+
+Hard rules:
+- One task per session.
+- No broad rewrites.
+- No hidden assumptions about future tasks.
+- Keep code small, reviewable, and shippable.
+```
+
+## Product Philosophy Reminder
+
+Market Coverage OS should be built around daily execution.
+
+The map is the moat, but the business value is the full loop:
+
+1. Find where to drive.
+2. Capture leads quickly.
+3. Collect leads from every source.
+4. Know what came in today.
+5. Know what needs action now.
+6. Follow up consistently.
+7. Export, enrich, score, and work deals.
+
+Capture first. Enrich later.
+
+Do not fake owner names. Do not require nationwide parcel data for MVP. Do not block lead creation because a parcel lookup fails. Do not pretend a market is ready when data is missing.
+
+A useful lead can start with only:
+
+- GPS location
+- Address if available
+- Source
+- Photos
+- Tags
+- Notes
+- Score
+- Follow-up task
+
+The system should then help the user turn that raw lead into an organized opportunity.
+
+V1 wins when a wholesaler opens the app and immediately knows:
+
+1. Where should I drive next?
+2. What leads came in today?
+3. What needs my attention right now?

@@ -10,7 +10,7 @@ Market Coverage OS should help a wholesaler see where they have driven, what str
 
 MVP strategy update: owner/property ownership data is not required for MVP. The core app should be built around nationwide driving-for-dollars lead capture: market/city selection, street coverage, Drive Areas, missions, Quick Capture, GPS/address capture, photos, tags, notes, lead scoring, CSV export for skip tracing, and CSV import/enrichment later. Parcel boundaries and owner data are optional by market and must never block lead capture.
 
-Master plan update: the app should become a unified seller-lead command center, not only a field capture app. Driving for Dollars brings users in; Lead Funnel OS and Today Queue keep them organized. V1 should use four primary tabs: Today, Drive, Leads, and Markets. Inbox belongs inside Today until real use proves it needs its own tab.
+Master plan update: the app should become a unified seller-lead command center, not only a field capture app. Driving for Dollars brings users in; Lead Funnel OS and Today Queue keep them organized. V1 target navigation is five tabs: Today, Drive, Inbox, Leads, and Markets. The current shipped app still has four tabs: Drive, Leads, Areas, and Settings. Today and Inbox do not exist yet and should be built as future vertical slices.
 
 ## Main User Flow
 
@@ -123,8 +123,12 @@ Codex should use this journal as the running memory for the project.
 At the start of each coding task:
 
 1. Read `AGENTS.md`.
-2. Read this file.
-3. Use the current MVP priority and known issues to avoid drifting into unrelated work.
+2. Read `MASTER_PLAN.md`.
+3. Read `docs/master_plan.md`.
+4. Read `PROJECT_STATUS.md`.
+5. Read `CODEX_CHECKLIST.md`.
+6. Read this file.
+7. Use the current MVP priority and known issues to avoid drifting into unrelated work.
 
 At the end of each meaningful task or bug-fix session:
 
@@ -143,6 +147,16 @@ Bug status meanings:
 - `Confirmed fixed`: User tested and said it works.
 
 ## Recent Work Log
+
+### 2026-06-30
+
+- Saved the rewritten V1 product direction into `docs/master_plan.md`.
+- Added root `MASTER_PLAN.md` as a pointer because future prompts may reference that filename directly.
+- Added `CODEX_CHECKLIST.md` with the one-task-per-session implementation checklist.
+- Added `PROJECT_STATUS.md` with current phase, completed foundations, current shipped tab state, V1 target navigation, known issues, and next recommended task.
+- Updated `AGENTS.md` so future coding work starts by reading the master plan, project status, checklist, and journal.
+- Updated this journal so future coding sessions read the master plan, project status, checklist, and journal before making code changes.
+- Validation: docs-only update. No Dart code changed, so Flutter validation was not run.
 
 ### 2026-06-29
 
@@ -264,4 +278,4 @@ Bug status meanings:
 
 For future work, start with:
 
-> Read `AGENTS.md` and `docs/project_journal.md` first before making changes.
+> Read `AGENTS.md`, `MASTER_PLAN.md`, `docs/master_plan.md`, `PROJECT_STATUS.md`, `CODEX_CHECKLIST.md`, and `docs/project_journal.md` first before making changes.
