@@ -164,6 +164,15 @@ Bug status meanings:
 
 ## Recent Work Log
 
+### 2026-07-07
+
+- Implemented DEV1 Mac Deploy Loop as a docs/script-only task.
+- Added `docs/mac_testing.md` with copy-paste Mac commands for `git pull --ff-only`, `flutter pub get`, `flutter devices`, and running the app on iPhone.
+- Added `scripts/mac_deploy.sh`, a Mac helper script that refuses to pull over local changes, prints the before/after Git commit, installs Flutter packages, shows devices, and runs the app in release mode by default.
+- Added `.gitattributes` so shell scripts keep LF line endings and remain runnable on macOS.
+- Updated `PROJECT_STATUS.md` to mark DEV1 complete and set DEV2 Build Identity as the next recommended task.
+- Validation: `git diff --check` passed for the touched docs/script files. Bash syntax validation was not run because `bash` is not available in this Windows shell. No Dart code changed and Flutter validation was not run.
+
 ### 2026-07-06
 
 - Implemented PLAN2 as a docs-only planning update after the July 2026 product/UX audit.

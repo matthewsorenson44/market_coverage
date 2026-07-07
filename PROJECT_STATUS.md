@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-PLAN2 complete: July 2026 product/UX audit incorporated into the master plan, project status, checklist, and journal.
+DEV1 complete: Mac/iPhone deploy loop documented and scripted so fresh builds can be pulled and tested without guessing commands.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -38,10 +38,11 @@ Inbox and Markets are V1 target tabs and do not exist yet. Areas remains the cur
 
 ## Most Recent Completed Task ID
 
-PLAN2: Revise roadmap, add UX specs, and tighten plan process after July 2026 audit.
+DEV1: Mac deploy loop.
 
 ## Recently Completed
 
+- DEV1: Added Mac testing docs and a deploy helper script for pulling the newest build and running it on iPhone.
 - PLAN2: Roadmap and planning docs revised after July 2026 product/UX audit.
 - FIX-COV1: Coverage integrity fix pushed in code; not yet confirmed on device because screenshots appear to be from a stale pre-July-1 build.
 - T2: Today View shell with real tasks section.
@@ -53,17 +54,21 @@ PLAN2: Revise roadmap, add UX specs, and tighten plan process after July 2026 au
 - `docs/master_plan.md`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
-- `CODEX_CHECKLIST.md`
+- `docs/mac_testing.md`
+- `scripts/mac_deploy.sh`
+- `.gitattributes`
 
 ## Migration Added
 
-None for PLAN2.
+None for DEV1.
 
 ## Test Results
 
-- Docs-only change.
+- Docs/script-only change.
 - No Dart code changed.
-- Flutter validation was not run.
+- `git diff --check` passed for the touched docs/script files.
+- Bash syntax validation was not run because `bash` is not available in this Windows shell.
+- Flutter validation was not run because no Dart code changed.
 
 ## Known Issues
 
@@ -88,29 +93,28 @@ Current high-priority open areas:
 
 Take the top task unless the user explicitly says otherwise.
 
-1. DEV1 - Mac deploy loop: commit `scripts/mac_deploy.sh` and/or `docs/mac_testing.md` with exact copy-paste commands for the Mac.
-2. DEV2 - Build identity: show app version, build number, and git commit hash in Settings.
-3. FIELD1 - Structured field-validation drive using the "Needs Real Driving Test" checklist.
-4. FIX-GPS1 - Idle GPS drift filter.
-5. FIX-SCORE1 - Property-scoring credibility guardrails.
-6. STAT1 - Single source of truth for coverage numbers.
-7. UX-LEADCARD1 - Lead list card hierarchy.
-8. DN1 - Real Drive Next card on Today using existing mission-preview computation.
-9. UX-AREA3 - Areas tab restructure.
-10. MAP-AREA1 - Drive map area overlay upgrade.
-11. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
-12. RR1 - Consolidate revisit reminders into tasks.
-13. D1a - Capture-time dedupe flag.
-14. C1 - CSV lead import.
-15. T3-lite - Inbox surface inside Today.
+1. DEV2 - Build identity: show app version, build number, and git commit hash in Settings.
+2. FIELD1 - Structured field-validation drive using the "Needs Real Driving Test" checklist.
+3. FIX-GPS1 - Idle GPS drift filter.
+4. FIX-SCORE1 - Property-scoring credibility guardrails.
+5. STAT1 - Single source of truth for coverage numbers.
+6. UX-LEADCARD1 - Lead list card hierarchy.
+7. DN1 - Real Drive Next card on Today using existing mission-preview computation.
+8. UX-AREA3 - Areas tab restructure.
+9. MAP-AREA1 - Drive map area overlay upgrade.
+10. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
+11. RR1 - Consolidate revisit reminders into tasks.
+12. D1a - Capture-time dedupe flag.
+13. C1 - CSV lead import.
+14. T3-lite - Inbox surface inside Today.
 
 ## Next Recommended Task
 
-DEV1: Mac deploy loop.
+DEV2: Build identity.
 
-Start with a tiny docs/script slice:
+Start with a small Settings slice:
 
-- Add exact Mac commands for the real repo path.
-- Include `git pull`, `flutter pub get`, and the iPhone run command.
-- Make it clear how to confirm the Mac is running the newest pushed build.
-- Do not touch app behavior.
+- Show app version, build number, and git commit hash in Settings.
+- Make it easy to copy/report the build hash.
+- Preserve existing Settings behavior.
+- Do not touch Drive, Leads, Areas, or Today behavior.
