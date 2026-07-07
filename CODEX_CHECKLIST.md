@@ -21,6 +21,10 @@ Do not work on later tasks.
 Do not do unrelated refactors.
 Do not quietly change product direction.
 
+Use the ordered queue in `PROJECT_STATUS.md`. Each session takes the top task unless the user explicitly says otherwise. Completed tasks move to a short "Recently completed" list.
+
+Do not start a new feature phase while more than 5 fixes sit at `fix pushed, awaiting user confirmation`. Prioritize DEV/FIELD tasks to burn down the backlog first.
+
 ## Before Editing
 
 1. Identify the single Task ID being implemented.
@@ -35,10 +39,12 @@ Do not quietly change product direction.
 1. Keep the change small and reviewable.
 2. Prefer existing app patterns.
 3. Do not rewrite large sections of `lib/main.dart`.
-4. Do not fake parcel, owner, street, source, or readiness data.
-5. Do not disable RLS.
-6. Do not put service role keys in Flutter.
-7. Do not break Drive, Leads, Areas, Settings, Quick Capture, photos, scoring, source tracking, route tracking, or street coverage unless the task explicitly changes that behavior.
+4. Put new features in new files under `lib/src/` or `lib/features/` where practical, not appended to `lib/main.dart`.
+5. Extract existing code from `lib/main.dart` only when the current task already touches that code; never as a standalone rewrite.
+6. Do not fake parcel, owner, street, source, or readiness data.
+7. Do not disable RLS.
+8. Do not put service role keys in Flutter.
+9. Do not break Drive, Today, Leads, Areas, Settings, Quick Capture, photos, scoring, source tracking, route tracking, or street coverage unless the task explicitly changes that behavior.
 
 ## Validation
 
@@ -51,6 +57,8 @@ After coding, run:
 If any command fails, report the exact failure.
 
 For docs-only changes, Flutter validation is optional. Say clearly that no app validation was run because no Dart code changed.
+
+After DEV2 ships, every on-device bug report or fix confirmation should include the app build number and git commit hash shown in Settings. Journal confirmation entries must record that build hash.
 
 ## Status Updates
 

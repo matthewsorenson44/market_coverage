@@ -52,6 +52,7 @@ The app should feel dependable in the field before adding more automation:
 - Lead funnel direction: source attribution, tasks, Today Queue, inbox items, inbound events, calendar items, and attribution links should be added only as thin vertical slices with working UI.
 - T1 task data layer is implemented and user-confirmed: Lead Details can create, list, and complete lead-attached tasks.
 - T2 Today View is implemented as the first tab: it loads open overdue/due-today tasks from Supabase, lets the user complete tasks inline, opens the attached lead, and includes placeholder widgets for Drive Next and Inbox.
+- R1 lead source tracking is confirmed on device: the full 13-value source dropdown uses friendly labels and lead cards show colored source chips.
 
 ## Current Known Issues To Watch
 
@@ -62,11 +63,23 @@ The app should feel dependable in the field before adding more automation:
 - Open: Area analysis and market map loading can feel slow on iPhone.
 - Open: Mission completion and recap flow should stay simple and avoid stuck panels.
 - Open: "Find Motivated Sellers" is unclear and may appear to do nothing. It should either clearly explain/run the target-property analysis, be moved, or be removed from the mission-start path.
-- Open: Mission coverage math can be misleading. Example to verify/fix: 1 of 2 streets should show 50%, not 0%.
 - Open: Map overlays are too tied to selected areas. User wants separate toggles for showing all parcels and showing all streets, even when no area is selected.
 - Open: Lead Details page can overflow on iPhone.
 - Open: Auth/account UX is basic; logout and multi-user testing need to stay visible.
+- Open: Property scoring needs a credibility pass so obvious commercial/non-SFR properties do not show like normal driving-for-dollars targets.
+- Open: Street count mismatch between Choose Market showing 1000 and Areas market card showing 3323 for the same market.
+- Open: Mission session estimates can be inconsistent between preview, such as about 3 sessions, and recap, such as 5.
+- Open: Duplicate area names are possible, such as "ow" twice; areas can also be named after the wrong city, such as "tulsa" inside Owasso.
+- Open: Start Mission can appear enabled on areas with no street data.
+- Open: County parcel data can be dumped into lead Notes as free text instead of structured fields.
+- Open: Leads header hero and stat tiles push actual leads below the fold; export affordances can feel duplicated.
+- Open: Property Preview can show contradictory "New Lead" chip next to "Already a lead" text.
+- Open: Score 0 renders in a green badge, which reads as positive.
+- Open: House-number labels clutter the map at mid-zoom; needs tighter zoom threshold.
+- Open: Quick Capture FAB can overlap the Plan panel corner on Drive.
+- Open: Design Gallery button is too prominent in Settings and should be debug-gated.
 - Needs confirmation: Today tab should show overdue/due-today tasks, open the attached lead when tapped, and remove a task when completed inline.
+- Fix pushed, awaiting user confirmation: Coverage stat display now uses street-count percent for "Streets driven" labels, separates street miles from route miles, and avoids showing route miles as covered street miles. July 2026 screenshots still showing "Streets driven: 9 of 158 (0%)" appear to be from a stale installed build that predates the July 1 fix.
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
 - Fix pushed, awaiting user confirmation: Parcel boundary colors should contrast better on Satellite, Dark, and light map styles.
@@ -89,8 +102,6 @@ The app should feel dependable in the field before adding more automation:
 - Fix pushed, awaiting user confirmation: Tapping a house with no parcel data now opens a fallback capture sheet instead of dead-ending at "No parcel found."
 - Fix pushed, awaiting user confirmation: GPS-only Add Lead capture now tries to reverse-geocode the saved coordinates into a street address before saving, while still allowing GPS-only capture if the lookup fails.
 - Fix pushed, awaiting user confirmation: Leads tab now has a skip-tracing CSV import flow that matches by `lead_id`, falls back to address, previews changes before writing, fills blank contact fields only, reports unmatched rows, queues failed enrichment updates for retry, and shows imported contact info in Lead Details.
-- Fix pushed, awaiting user confirmation: Lead cards now show a category-colored source chip for the R1 source taxonomy. This was UI-only and did not change lead creation, Quick Capture, or the data layer.
-- Fix pushed, awaiting user confirmation: Lead source UI now uses the full 13-source taxonomy in app-side options, normalization, Lead Details, Add Lead, filters, and source chips. Dropdowns show friendly labels while saving canonical database values.
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
@@ -119,6 +130,7 @@ The app should feel dependable in the field before adding more automation:
 - Area Name dialog TextField crash was fixed and covered by tests.
 - Skip-tracing CSV export works after readability fixes.
 - T1 Lead Details tasks work after the user manually pushed/pulled and tested the feature.
+- R1 lead source tracking is confirmed on device: 13-value source dropdown, friendly labels, and colored source chips on lead cards work.
 
 ## Journal Maintenance Rules
 
@@ -151,6 +163,29 @@ Bug status meanings:
 - `Confirmed fixed`: User tested and said it works.
 
 ## Recent Work Log
+
+### 2026-07-06
+
+- Implemented PLAN2 as a docs-only planning update after the July 2026 product/UX audit.
+- Updated `docs/master_plan.md` to reflect the current shipped 5-tab app state, the confirmed `created_at` / `updated_at` timestamp convention, and R1 source tracking as confirmed on device.
+- Split V1 into a 1.0 Beta cut line and a 1.0 App Store cut line. Webhook intake, attribution links, and calendar items moved to 1.0.x / 1.1 instead of blocking beta.
+- Added the ordered near-term task queue: DEV1, DEV2, FIELD1, FIX-GPS1, FIX-SCORE1, STAT1, UX-LEADCARD1, DN1, UX-AREA3, MAP-AREA1, MAP-TOGGLE1, RR1, D1a, C1, and T3-lite.
+- Added planned UX specs for UX-AREA3 and MAP-AREA1, plus interface principles for progressive disclosure, one primary action, meaningful stats, Lead Details structure, and debug-gating the Design Gallery.
+- Updated `PROJECT_STATUS.md` so the next recommended task is DEV1 Mac deploy loop.
+- Updated `CODEX_CHECKLIST.md` with the validation backlog gate, build-hash confirmation rule, new-file guidance, and ordered-queue discipline.
+- Added July 2026 audit issues to the open bug list, including street-count mismatch, inconsistent mission estimates, duplicate/misnamed areas, Start Mission gating, county parcel notes, lead-list hierarchy, score 0 styling, map label clutter, Quick Capture overlap, and Design Gallery prominence.
+- Validation: docs-only change. No Dart code changed and Flutter validation was not run.
+
+### 2026-07-01
+
+- Implemented FIX-COV1 Coverage integrity after reviewing the screenshot-based audit recommendation that coverage is the product moat.
+- Updated coverage stat display so "Streets driven" uses street-count math; examples like 9 of 158 now show a nonzero street percentage instead of a mileage-weighted 0%.
+- Updated area progress bars to match street-count progress instead of mileage-weighted coverage when the label is about streets.
+- Updated Drive coverage statistics to separate street coverage miles from route miles. Route miles now stay in the diagnostic line and are still used for leads-per-mile.
+- Added a safe double-percent helper and regression coverage for empty/over-complete mileage totals.
+- Validation for FIX-COV1: `dart format .`, `flutter analyze`, and `flutter test` passed with 127 tests.
+- Status: awaiting user confirmation on iPhone/field data that area, Drive, mission, and recap coverage numbers now feel believable.
+- Next recommended follow-up: property-type-aware scoring/leadability guardrails so commercial properties do not look like ordinary driving-for-dollars targets.
 
 ### 2026-06-30
 
