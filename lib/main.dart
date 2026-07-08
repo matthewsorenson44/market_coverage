@@ -44,6 +44,42 @@ const String kTilesSatellite =
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 const String kTilesMinimal =
     'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+const String kAppVersion = String.fromEnvironment(
+  'APP_VERSION',
+  defaultValue: '1.0.0',
+);
+const String kAppBuildNumber = String.fromEnvironment(
+  'APP_BUILD_NUMBER',
+  defaultValue: '1',
+);
+const String kBuildGitCommit = String.fromEnvironment(
+  'GIT_COMMIT',
+  defaultValue: 'unknown',
+);
+const String kBuildGitBranch = String.fromEnvironment(
+  'GIT_BRANCH',
+  defaultValue: 'unknown',
+);
+const String kBuildTime = String.fromEnvironment(
+  'BUILD_TIME',
+  defaultValue: 'unknown',
+);
+
+String shortBuildHash([String hash = kBuildGitCommit]) {
+  if (hash == 'unknown' || hash.length <= 12) return hash;
+  return hash.substring(0, 12);
+}
+
+String buildReportText() {
+  return [
+    'Market Coverage OS',
+    'Version: $kAppVersion',
+    'Build: $kAppBuildNumber',
+    'Commit: $kBuildGitCommit',
+    'Branch: $kBuildGitBranch',
+    'Built: $kBuildTime',
+  ].join('\n');
+}
 
 final themeModeNotifier = ThemeModeNotifier();
 
@@ -4431,7 +4467,7 @@ class _SettingsTab extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'App Version',
+                    'Build Identity',
                     style: TextStyle(
                       color: secondaryColor,
                       fontSize: 12,
@@ -4439,7 +4475,27 @@ class _SettingsTab extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text('1.0.0'),
+                  Text('Version $kAppVersion ($kAppBuildNumber)'),
+                  const SizedBox(height: 4),
+                  Text('Commit ${shortBuildHash()}'),
+                  const SizedBox(height: 4),
+                  Text('Branch $kBuildGitBranch'),
+                  const SizedBox(height: 4),
+                  Text('Built $kBuildTime'),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(text: buildReportText()),
+                      );
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Build info copied')),
+                      );
+                    },
+                    icon: const Icon(Icons.copy),
+                    label: const Text('Copy Build Info'),
+                  ),
                 ],
               ),
             ),

@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-DEV1 complete: Mac/iPhone deploy loop documented and scripted so fresh builds can be pulled and tested without guessing commands.
+DEV2 complete: Settings now shows app version, build number, Git commit, branch, and build time so device reports can be tied to an installed build.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -38,11 +38,12 @@ Inbox and Markets are V1 target tabs and do not exist yet. Areas remains the cur
 
 ## Most Recent Completed Task ID
 
-DEV1: Mac deploy loop.
+DEV2: Build identity.
 
 ## Recently Completed
 
-- DEV1: Added Mac testing docs and a deploy helper script for pulling the newest build and running it on iPhone.
+- DEV2: Added copyable build identity to Settings and taught the Mac deploy script to inject the exact Git commit into the app.
+- DEV1: Added Mac testing docs and a deploy helper script for pulling the newest build and running it on iPhone. User confirmed the deploy loop works after the Supabase project was resumed.
 - PLAN2: Roadmap and planning docs revised after July 2026 product/UX audit.
 - FIX-COV1: Coverage integrity fix pushed in code; not yet confirmed on device because screenshots appear to be from a stale pre-July-1 build.
 - T2: Today View shell with real tasks section.
@@ -51,24 +52,22 @@ DEV1: Mac deploy loop.
 
 ## Files Changed In Latest Status Update
 
-- `docs/master_plan.md`
+- `lib/main.dart`
+- `test/build_identity_test.dart`
+- `scripts/mac_deploy.sh`
+- `docs/mac_testing.md`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
-- `docs/mac_testing.md`
-- `scripts/mac_deploy.sh`
-- `.gitattributes`
 
 ## Migration Added
 
-None for DEV1.
+None for DEV2.
 
 ## Test Results
 
-- Docs/script-only change.
-- No Dart code changed.
-- `git diff --check` passed for the touched docs/script files.
-- Bash syntax validation was not run because `bash` is not available in this Windows shell.
-- Flutter validation was not run because no Dart code changed.
+- `dart format .` passed with 40 files checked and 0 changed.
+- `flutter analyze` passed with no issues.
+- `flutter test` passed with 130 tests.
 
 ## Known Issues
 
@@ -93,28 +92,27 @@ Current high-priority open areas:
 
 Take the top task unless the user explicitly says otherwise.
 
-1. DEV2 - Build identity: show app version, build number, and git commit hash in Settings.
-2. FIELD1 - Structured field-validation drive using the "Needs Real Driving Test" checklist.
-3. FIX-GPS1 - Idle GPS drift filter.
-4. FIX-SCORE1 - Property-scoring credibility guardrails.
-5. STAT1 - Single source of truth for coverage numbers.
-6. UX-LEADCARD1 - Lead list card hierarchy.
-7. DN1 - Real Drive Next card on Today using existing mission-preview computation.
-8. UX-AREA3 - Areas tab restructure.
-9. MAP-AREA1 - Drive map area overlay upgrade.
-10. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
-11. RR1 - Consolidate revisit reminders into tasks.
-12. D1a - Capture-time dedupe flag.
-13. C1 - CSV lead import.
-14. T3-lite - Inbox surface inside Today.
+1. FIELD1 - Structured field-validation drive using the "Needs Real Driving Test" checklist.
+2. FIX-GPS1 - Idle GPS drift filter.
+3. FIX-SCORE1 - Property-scoring credibility guardrails.
+4. STAT1 - Single source of truth for coverage numbers.
+5. UX-LEADCARD1 - Lead list card hierarchy.
+6. DN1 - Real Drive Next card on Today using existing mission-preview computation.
+7. UX-AREA3 - Areas tab restructure.
+8. MAP-AREA1 - Drive map area overlay upgrade.
+9. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
+10. RR1 - Consolidate revisit reminders into tasks.
+11. D1a - Capture-time dedupe flag.
+12. C1 - CSV lead import.
+13. T3-lite - Inbox surface inside Today.
 
 ## Next Recommended Task
 
-DEV2: Build identity.
+FIELD1: Structured field-validation drive.
 
-Start with a small Settings slice:
+Use the new Settings build identity for every confirmation or reopened bug:
 
-- Show app version, build number, and git commit hash in Settings.
-- Make it easy to copy/report the build hash.
-- Preserve existing Settings behavior.
-- Do not touch Drive, Leads, Areas, or Today behavior.
+- Pull the newest build on the Mac.
+- Copy `Settings > Build Identity`.
+- Test the real-driving checklist in `docs/project_journal.md`.
+- Move confirmed fixes out of the awaiting-confirmation backlog.

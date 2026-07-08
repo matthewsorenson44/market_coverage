@@ -51,6 +51,9 @@ For debug mode instead of release mode:
 ./scripts/mac_deploy.sh YOUR_IPHONE_DEVICE_ID --debug
 ```
 
+The scripted path is preferred for device testing because it injects the exact
+app version, build number, Git branch, Git commit, and build time into Settings.
+
 ## Confirm You Are Testing The Newest Build
 
 Before launching, the script prints:
@@ -59,10 +62,19 @@ Before launching, the script prints:
 - the current Git branch
 - the latest commit hash before pull
 - the latest commit hash after pull
+- the build identity injected into the app
 
-The commit after pull is the build you are testing.
+The commit after pull is the build you are testing. After the app opens, go to:
 
-Until DEV2 adds the build hash inside Settings, use this terminal command to confirm the Mac is on the newest code:
+```text
+Settings > Build Identity
+```
+
+Tap `Copy Build Info` and paste that into bug reports or fix confirmations.
+
+If you run Flutter manually instead of through the script, Settings can show
+`unknown` for the commit because no `--dart-define` values were passed. In that
+case, use this terminal command to confirm the Mac is on the newest code:
 
 ```bash
 git log -1 --oneline
@@ -103,3 +115,4 @@ flutter devices
 
 That gives Codex the exact build and device context.
 
+If the app opens, include the copied `Settings > Build Identity` text instead.

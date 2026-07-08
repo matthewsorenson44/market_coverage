@@ -53,6 +53,7 @@ The app should feel dependable in the field before adding more automation:
 - T1 task data layer is implemented and user-confirmed: Lead Details can create, list, and complete lead-attached tasks.
 - T2 Today View is implemented as the first tab: it loads open overdue/due-today tasks from Supabase, lets the user complete tasks inline, opens the attached lead, and includes placeholder widgets for Drive Next and Inbox.
 - R1 lead source tracking is confirmed on device: the full 13-value source dropdown uses friendly labels and lead cards show colored source chips.
+- DEV2 build identity is implemented: Settings shows the app version, build number, Git commit, branch, and build time, and the Mac deploy script injects those values into iPhone builds.
 
 ## Current Known Issues To Watch
 
@@ -131,6 +132,7 @@ The app should feel dependable in the field before adding more automation:
 - Skip-tracing CSV export works after readability fixes.
 - T1 Lead Details tasks work after the user manually pushed/pulled and tested the feature.
 - R1 lead source tracking is confirmed on device: 13-value source dropdown, friendly labels, and colored source chips on lead cards work.
+- DEV1 Mac/iPhone deploy loop works after the user resumed the paused Supabase project and reran the app.
 
 ## Journal Maintenance Rules
 
@@ -163,6 +165,18 @@ Bug status meanings:
 - `Confirmed fixed`: User tested and said it works.
 
 ## Recent Work Log
+
+### 2026-07-08
+
+- Implemented DEV2 Build Identity.
+- Added app build constants sourced from `--dart-define` and a Settings `Build Identity` section showing version, build number, Git commit, branch, and build time.
+- Added a `Copy Build Info` button so future iPhone bug reports and fix confirmations can include the exact installed build.
+- Updated `scripts/mac_deploy.sh` to read `pubspec.yaml`, compute the current Git commit/branch/build time after pull, print the build identity, and pass it into `flutter run`.
+- Updated `docs/mac_testing.md` so Mac/iPhone testing uses `Settings > Build Identity` for reporting.
+- Added a focused unit test for build-hash shortening.
+- User confirmed DEV1 works after the paused Supabase project was resumed and the app loaded normally.
+- Validation for DEV2: `dart format .`, `flutter analyze`, and `flutter test` passed with 130 tests.
+- Next recommended task: FIELD1 structured real-driving validation using the build hash from Settings.
 
 ### 2026-07-07
 
