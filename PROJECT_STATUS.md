@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-DEV1a complete: the Mac deploy helper now treats the Mac clone as a deploy-only mirror, aborts on local Mac work, and resets to the fetched GitHub branch only when safe.
+FIX-GPS1 complete: route-point recording now filters idle GPS drift by accuracy, speed, displacement, and persistence state before saving route breadcrumbs or marking streets covered.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -38,10 +38,11 @@ Inbox and Markets are V1 target tabs and do not exist yet. Areas remains the cur
 
 ## Most Recent Completed Task ID
 
-DEV1a: Harden Mac deploy against divergent branches.
+FIX-GPS1: Idle GPS drift filter.
 
 ## Recently Completed
 
+- FIX-GPS1: Added a pure Dart GPS drift filter, wired it into Drive Mode tracking, and covered low-accuracy, stationary, tiny-drift, moving, inferred-movement, and persistence-busy cases with tests.
 - DEV1a: Updated the Mac deploy helper and Mac testing docs so `mco` uses `git fetch origin`, refuses uncommitted/local Mac-only work, resets to `origin/<branch>` when clean, and prints the updated commit hash for comparison with Settings > Build Identity.
 - FIELD1: Added `docs/field_validation.md`, a build-hash-based real-driving test runbook for follow mode, GPS drift, missions, coverage persistence, map layers, Quick Capture, and key regressions.
 - PLAN3: Added docs-only redesign specs for Today command center, Drive idle simplification, status-colored lead pins, and photo-first Quick Capture. DN1 was folded into UX-TODAY1.
@@ -55,18 +56,19 @@ DEV1a: Harden Mac deploy against divergent branches.
 
 ## Files Changed In Latest Status Update
 
-- `scripts/mac_deploy.sh`
-- `docs/mac_testing.md`
+- `lib/src/gps_drift_filter.dart`
+- `lib/main.dart`
+- `test/gps_drift_filter_test.dart`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
 
 ## Migration Added
 
-None for DEV1a.
+None for FIX-GPS1.
 
 ## Test Results
 
-Docs/script-only change. `git diff --check` passed for the touched files. Bash syntax validation was not run because `bash` is not available in this Windows shell. No Dart code changed, so Flutter validation was not run.
+`dart format .`, `flutter analyze`, and `flutter test` passed. Flutter test passed with 136 tests.
 
 ## Known Issues
 
@@ -75,7 +77,7 @@ Use `docs/project_journal.md` as the detailed running list of open bugs, fixes a
 Current high-priority open areas:
 
 - Real-driving follow mode still needs field validation.
-- GPS drift can draw route lines while idle.
+- Idle GPS drift filter is pushed and needs parked-device confirmation on a fresh build.
 - Mission and area analysis UX is still confusing.
 - Map overlay visibility and toggles need continued cleanup.
 - Lead deletion needs final user confirmation after the fixed-length list bug fix.
@@ -91,21 +93,20 @@ Current high-priority open areas:
 
 Take the top task unless the user explicitly says otherwise.
 
-1. FIX-GPS1 - Idle GPS drift filter.
-2. FIX-SCORE1 - Property-scoring credibility guardrails.
-3. STAT1 - Single source of truth for coverage numbers.
-4. UX-LEADCARD1 - Lead list card hierarchy.
-5. UX-TODAY1 - Today command center redesign, absorbing DN1 Drive Next.
-6. UX-AREA3 - Areas tab restructure.
-7. MAP-AREA1 - Drive map area overlay upgrade.
-8. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
-9. MAP-PIN1 - Status-colored lead pins.
-10. UX-CAPTURE1 - Photo-first Quick Capture.
-11. UX-DRIVE1 - Drive idle simplification.
-12. RR1 - Consolidate revisit reminders into tasks.
-13. D1a - Capture-time dedupe flag.
-14. C1 - CSV lead import.
-15. T3-lite - Inbox surface inside Today.
+1. FIX-SCORE1 - Property-scoring credibility guardrails.
+2. STAT1 - Single source of truth for coverage numbers.
+3. UX-LEADCARD1 - Lead list card hierarchy.
+4. UX-TODAY1 - Today command center redesign, absorbing DN1 Drive Next.
+5. UX-AREA3 - Areas tab restructure.
+6. MAP-AREA1 - Drive map area overlay upgrade.
+7. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
+8. MAP-PIN1 - Status-colored lead pins.
+9. UX-CAPTURE1 - Photo-first Quick Capture.
+10. UX-DRIVE1 - Drive idle simplification.
+11. RR1 - Consolidate revisit reminders into tasks.
+12. D1a - Capture-time dedupe flag.
+13. C1 - CSV lead import.
+14. T3-lite - Inbox surface inside Today.
 
 Queue ordering rationale:
 
@@ -115,6 +116,6 @@ Queue ordering rationale:
 
 ## Next Recommended Task
 
-FIX-GPS1: Idle GPS drift filter.
+FIX-SCORE1: Property-scoring credibility guardrails.
 
-The FIELD1 checklist now lives in `docs/field_validation.md`. Use that checklist on the next real drive and send the completed FIELD1 report back with the Settings build identity.
+Use `docs/field_validation.md` on the next real drive to confirm FIX-GPS1 and the remaining field-test items with the Settings build identity.

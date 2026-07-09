@@ -61,7 +61,6 @@ The app should feel dependable in the field before adding more automation:
 ## Current Known Issues To Watch
 
 - Open: iPhone Drive Mode follow-me can still appear to freeze or fail to follow smoothly.
-- Open: While sitting idle, the user marker can drift and draw a blue route line. Route tracking should avoid saving/displaying movement from GPS noise when stationary.
 - Open: Some mission flows are confusing, especially when area analysis has not produced mission streets.
 - Open: Area analysis state is unclear. Areas without street data show "No street data"; areas with street data show "Start Driving" and "Find Motivated Sellers" instead of making the analyze/ready state obvious.
 - Open: Area analysis and market map loading can feel slow on iPhone.
@@ -83,6 +82,7 @@ The app should feel dependable in the field before adding more automation:
 - Open: Quick Capture FAB can overlap the Plan panel corner on Drive.
 - Open: Design Gallery button is too prominent in Settings and should be debug-gated.
 - Needs confirmation: Today tab should show overdue/due-today tasks, open the attached lead when tapped, and remove a task when completed inline.
+- Fix pushed, awaiting user confirmation: Idle GPS drift should no longer save route points, draw blue route lines, or mark streets covered while the user is parked. The app still updates the location marker, but route breadcrumbs now require good accuracy, real speed or inferred movement, and enough displacement.
 - Fix pushed, awaiting user confirmation: Coverage stat display now uses street-count percent for "Streets driven" labels, separates street miles from route miles, and avoids showing route miles as covered street miles. July 2026 screenshots still showing "Streets driven: 9 of 158 (0%)" appear to be from a stale installed build that predates the July 1 fix.
 - Fix pushed, awaiting user confirmation: Drive map style switching should follow dark/light theme by default, with a manual style picker for Auto, Dark, Minimal, and Satellite. The old Standard option now falls back to Auto.
 - Fix pushed, awaiting user confirmation: Parcel boundary lines should stay visible during active missions instead of disappearing while tracking/following.
@@ -173,6 +173,14 @@ Bug status meanings:
 ## Recent Work Log
 
 ### 2026-07-08
+
+- Implemented FIX-GPS1 idle GPS drift filtering.
+- Added `lib/src/gps_drift_filter.dart`, a pure Dart route-point decision helper that rejects low-accuracy samples, stationary first samples, tiny idle drift, and samples arriving while the previous route point is still persisting.
+- Wired the filter into Drive Mode GPS tracking so rejected samples still update the user marker/follow camera, but do not append to `routePoints`, save to `driving_points`, or mark nearby streets covered.
+- Added periodic `gps_route_point_skipped` field logs with the skip reason, accuracy, speed, and displacement to help debug future field tests.
+- Added `test/gps_drift_filter_test.dart` covering low accuracy, stationary idle, tiny drift, moving speed, inferred movement when speed is unavailable, and persistence-busy behavior.
+- Validation: `dart format .`, `flutter analyze`, and `flutter test` passed with 136 tests.
+- Status: fix pushed and awaiting user confirmation on a fresh iPhone build. Parked testing should confirm no new blue route line appears while idle; real driving still needs FIELD1 follow-mode validation.
 
 - Implemented DEV1a Mac deploy hardening as a docs/script-only task.
 - Updated `scripts/mac_deploy.sh` so the Mac deploy mirror uses `git fetch origin`, detects uncommitted/untracked files and local commits not on `origin/<branch>`, prints a loud warning, and aborts instead of overwriting local Mac work.

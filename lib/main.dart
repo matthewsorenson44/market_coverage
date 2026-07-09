@@ -23,6 +23,7 @@ import 'src/area_stats.dart';
 import 'src/coverage.dart';
 import 'src/formatting.dart';
 import 'src/geo.dart';
+import 'src/gps_drift_filter.dart';
 import 'src/scoring.dart';
 
 // Re-export the extracted modules so existing imports of
@@ -31,6 +32,7 @@ export 'src/coverage.dart';
 export 'src/area_stats.dart';
 export 'src/formatting.dart';
 export 'src/geo.dart';
+export 'src/gps_drift_filter.dart';
 export 'src/lead_export.dart';
 export 'src/scoring.dart';
 
@@ -7892,6 +7894,8 @@ class _DrivingScreenState extends State<DrivingScreen>
   bool isHandlingTrackingPoint = false;
   LatLng? lastProcessedTrackingPoint;
   DateTime? lastProcessedTrackingPointAt;
+  LatLng? lastTrackingSamplePoint;
+  DateTime? lastTrackingSampleAt;
   DateTime? lastMapFollowAt;
   List<DriveArea> driveAreas = [];
   DriveArea? activeDriveArea;
@@ -14632,6 +14636,8 @@ class _DrivingScreenState extends State<DrivingScreen>
       routePoints.clear();
       lastProcessedTrackingPoint = null;
       lastProcessedTrackingPointAt = null;
+      lastTrackingSamplePoint = null;
+      lastTrackingSampleAt = null;
       lastMapFollowAt = null;
     });
     unawaited(FieldTestLogger.log('gps_tracking_started', detail: sessionId));
@@ -14642,65 +14648,73 @@ class _DrivingScreenState extends State<DrivingScreen>
     );
 
     positionStream =
-        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-          (Position position) {
-            final point = LatLng(position.latitude, position.longitude);
-            final now = DateTime.now();
-            gpsUpdateLogCounter++;
-            if (gpsUpdateLogCounter % 10 == 0) {
+        Geolocator.getPositionStream(
+          locationSettings: locationSettings,
+        ).listen((Position position) {
+          final point = LatLng(position.latitude, position.longitude);
+          final now = DateTime.now();
+          gpsUpdateLogCounter++;
+          if (gpsUpdateLogCounter % 10 == 0) {
+            unawaited(
+              FieldTestLogger.log(
+                'gps_update',
+                detail: 'accuracy: ${position.accuracy}m',
+              ),
+            );
+          }
+
+          if (isLowAccuracyPosition(position)) {
+            updateLiveGpsPosition(
+              position,
+              message: lowAccuracyLocationMessage(position),
+            );
+            if (gpsUpdateLogCounter % 5 == 0) {
               unawaited(
                 FieldTestLogger.log(
-                  'gps_update',
-                  detail: 'accuracy: ${position.accuracy}m',
+                  'gps_low_accuracy',
+                  detail: '${position.accuracy}m',
                 ),
               );
             }
+            return;
+          }
 
-            if (isLowAccuracyPosition(position)) {
-              updateLiveGpsPosition(
-                position,
-                message: lowAccuracyLocationMessage(position),
+          final routeDecision = shouldRecordGpsRoutePoint(
+            point: point,
+            accuracyMeters: position.accuracy,
+            speedMetersPerSecond: position.speed,
+            recordedAt: now,
+            lastRecordedPoint: lastProcessedTrackingPoint,
+            lastRecordedAt: lastProcessedTrackingPointAt,
+            lastSamplePoint: lastTrackingSamplePoint,
+            lastSampleAt: lastTrackingSampleAt,
+            isPersisting: isHandlingTrackingPoint,
+          );
+
+          lastTrackingSamplePoint = point;
+          lastTrackingSampleAt = now;
+
+          if (!routeDecision.shouldRecord) {
+            updateLiveGpsPosition(position);
+            if (gpsUpdateLogCounter % 5 == 0) {
+              unawaited(
+                FieldTestLogger.log(
+                  'gps_route_point_skipped',
+                  detail:
+                      '${routeDecision.reason}; accuracy=${position.accuracy.toStringAsFixed(1)}m; speed=${position.speed.toStringAsFixed(2)}mps; moved=${routeDecision.displacementMeters.toStringAsFixed(1)}m',
+                ),
               );
-              if (gpsUpdateLogCounter % 5 == 0) {
-                unawaited(
-                  FieldTestLogger.log(
-                    'gps_low_accuracy',
-                    detail: '${position.accuracy}m',
-                  ),
-                );
-              }
-              return;
             }
+            return;
+          }
 
-            final lastPoint = lastProcessedTrackingPoint;
-            final lastAt = lastProcessedTrackingPointAt;
-            if (lastPoint != null && lastAt != null) {
-              final movedMiles = const Distance().as(
-                LengthUnit.Mile,
-                lastPoint,
-                point,
-              );
-              final tooSoon =
-                  now.difference(lastAt) < trackingPointMinInterval &&
-                  movedMiles < trackingPointMinDistanceMiles;
-
-              if (tooSoon || isHandlingTrackingPoint) {
-                updateLiveGpsPosition(position);
-                return;
-              }
-            } else if (isHandlingTrackingPoint) {
-              updateLiveGpsPosition(position);
-              return;
-            }
-
-            updateLiveGpsPosition(
-              position,
-              message: 'Tracking route... Points: ${routePoints.length + 1}',
-              addRoutePoint: true,
-            );
-            unawaited(persistTrackingPoint(point, currentDriveSessionId, now));
-          },
-        );
+          updateLiveGpsPosition(
+            position,
+            message: 'Tracking route... Points: ${routePoints.length + 1}',
+            addRoutePoint: true,
+          );
+          unawaited(persistTrackingPoint(point, currentDriveSessionId, now));
+        });
   }
 
   Future<void> saveDrivingPoint(LatLng point, String? driveSessionId) async {
@@ -14778,6 +14792,8 @@ class _DrivingScreenState extends State<DrivingScreen>
       isHandlingTrackingPoint = false;
       lastProcessedTrackingPoint = null;
       lastProcessedTrackingPointAt = null;
+      lastTrackingSamplePoint = null;
+      lastTrackingSampleAt = null;
       lastMapFollowAt = null;
       locationMessage = 'Tracking stopped. Points saved: $savedPointCount';
     });
