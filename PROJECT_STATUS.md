@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-PLAN3 complete: July 2026 redesign specs have been added to the roadmap for Today, Drive idle, status-colored map pins, and photo-first Quick Capture.
+FIELD1 complete: a structured field-validation checklist now exists for real iPhone driving tests and build-hash-based confirmations.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -38,10 +38,11 @@ Inbox and Markets are V1 target tabs and do not exist yet. Areas remains the cur
 
 ## Most Recent Completed Task ID
 
-PLAN3: Add Today, Drive, pin, and capture screen specs.
+FIELD1: Structured field-validation drive.
 
 ## Recently Completed
 
+- FIELD1: Added `docs/field_validation.md`, a build-hash-based real-driving test runbook for follow mode, GPS drift, missions, coverage persistence, map layers, Quick Capture, and key regressions.
 - PLAN3: Added docs-only redesign specs for Today command center, Drive idle simplification, status-colored lead pins, and photo-first Quick Capture. DN1 was folded into UX-TODAY1.
 - DEV2: Added copyable build identity to Settings and taught the Mac deploy script to inject the exact Git commit into the app.
 - DEV1: Added Mac testing docs and a deploy helper script for pulling the newest build and running it on iPhone. User confirmed the deploy loop works after the Supabase project was resumed.
@@ -53,13 +54,13 @@ PLAN3: Add Today, Drive, pin, and capture screen specs.
 
 ## Files Changed In Latest Status Update
 
-- `docs/master_plan.md`
+- `docs/field_validation.md`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
 
 ## Migration Added
 
-None for PLAN3.
+None for FIELD1.
 
 ## Test Results
 
@@ -88,22 +89,21 @@ Current high-priority open areas:
 
 Take the top task unless the user explicitly says otherwise.
 
-1. FIELD1 - Structured field-validation drive using the "Needs Real Driving Test" checklist.
-2. FIX-GPS1 - Idle GPS drift filter.
-3. FIX-SCORE1 - Property-scoring credibility guardrails.
-4. STAT1 - Single source of truth for coverage numbers.
-5. UX-LEADCARD1 - Lead list card hierarchy.
-6. UX-TODAY1 - Today command center redesign, absorbing DN1 Drive Next.
-7. UX-AREA3 - Areas tab restructure.
-8. MAP-AREA1 - Drive map area overlay upgrade.
-9. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
-10. MAP-PIN1 - Status-colored lead pins.
-11. UX-CAPTURE1 - Photo-first Quick Capture.
-12. UX-DRIVE1 - Drive idle simplification.
-13. RR1 - Consolidate revisit reminders into tasks.
-14. D1a - Capture-time dedupe flag.
-15. C1 - CSV lead import.
-16. T3-lite - Inbox surface inside Today.
+1. FIX-GPS1 - Idle GPS drift filter.
+2. FIX-SCORE1 - Property-scoring credibility guardrails.
+3. STAT1 - Single source of truth for coverage numbers.
+4. UX-LEADCARD1 - Lead list card hierarchy.
+5. UX-TODAY1 - Today command center redesign, absorbing DN1 Drive Next.
+6. UX-AREA3 - Areas tab restructure.
+7. MAP-AREA1 - Drive map area overlay upgrade.
+8. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
+9. MAP-PIN1 - Status-colored lead pins.
+10. UX-CAPTURE1 - Photo-first Quick Capture.
+11. UX-DRIVE1 - Drive idle simplification.
+12. RR1 - Consolidate revisit reminders into tasks.
+13. D1a - Capture-time dedupe flag.
+14. C1 - CSV lead import.
+15. T3-lite - Inbox surface inside Today.
 
 Queue ordering rationale:
 
@@ -113,11 +113,6 @@ Queue ordering rationale:
 
 ## Next Recommended Task
 
-FIELD1: Structured field-validation drive.
+FIX-GPS1: Idle GPS drift filter.
 
-Use the new Settings build identity for every confirmation or reopened bug:
-
-- Pull the newest build on the Mac.
-- Copy `Settings > Build Identity`.
-- Test the real-driving checklist in `docs/project_journal.md`.
-- Move confirmed fixes out of the awaiting-confirmation backlog.
+The FIELD1 checklist now lives in `docs/field_validation.md`. Use that checklist on the next real drive and send the completed FIELD1 report back with the Settings build identity.

@@ -55,6 +55,7 @@ The app should feel dependable in the field before adding more automation:
 - R1 lead source tracking is confirmed on device: the full 13-value source dropdown uses friendly labels and lead cards show colored source chips.
 - DEV2 build identity is implemented: Settings shows the app version, build number, Git commit, branch, and build time, and the Mac deploy script injects those values into iPhone builds.
 - PLAN3 redesign specs are documented: Today command center, Drive idle simplification, status-colored lead pins, and photo-first Quick Capture.
+- FIELD1 field-validation runbook exists at `docs/field_validation.md` for build-hash-based iPhone driving tests.
 
 ## Current Known Issues To Watch
 
@@ -107,6 +108,8 @@ The app should feel dependable in the field before adding more automation:
 - Needs confirmation: Quick Capture should close cleanly after saving.
 
 ## Needs Real Driving Test
+
+Use `docs/field_validation.md` for the structured test run. Every report should include the Settings build identity.
 
 - Follow mode actually follows while driving, not just says "Following."
 - User marker updates smoothly while moving.
@@ -169,6 +172,12 @@ Bug status meanings:
 ## Recent Work Log
 
 ### 2026-07-08
+
+- Implemented FIELD1 as a docs-only field-validation runbook.
+- Added `docs/field_validation.md` with a structured real-driving checklist covering startup/location, mission start, live tracking, Quick Capture, mission completion, coverage persistence, map-layer visibility, and quick non-driving regressions.
+- The runbook requires `Settings > Build Identity` to be copied into each report so confirmations and reopened bugs can be tied to an installed build.
+- Updated project status so the next recommended task is `FIX-GPS1` idle GPS drift.
+- Validation: docs-only change. No Dart code changed and Flutter validation was not run.
 
 - Implemented PLAN3 as a docs-only planning update.
 - Added competitive design benchmarks to the master plan: match category leaders on speed-to-action while protecting Market Coverage OS differentiators in street-level coverage, missions/areas, honest no-owner-data operation, and deal math.
