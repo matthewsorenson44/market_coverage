@@ -54,6 +54,7 @@ The app should feel dependable in the field before adding more automation:
 - T2 Today View is implemented as the first tab: it loads open overdue/due-today tasks from Supabase, lets the user complete tasks inline, opens the attached lead, and includes placeholder widgets for Drive Next and Inbox.
 - R1 lead source tracking is confirmed on device: the full 13-value source dropdown uses friendly labels and lead cards show colored source chips.
 - DEV2 build identity is implemented: Settings shows the app version, build number, Git commit, branch, and build time, and the Mac deploy script injects those values into iPhone builds.
+- DEV1a Mac deploy hardening is implemented: the deploy helper fetches GitHub, refuses local Mac-only work, resets to the fetched branch only when safe, and prints the updated commit hash for comparison with Settings > Build Identity.
 - PLAN3 redesign specs are documented: Today command center, Drive idle simplification, status-colored lead pins, and photo-first Quick Capture.
 - FIELD1 field-validation runbook exists at `docs/field_validation.md` for build-hash-based iPhone driving tests.
 
@@ -172,6 +173,13 @@ Bug status meanings:
 ## Recent Work Log
 
 ### 2026-07-08
+
+- Implemented DEV1a Mac deploy hardening as a docs/script-only task.
+- Updated `scripts/mac_deploy.sh` so the Mac deploy mirror uses `git fetch origin`, detects uncommitted/untracked files and local commits not on `origin/<branch>`, prints a loud warning, and aborts instead of overwriting local Mac work.
+- Replaced the safe update path with `git reset --hard origin/<current branch>` only when the Mac mirror has no local work to keep.
+- Added the updated short commit hash to the script output so testers can compare the terminal output to `Settings > Build Identity`.
+- Updated `docs/mac_testing.md` with the new fetch/reset flow, the deploy-only mirror rule, and recovery guidance when the script stops.
+- Validation: `git diff --check` passed for the touched files. Bash syntax validation was not run because `bash` is not available in this Windows shell. No Dart code changed and Flutter validation was not run.
 
 - Implemented FIELD1 as a docs-only field-validation runbook.
 - Added `docs/field_validation.md` with a structured real-driving checklist covering startup/location, mission start, live tracking, Quick Capture, mission completion, coverage persistence, map-layer visibility, and quick non-driving regressions.

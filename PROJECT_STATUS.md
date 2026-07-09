@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-FIELD1 complete: a structured field-validation checklist now exists for real iPhone driving tests and build-hash-based confirmations.
+DEV1a complete: the Mac deploy helper now treats the Mac clone as a deploy-only mirror, aborts on local Mac work, and resets to the fetched GitHub branch only when safe.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -38,10 +38,11 @@ Inbox and Markets are V1 target tabs and do not exist yet. Areas remains the cur
 
 ## Most Recent Completed Task ID
 
-FIELD1: Structured field-validation drive.
+DEV1a: Harden Mac deploy against divergent branches.
 
 ## Recently Completed
 
+- DEV1a: Updated the Mac deploy helper and Mac testing docs so `mco` uses `git fetch origin`, refuses uncommitted/local Mac-only work, resets to `origin/<branch>` when clean, and prints the updated commit hash for comparison with Settings > Build Identity.
 - FIELD1: Added `docs/field_validation.md`, a build-hash-based real-driving test runbook for follow mode, GPS drift, missions, coverage persistence, map layers, Quick Capture, and key regressions.
 - PLAN3: Added docs-only redesign specs for Today command center, Drive idle simplification, status-colored lead pins, and photo-first Quick Capture. DN1 was folded into UX-TODAY1.
 - DEV2: Added copyable build identity to Settings and taught the Mac deploy script to inject the exact Git commit into the app.
@@ -54,17 +55,18 @@ FIELD1: Structured field-validation drive.
 
 ## Files Changed In Latest Status Update
 
-- `docs/field_validation.md`
+- `scripts/mac_deploy.sh`
+- `docs/mac_testing.md`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
 
 ## Migration Added
 
-None for FIELD1.
+None for DEV1a.
 
 ## Test Results
 
-Docs-only change. No Dart code changed, so Flutter validation was not run.
+Docs/script-only change. `git diff --check` passed for the touched files. Bash syntax validation was not run because `bash` is not available in this Windows shell. No Dart code changed, so Flutter validation was not run.
 
 ## Known Issues
 

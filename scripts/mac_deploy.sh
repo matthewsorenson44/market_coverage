@@ -20,19 +20,58 @@ cd "$repo_root"
 
 echo "Market Coverage OS Mac deploy"
 echo "Repo: $repo_root"
-echo "Branch: $(git branch --show-current)"
-echo "Before pull: $(git log -1 --oneline)"
-
-if [[ -n "$(git status --short)" ]]; then
-  echo
-  echo "Local changes detected on the Mac:"
-  git status --short
-  echo
-  echo "Commit, stash, or ask Codex before pulling so local work is not overwritten."
+branch="$(git branch --show-current)"
+if [[ -z "$branch" ]]; then
+  echo "This deploy helper requires a checked-out branch. Detached HEAD is not supported."
   exit 1
 fi
 
-git pull --ff-only
+origin_ref="origin/$branch"
+
+echo "Branch: $branch"
+echo "Before update: $(git log -1 --oneline)"
+echo "Fetching origin..."
+git fetch origin
+
+if ! git rev-parse --verify --quiet "$origin_ref" >/dev/null; then
+  echo
+  echo "Could not find $origin_ref after fetching origin."
+  echo "Check that this branch exists on GitHub before running the deploy helper."
+  exit 1
+fi
+
+status_output="$(git status --short)"
+local_commits="$(git log --oneline "$origin_ref..HEAD")"
+
+if [[ -n "$status_output" || -n "$local_commits" ]]; then
+  echo
+  echo "============================================================"
+  echo "STOP: Local Mac work detected. The Mac clone is deploy-only."
+  echo "============================================================"
+
+  if [[ -n "$status_output" ]]; then
+    echo
+    echo "Uncommitted or untracked files:"
+    echo "$status_output"
+  fi
+
+  if [[ -n "$local_commits" ]]; then
+    echo
+    echo "Local commits not on $origin_ref:"
+    echo "$local_commits"
+  fi
+
+  echo
+  echo "Review this output before discarding anything."
+  echo "git reset --hard $origin_ref discards them."
+  echo
+  exit 1
+fi
+
+echo "Updating deploy mirror to $origin_ref..."
+git reset --hard "$origin_ref"
+updated_commit="$(git rev-parse --short=12 HEAD)"
+echo "Updated to commit: $updated_commit"
 
 app_version="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
 app_version_name="${app_version%%+*}"
@@ -48,8 +87,9 @@ if [[ -z "$git_branch" ]]; then
 fi
 build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-echo "After pull: $(git log -1 --oneline)"
+echo "After update: $(git log -1 --oneline)"
 echo "Build identity: version $app_version_name ($app_build_number), commit $git_commit"
+echo "Compare commit $git_commit to Settings > Build Identity after launch."
 echo
 
 flutter pub get
