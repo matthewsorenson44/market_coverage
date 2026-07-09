@@ -370,18 +370,30 @@ Testable result:
 
 - Lead cards scan cleanly and no destructive action sits on every row.
 
-### DN1: Drive Next On Today
+### UX-TODAY1: Today Command Center
+
+Note:
+
+- This absorbs and replaces the former DN1 Drive Next slice.
 
 Purpose:
 
-- Fill the Today tab's Drive Next hero card with the existing mission planner output.
-- Show active area coverage %, next-session estimate, streets, minutes, and coverage gain.
-- Add a one-tap "Plan Today's Drive" action that opens the existing mission flow.
+- Make Today mirror the three product questions:
+  1. Where should I drive next?
+  2. What leads came in today?
+  3. What needs my attention right now?
+- Fill the Drive Next hero card with the existing mission planner output.
+- Show active area name, coverage progress bar, "X streets left - about N more sessions", and one verb button: "Drive 30 min now."
+- The duration should use the remembered default and deep-link into the existing mission flow.
+- Keep Needs Attention powered by the existing task data: open overdue/due-today tasks, icon per task type, danger styling for overdue, inline complete control, and tap-to-open-lead behavior.
+- Add a New Leads Today row with count and per-source breakdown caption, such as "2 driving - 1 website"; tapping opens Leads filtered to today.
+- Add a Week Stats strip with streets driven this week, leads added this week, and follow-ups completed this week, computed from existing data.
+- Remove the "Inbox - coming soon" placeholder card until T3-lite ships. Empty promises hurt trust; keep a code slot only if it helps future implementation.
 - Do not build new recommendation logic; reuse the mission preview computation.
 
 Testable result:
 
-- User opens Today and sees their active area's coverage state and can start planning a drive in one tap.
+- User opens Today and sees their active area's coverage state, today's lead/action context, and can start planning a drive in one tap.
 
 ### UX-AREA3: Areas Tab Restructure
 
@@ -414,6 +426,58 @@ Purpose:
 Testable result:
 
 - User can show all streets, show all parcels, or hide either layer without first selecting an area.
+
+### MAP-PIN1: Status-Colored Lead Pins
+
+Purpose:
+
+- Color Drive map lead markers by pipeline stage using the existing stage taxonomy.
+- Collapse the stage taxonomy into four visual groups:
+  - New: red.
+  - Contact needed: amber/orange.
+  - In progress: contacted, interested, offer sent, and under contract render blue.
+  - Closed: green.
+- Dead leads render muted gray.
+- Add a compact four-item legend accessible from the layers sheet, not permanently on the map.
+- No schema changes; colors derive from `leads.pipeline_stage`.
+
+Testable result:
+
+- User can tell lead status from the Drive map without opening every marker.
+
+### UX-CAPTURE1: Photo-First Quick Capture
+
+Purpose:
+
+- Reorder Quick Capture so the camera button is first. Taking a photo is the primary capture act.
+- Show the auto-detected address line using existing reverse geocoding, with copy: "GPS saved either way - fix the address later."
+- Keep optional condition chips as single-tap toggles using existing score signals: vacant, roof damage, tall grass, boarded, trash.
+- Use one "Save lead" button.
+- Target two-tap capture: photo, save.
+- Notes, detailed scoring, owner info, and deal math stay in Lead Details after save.
+- Photo remains optional. Saving without a photo must still work.
+- Keep all existing data writes: `source=driving`, GPS, and mission linkage when present.
+
+Testable result:
+
+- User can save a driving lead quickly with photo-first capture, and capture is never blocked when no photo is added.
+
+### UX-DRIVE1: Drive Idle Simplification
+
+Purpose:
+
+- Keep the current map style and tiles.
+- Reduce idle Drive chrome to one area chip top-left, the layers button, Find Me, and Quick Capture FAB.
+- Area chip example: "Owasso NE v"; tapping opens a picker that also handles market switching.
+- Fix Quick Capture overlap with panels.
+- Bottom idle card shows area name, "62% - 60 streets left", primary "Start driving", and a small duration chip such as "30 min v" that remembers the last choice.
+- Tapping Start goes straight into the mission using current defaults.
+- Full planning sheets, including time picker, area change, and preview, open only from the duration chip or area chip.
+- Remove the separate "Show all areas / Active area only" pill from the top of the map; that control moves into the layers sheet.
+
+Testable result:
+
+- User can understand and start a drive from the idle map with fewer controls and fewer taps.
 
 ### RR1: Consolidate Revisit Reminders Into Tasks
 
@@ -526,14 +590,17 @@ Take the top task unless the user explicitly says otherwise.
 5. FIX-SCORE1 - Scoring credibility thin slice.
 6. STAT1 - Single source of truth for coverage numbers.
 7. UX-LEADCARD1 - Lead list card hierarchy.
-8. DN1 - Real Drive Next card on Today.
+8. UX-TODAY1 - Today command center redesign, absorbing DN1 Drive Next.
 9. UX-AREA3 - Areas tab restructure.
 10. MAP-AREA1 - Drive map area overlay upgrade.
 11. MAP-TOGGLE1 - Independent Streets and Parcels toggles.
-12. RR1 - Consolidate revisit reminders into tasks.
-13. D1a - Capture-time dedupe flag.
-14. C1 - CSV lead import.
-15. T3-lite - Inbox surface inside Today.
+12. MAP-PIN1 - Status-colored lead pins.
+13. UX-CAPTURE1 - Photo-first Quick Capture.
+14. UX-DRIVE1 - Drive idle simplification.
+15. RR1 - Consolidate revisit reminders into tasks.
+16. D1a - Capture-time dedupe flag.
+17. C1 - CSV lead import.
+18. T3-lite - Inbox surface inside Today.
 
 ## UX-AREA3 Spec
 
@@ -571,6 +638,12 @@ Visual states:
 
 ## Interface Principles
 
+### Competitive Design Benchmarks
+
+- Benchmark: DealMachine, a 4.8-star category leader, is praised for "zero learning curve, even mid-drive." Its patterns: the map is home, driving starts in one tap, lead pins are colored by pipeline status, capture is photo-first, the driving HUD is minimal, and a dashboard separates "what to do" from the map.
+- Differentiators to protect, not dilute: street-level coverage percent, the missions/areas system, honest no-owner-data operation, and built-in deal math.
+- Rule: match competitors on speed-to-action, such as taps to start driving and taps to capture; beat them on coverage intelligence.
+
 - Progressive disclosure: every screen has a summary layer always visible and a detail layer that expands in place. Popups/modals only for decisions, such as confirm delete or pick date, never for information. Dropdowns only choose one value, never hide content.
 - One primary action per screen, stated as a verb. Other actions are demoted or moved into detail screens.
 - One-line muted captions under section headers teach the app, such as "Enter ARV to get your max offer." No onboarding tour or coach marks in V1. If a screen needs a tour, restructure the screen.
@@ -587,7 +660,7 @@ Required before TestFlight external testers:
 
 1. Drive OS: markets, areas, missions, coverage, and quick capture.
 2. Tasks: T1 complete.
-3. Today with real Drive Next: DN1.
+3. Today with real Drive Next: UX-TODAY1.
 4. Revisit reminders consolidated into tasks: RR1.
 5. Leads CRM with source tracking: done and confirmed on device.
 6. CSV export: done.
@@ -707,7 +780,7 @@ Commit message format:
 
 Examples:
 feat(inbox): T3-lite add inbox item model
-feat(today): DN1 add drive next card
+feat(today): UX-TODAY1 add command center redesign
 refactor(data): R1 add lead source model
 fix(dedupe): D1a flag duplicate lead candidates
 

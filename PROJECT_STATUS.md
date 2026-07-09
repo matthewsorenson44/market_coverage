@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-DEV2 complete: Settings now shows app version, build number, Git commit, branch, and build time so device reports can be tied to an installed build.
+PLAN3 complete: July 2026 redesign specs have been added to the roadmap for Today, Drive idle, status-colored map pins, and photo-first Quick Capture.
 
 The current product direction is documented in `docs/master_plan.md`.
 
@@ -38,10 +38,11 @@ Inbox and Markets are V1 target tabs and do not exist yet. Areas remains the cur
 
 ## Most Recent Completed Task ID
 
-DEV2: Build identity.
+PLAN3: Add Today, Drive, pin, and capture screen specs.
 
 ## Recently Completed
 
+- PLAN3: Added docs-only redesign specs for Today command center, Drive idle simplification, status-colored lead pins, and photo-first Quick Capture. DN1 was folded into UX-TODAY1.
 - DEV2: Added copyable build identity to Settings and taught the Mac deploy script to inject the exact Git commit into the app.
 - DEV1: Added Mac testing docs and a deploy helper script for pulling the newest build and running it on iPhone. User confirmed the deploy loop works after the Supabase project was resumed.
 - PLAN2: Roadmap and planning docs revised after July 2026 product/UX audit.
@@ -52,22 +53,17 @@ DEV2: Build identity.
 
 ## Files Changed In Latest Status Update
 
-- `lib/main.dart`
-- `test/build_identity_test.dart`
-- `scripts/mac_deploy.sh`
-- `docs/mac_testing.md`
+- `docs/master_plan.md`
 - `PROJECT_STATUS.md`
 - `docs/project_journal.md`
 
 ## Migration Added
 
-None for DEV2.
+None for PLAN3.
 
 ## Test Results
 
-- `dart format .` passed with 40 files checked and 0 changed.
-- `flutter analyze` passed with no issues.
-- `flutter test` passed with 130 tests.
+Docs-only change. No Dart code changed, so Flutter validation was not run.
 
 ## Known Issues
 
@@ -97,14 +93,23 @@ Take the top task unless the user explicitly says otherwise.
 3. FIX-SCORE1 - Property-scoring credibility guardrails.
 4. STAT1 - Single source of truth for coverage numbers.
 5. UX-LEADCARD1 - Lead list card hierarchy.
-6. DN1 - Real Drive Next card on Today using existing mission-preview computation.
+6. UX-TODAY1 - Today command center redesign, absorbing DN1 Drive Next.
 7. UX-AREA3 - Areas tab restructure.
 8. MAP-AREA1 - Drive map area overlay upgrade.
 9. MAP-TOGGLE1 - Independent map layer toggles for Streets and Parcels.
-10. RR1 - Consolidate revisit reminders into tasks.
-11. D1a - Capture-time dedupe flag.
-12. C1 - CSV lead import.
-13. T3-lite - Inbox surface inside Today.
+10. MAP-PIN1 - Status-colored lead pins.
+11. UX-CAPTURE1 - Photo-first Quick Capture.
+12. UX-DRIVE1 - Drive idle simplification.
+13. RR1 - Consolidate revisit reminders into tasks.
+14. D1a - Capture-time dedupe flag.
+15. C1 - CSV lead import.
+16. T3-lite - Inbox surface inside Today.
+
+Queue ordering rationale:
+
+- MAP-PIN1 follows MAP-TOGGLE1 because the layers sheet becomes the home for the lead-status legend.
+- UX-CAPTURE1 follows map pin clarity because capture speed is the next highest-payoff field workflow.
+- UX-DRIVE1 follows the map/capture cleanup so the idle Drive redesign can reuse the cleaner layer and capture controls.
 
 ## Next Recommended Task
 

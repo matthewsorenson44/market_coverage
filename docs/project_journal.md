@@ -54,6 +54,7 @@ The app should feel dependable in the field before adding more automation:
 - T2 Today View is implemented as the first tab: it loads open overdue/due-today tasks from Supabase, lets the user complete tasks inline, opens the attached lead, and includes placeholder widgets for Drive Next and Inbox.
 - R1 lead source tracking is confirmed on device: the full 13-value source dropdown uses friendly labels and lead cards show colored source chips.
 - DEV2 build identity is implemented: Settings shows the app version, build number, Git commit, branch, and build time, and the Mac deploy script injects those values into iPhone builds.
+- PLAN3 redesign specs are documented: Today command center, Drive idle simplification, status-colored lead pins, and photo-first Quick Capture.
 
 ## Current Known Issues To Watch
 
@@ -133,6 +134,7 @@ The app should feel dependable in the field before adding more automation:
 - T1 Lead Details tasks work after the user manually pushed/pulled and tested the feature.
 - R1 lead source tracking is confirmed on device: 13-value source dropdown, friendly labels, and colored source chips on lead cards work.
 - DEV1 Mac/iPhone deploy loop works after the user resumed the paused Supabase project and reran the app.
+- DEV2 Build Identity works on Mac/iPhone: Settings shows build info and Copy Build Info copies it.
 
 ## Journal Maintenance Rules
 
@@ -167,6 +169,13 @@ Bug status meanings:
 ## Recent Work Log
 
 ### 2026-07-08
+
+- Implemented PLAN3 as a docs-only planning update.
+- Added competitive design benchmarks to the master plan: match category leaders on speed-to-action while protecting Market Coverage OS differentiators in street-level coverage, missions/areas, honest no-owner-data operation, and deal math.
+- Folded the former DN1 Drive Next slice into `UX-TODAY1`, which now specifies the Today command center: Drive Next hero, Needs Attention tasks, New Leads Today, and Week Stats.
+- Added planned slices for `MAP-PIN1` status-colored lead pins, `UX-CAPTURE1` photo-first Quick Capture, and `UX-DRIVE1` Drive idle simplification.
+- Updated the ordered queue and status docs so future sessions follow the new order.
+- Validation: docs-only change. No Dart code changed and Flutter validation was not run.
 
 - Implemented DEV2 Build Identity.
 - Added app build constants sourced from `--dart-define` and a Settings `Build Identity` section showing version, build number, Git commit, branch, and build time.
